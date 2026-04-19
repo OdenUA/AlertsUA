@@ -1,0 +1,23 @@
+{
+  "defaultLayerId": "osm-standard",
+  "layers": [
+    {
+      "id": "osm-standard",
+      "title_uk": "OpenStreetMap",
+      "url_template": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      "attribution_uk": "Мапа © OpenStreetMap contributors"
+    },
+    {
+      "id": "carto-light",
+      "title_uk": "Світла карта Carto",
+      "url_template": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      "attribution_uk": "Базова карта © OpenStreetMap contributors, © CARTO"
+    },
+    {
+      "id": "opentopo",
+      "title_uk": "Топографічна карта",
+      "url_template": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      "attribution_uk": "Карта © OpenTopoMap, дані © OpenStreetMap contributors"
+    }
+  ]
+}

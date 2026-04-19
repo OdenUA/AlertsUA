@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Alerts UA Telegram parsing every 15 seconds
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=15
+Unit=alerts-ua-telegram-parse.service
+
+[Install]
+WantedBy=timers.target

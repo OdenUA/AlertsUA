@@ -1,0 +1,16 @@
+[Unit]
+Description=Alerts UA API
+After=network.target
+
+[Service]
+Type=simple
+User=alerts-ua
+Group=alerts-ua
+WorkingDirectory=/srv/alerts-ua/app/current
+EnvironmentFile=/srv/alerts-ua/env/.env.api
+ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/main.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

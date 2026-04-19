@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alerts UA</title>
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""
+    />
+    <style>
+        /* ─── Base Layout ─────────────────────────────────────── */
+        html, body, #map {
+            margin: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+        body {
+            font-family: system-ui, sans-serif;
+        }
+
+        /* ─── CSS Variables (Light / Dark) ────────────────────── */
+        body {
+            --mask-fill:      #e8f0f4;
+            --map-bg:         #e8f0f4;
+            --status-bg:      rgba(255,255,255,0.94);
+            --status-shadow:  0 4px 16px rgba(30,50,65,0.18);
+            --status-color:   #1c3040;
+            --zoom-bg:        rgba(255,255,255,0.92);
+            --zoom-color:     #1c3040;
+            --attr-color:     rgba(80,110,130,0.7);
+            --tile-filter:    none;
+            --tile-opacity:   0.93;
+        }
+        body.dark {
+            --mask-fill:      #131e28;
+            --map-bg:         #0f1822;
+            --status-bg:      rgba(15,24,34,0.94);
+            --status-shadow:  0 4px 16px rgba(0,0,0,0.45);
+            --status-color:   #b8cfda;
+            --zoom-bg:        rgba(20,32,44,0.94);
+            --zoom-color:     #b8cfda;
+            --attr-color:     rgba(100,140,160,0.55);
+            --tile-filter:    invert(1) hue-rotate(180deg) brightness(0.92) saturate(0.92) contrast(1.18);
+            --tile-opacity:   0.82;
+        }
+
+        /* ─── Map Container ───────────────────────────────────── */
+        .leaflet-container {
+            background: var(--map-bg);
+        }
+        .leaflet-tile-pane {
+            filter: var(--tile-filter);
+        }
+
+        /* ─── Status Pill ─────────────────────────────────────── */
+        #status {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 800;
+            padding: 8px 14px;
+            border-radius: 20px;
+            background: var(--status-bg);
+            box-shadow: var(--status-shadow);
+            font-size: 13px;
+            color: var(--status-color);
+            max-width: calc(100vw - 36px);
+            line-height: 1.35;
+            display: none;
+            text-align: center;
+        }
+
+        /* ─── Zoom Controls ───────────────────────────────────── */
+        .leaflet-control-zoom {
+            border: none !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.18) !important;
+        }
+        .leaflet-control-zoom a {
+            background: var(--zoom-bg) !important;
+            color: var(--zoom-color) !important;
+            border: none !important;
+            font-size: 16px !important;
+            width: 34px !important;
+            height: 34px !important;
+            line-height: 34px !important;
+        }
+        .leaflet-control-zoom a:hover {
+            filter: brightness(0.92);
+        }
+
+        /* ─── Attribution ─────────────────────────────────────── */
+        .leaflet-control-attribution {
+            font-size: 9px;
+            background: transparent !important;
+            color: var(--attr-color) !important;
+        }
+
+        /* ─── Alert Type Markers ──────────────────────────────── */
+        .al-marker {
+            pointer-events: none;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .al-marker img {
+            width: 28px;
+            height: 28px;
+            object-fit: contain;
+            display: block;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+            animation: al-pulse 2s infinite;
+        }
+        .al-marker.al-small img {
+            width: 20px;
+            height: 20px;
+        }
+        @keyframes al-pulse {
+            0%, 100% { transform: scale(1);    filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)); }
+            55%       { transform: scale(1.18); filter: drop-shadow(0 2px 10px rgba(215,38,61,0.6)); }
+        }
+
+        /* ─── Subscription Pin Markers ───────────────────────── */
+        .sub-marker {
+            width: 28px;
+            height: 36px;
+            background: #1976d2;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            border: 2.5px solid rgba(255,255,255,0.88);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.42);
+            position: relative;
+            cursor: pointer;
+        }
+        .sub-marker::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background: white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="status"></div>
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+    ></script>
+    <script>
+        const statusElement = document.getElementById('status');
+        const map = L.map('map', {
+            zoomControl: true,
+            preferCanvas: true,
+            attributionControl: true,
+            scrollWheelZoom: true,
+        }).setView([49.0, 31.0], 6);
+
+        map.getContainer().tabIndex = 0;
+        map.on('mouseover', function () {
+            map.getContainer().focus();
+        });
+        map.scrollWheelZoom.enable();
+        L.DomEvent.disableScrollPropagation(map.getContainer());
+        map.getContainer().addEventListener('wheel', function (event) {
+            // Keep wheel interactions inside the map: zoom map instead of scrolling outer page.
+            event.preventDefault();
+        }, { passive: false });
+
+        map.attributionControl.setPrefix(false);
+
+        let apiBaseUrl = 'http://10.0.2.2:43100/api/v1';
+        let tileLayer = null;
+        let activeConfig = null;
+        let ukraineMaskLayer = null;
+        let alertMarkersLayer = null;
+        let specialAlertLayer = null;
+        let threatOverlayLayer = null;
+        let hasFittedToData = false;
+        let overlayLayers = {
+            oblast: null,
+            raion: null,
+            hromada: null,
+        };
+        let refreshTimerId = null;
+        let ukraineBoundaryGeometry = null;
+        let mapReady = false;
+        let mapReadyQueue = [];
+        const subscriptionMarkers = {};
+
+        const statusPalette = {
+            'A': '#d7263d',
+            'P': '#2a9d8f',  // treated same as N on the map
+            'N': '#2a9d8f',
+            ' ': '#4d6a77',
+        };
+
+        const alertTypePalette = {
+            air_raid: {
+                stroke: '#d7263d',
+                fill: '#d7263d',
+                fillOpacity: 0.25,
+            },
+            artillery_shelling: {
+                stroke: '#f08c00',
+                fill: '#ffb347',
+                fillOpacity: 0.42,
+            },
+            urban_fights: {
+                stroke: '#7b2cbf',
+                fill: '#b47aea',
+                fillOpacity: 0.45,
+            },
+        };
+
+        // Alert type icon paths (relative to this HTML file)
+        const ALERT_TYPE_ICONS = {
+            air_raid:            'file:///android_asset/leaflet/icons/air-raid.png',
+            artillery_shelling:  'file:///android_asset/leaflet/icons/artillery-shelling.png',
+            urban_fights:        'file:///android_asset/leaflet/icons/urban-fights.png',
+        };
+        const ALERT_ICON_FALLBACK = 'file:///android_asset/leaflet/icons/air-raid.png';
+
+        const THREAT_TYPE_ICONS = {
+            uav: {
+                light: 'file:///android_asset/leaflet/icons/shahed-light.png',
+                dark: 'file:///android_asset/leaflet/icons/shahed-dark.png',
+            },
+            kab: {
+                light: 'file:///android_asset/leaflet/icons/kab-black.png',
+                dark: 'file:///android_asset/leaflet/icons/kab-grey.png',
+            },
+            missile: {
+                light: 'file:///android_asset/leaflet/icons/air-raid.png',
+                dark: 'file:///android_asset/leaflet/icons/air-raid.png',
+            },
+            unknown: {
+                light: 'file:///android_asset/leaflet/icons/air-raid.png',
+                dark: 'file:///android_asset/leaflet/icons/air-raid.png',
+            },
+        };
+
+        function setStatus(message) {
+            if (!message) {
+                statusElement.style.display = 'none';
+                return;
+            }
+            statusElement.textContent = message;
+            statusElement.style.display = 'block';
+        }
+
+        function isSpecialAlertType(alertType) {
+            return alertType === 'artillery_shelling' || alertType === 'urban_fights';
+        }
+
+        function makeAlertIcon(alertType, sizePx) {
+            const src = ALERT_TYPE_ICONS[alertType] || ALERT_ICON_FALLBACK;
+            const sz = Math.max(12, Math.round(sizePx || 24));
+            return L.divIcon({
+                className: '',
+                html: '<div class="al-marker"><img src="' + src + '" style="width:' + sz + 'px;height:' + sz + 'px;" /></div>',
+                iconSize: [sz, sz],
+                iconAnchor: [sz / 2, sz / 2],
+            });
+        }
+
+        function getAlertPalette(alertType) {
+            return alertTypePalette[alertType] || alertTypePalette.air_raid;
+        }
+
+        function getThreatIconSrc(threatKind) {
+            var mode = document.body.classList.contains('dark') ? 'dark' : 'light';
+            var config = THREAT_TYPE_ICONS[threatKind] || THREAT_TYPE_ICONS.unknown;
+            return config[mode] || THREAT_TYPE_ICONS.unknown.light;
+        }
+
+        function makeThreatIcon(threatKind, bearing) {
+            var src = getThreatIconSrc(threatKind);
+            var hasBearing = (bearing !== null && bearing !== undefined && bearing !== '');
+            var angle = hasBearing ? Number(bearing) : null;
+            
+            // KAB icon naturally points south-west (225 degrees).
+            // Rotate it by +135 degrees to adjust its baseline orientation to north (0).
+            if (threatKind === 'kab' && angle !== null) {
+                angle = (angle + 135) % 360;
+            }
+
+            var transformStyle = '';
+            if (angle !== null) {
+                transformStyle = 'transform: rotate(' + angle + 'deg);';
+            }
+
+            return L.divIcon({
+                className: '',
+                html: '<div class="al-marker" style="' + transformStyle + '"><img src="' + src + '" /></div>',
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+            });
+        }
+
+        function extractOverlayMarkerLatLng(overlay) {
+            var marker = overlay && overlay.marker;
+            if (!marker || marker.type !== 'Point' || !Array.isArray(marker.coordinates) || marker.coordinates.length < 2) {
+                return null;
+            }
+
+            var lng = Number(marker.coordinates[0]);
+            var lat = Number(marker.coordinates[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                return null;
+            }
+
+            return [lat, lng];
+        }
+
+        let showThreats = true;
+
+        function setThreatsVisibility(visible) {
+            showThreats = visible;
+            if (threatOverlayLayer) {
+                if (showThreats) {
+                    map.addLayer(threatOverlayLayer);
+                    // Also trigger a refresh right away to fetch if it was empty
+                    scheduleOverlayRefresh();
+                } else {
+                    map.removeLayer(threatOverlayLayer);
+                }
+            }
+        }
+
+        async function loadThreatOverlays() {
+            const response = await fetch(buildUrl('/map/threat-overlays'), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Не вдалося оновити шар загроз на мапі.');
+            }
+
+            const data = await response.json();
+            const overlays = data.overlays || [];
+            const layerGroup = L.layerGroup();
+
+            const markerCounts = {};
+
+            overlays.forEach(function (overlay) {
+                try {
+                    if (overlay.area) {
+                        L.geoJSON({
+                            type: 'Feature',
+                            geometry: overlay.area,
+                            properties: {}
+                        }, {
+                            style: {
+                                color: overlay.color_hex || '#d7263d',
+                                weight: 1.4,
+                                opacity: 0.7,
+                                fillColor: overlay.color_hex || '#d7263d',
+                                fillOpacity: 0.16,
+                            },
+                            interactive: false,
+                        }).addTo(layerGroup);
+                    }
+
+                    // We do not render the global corridor lines anymore.
+                    // The threat direction is visually drawn by rotating the threat icons.
+
+                    var markerLatLng = extractOverlayMarkerLatLng(overlay);
+                    if (markerLatLng) {
+                        var coordKey = markerLatLng[0].toFixed(3) + ',' + markerLatLng[1].toFixed(3);
+                        if (markerCounts[coordKey]) {
+                            var count = markerCounts[coordKey];
+                            
+                            // Calculate a small spiral offset to prevent exact overlap
+                            // ~0.04 degrees is roughly 4-5km
+                            var baseOffset = 0.045;
+                            var radius = baseOffset * Math.ceil(count / 6);
+                            var angleDelta = (Math.PI * 2) / 6;
+                            var offsetAngle = count * angleDelta;
+                            
+                            markerLatLng[0] += Math.sin(offsetAngle) * radius;
+                            // account for longitude shrinking at higher latitudes
+                            markerLatLng[1] += Math.cos(offsetAngle) * radius * 1.5;
+                            
+                            markerCounts[coordKey] += 1;
+                        } else {
+                            markerCounts[coordKey] = 1;
+                        }
+
+                        var icon = makeThreatIcon(overlay.threat_kind || overlay.icon_type || 'unknown', overlay.movement_bearing_deg);
+                        var mk = L.marker(markerLatLng, {
+                            icon: icon,
+                            interactive: true,
+                            zIndexOffset: 760,
+                        });
+                        
+                        if (overlay.message_text && overlay.message_date) {
+                            var msgTime = new Date(overlay.message_date).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+                            var popupContent = '<b>' + msgTime + '</b><br><br>' + overlay.message_text;
+                            mk.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
+                        }
+                        
+                        mk.addTo(layerGroup);
+                    }
+                } catch (err) {
+                    console.error('Error drawing overlay:', err, overlay);
+                }
+            });
+
+            if (threatOverlayLayer) {
+                map.removeLayer(threatOverlayLayer);
+            }
+            threatOverlayLayer = layerGroup;
+            if (showThreats) {
+                threatOverlayLayer.addTo(map);
+            }
+        }
+
+        function getFeaturePixelBox(featureLayer) {
+            var bounds = featureLayer.getBounds();
+            if (!bounds || !bounds.isValid()) {
+                return null;
+            }
+
+            var northWest = map.latLngToContainerPoint(bounds.getNorthWest());
+            var southEast = map.latLngToContainerPoint(bounds.getSouthEast());
+            return {
+                width: Math.abs(southEast.x - northWest.x),
+                height: Math.abs(southEast.y - northWest.y),
+            };
+        }
+
+        function getMarkerSizeForFeature(featureLayer) {
+            var pixelBox = getFeaturePixelBox(featureLayer);
+            if (!pixelBox) {
+                return 0;
+            }
+
+            var minSide = Math.min(pixelBox.width, pixelBox.height);
+            return Math.max(14, Math.min(30, Math.floor(minSide - 6)));
+        }
+
+        function refreshAlertMarkers() {
+            if (alertMarkersLayer) {
+                map.removeLayer(alertMarkersLayer);
+                alertMarkersLayer = null;
+            }
+            alertMarkersLayer = L.layerGroup().addTo(map);
+
+            if (!specialAlertLayer) {
+                return;
+            }
+
+            specialAlertLayer.eachLayer(function(featureLayer) {
+                var props = featureLayer.feature && featureLayer.feature.properties;
+                if (!props || props.status !== 'A' || !isSpecialAlertType(props.alert_type)) {
+                    return;
+                }
+
+                var sizePx = getMarkerSizeForFeature(featureLayer);
+                if (!sizePx) {
+                    return;
+                }
+
+                var center = featureLayer.getBounds().getCenter();
+                var icon = makeAlertIcon(props.alert_type, sizePx);
+                L.marker(center, { icon: icon, interactive: false, zIndexOffset: 700 })
+                    .addTo(alertMarkersLayer);
+            });
+        }
+
+        function bringAlertLayersToFront() {
+            if (overlayLayers.oblast) {
+                overlayLayers.oblast.bringToFront();
+            }
+            if (overlayLayers.raion) {
+                overlayLayers.raion.bringToFront();
+            }
+            if (overlayLayers.hromada) {
+                overlayLayers.hromada.bringToFront();
+            }
+            if (specialAlertLayer) {
+                specialAlertLayer.bringToFront();
+            }
+            if (alertMarkersLayer) {
+                alertMarkersLayer.eachLayer(function(layer) {
+                    if (layer && layer.bringToFront) {
+                        layer.bringToFront();
+                    }
+                });
+            }
+            if (threatOverlayLayer) {
+                threatOverlayLayer.eachLayer(function(layer) {
+                    if (layer && layer.bringToFront) {
+                        layer.bringToFront();
+                    }
+                });
+            }
+        }
+
+        function refreshLayout() {
+            window.requestAnimationFrame(() => {
+                map.invalidateSize(false);
+            });
+        }
+
+        function buildMaskFeature(ukraineGeometry) {
+            // Outer ring covers the whole world; Ukraine polygon(s) become holes via evenodd fill rule.
+            var worldRing = [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]];
+            var holeRings = [];
+
+            if (ukraineGeometry.type === 'Polygon') {
+                holeRings.push(ukraineGeometry.coordinates[0]);
+            } else if (ukraineGeometry.type === 'MultiPolygon') {
+                ukraineGeometry.coordinates.forEach(function (polyCoords) {
+                    holeRings.push(polyCoords[0]);
+                });
+            }
+
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [worldRing].concat(holeRings),
+                },
+            };
+        }
+
+        async function collectOblastHoleRings() {
+            // Fetch oblast-level regions and extract their outer rings for use as holes in the world mask.
+            const response = await fetch(buildUrl('/map/features', { layer: 'oblast' }), {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!response.ok) { return null; }
+            const data = await response.json();
+            if (!data.features || !data.features.length) { return null; }
+
+            const worldRing = [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]];
+            const holeRings = [];
+            data.features.forEach(function (feature) {
+                var props = feature && feature.properties ? feature.properties : null;
+                // Keep only oblast polygons in fallback mask construction.
+                // The oblast endpoint can also include city polygons (e.g. Kyiv),
+                // and nested holes would produce a grey filled "island" on the map.
+                if (!props || props.region_type !== 'oblast') { return; }
+
+                var geom = feature.geometry;
+                if (!geom) { return; }
+                if (geom.type === 'Polygon') {
+                    holeRings.push(geom.coordinates[0]);
+                } else if (geom.type === 'MultiPolygon') {
+                    geom.coordinates.forEach(function (polyCoords) { holeRings.push(polyCoords[0]); });
+                }
+            });
+            if (!holeRings.length) { return null; }
+            return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [worldRing].concat(holeRings) } };
+        }
+
+        async function loadUkraineMask() {
+            if (ukraineMaskLayer) {
+                map.removeLayer(ukraineMaskLayer);
+                ukraineMaskLayer = null;
+            }
+
+            try {
+                var maskFeature = null;
+                var hasBorder = false;
+
+                // Prefer the optimised union endpoint (available after backend deploy).
+                const boundaryResp = await fetch(buildUrl('/map/ukraine-boundary'), {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (boundaryResp.ok) {
+                    const data = await boundaryResp.json();
+                    if (data.feature && data.feature.geometry) {
+                        ukraineBoundaryGeometry = data.feature.geometry;
+                        maskFeature = buildMaskFeature(data.feature.geometry);
+                        hasBorder = true;
+                    }
+                }
+
+                // Fallback: build mask from individual oblast features (no external dependency).
+                if (!maskFeature) {
+                    maskFeature = await collectOblastHoleRings();
+                }
+
+                if (!maskFeature) { return; }
+
+                var isDark = document.body.classList.contains('dark');
+                ukraineMaskLayer = L.geoJSON(maskFeature, {
+                    style: {
+                        fillColor:   isDark ? '#131e28' : '#e8f0f4',
+                        fillOpacity: 1.0,
+                        stroke:      hasBorder,
+                        color:       isDark ? '#2a4258' : '#91afc0',
+                        weight:      1.8,
+                    },
+                    interactive: false,
+                }).addTo(map);
+            } catch (_e) {
+                // mask is optional — proceed without it
+            }
+        }
+
+        window.setMapTheme = function (isDark) {
+            document.body.classList.toggle('dark', isDark);
+            if (tileLayer) {
+                tileLayer.setOpacity(isDark ? 0.82 : 0.93);
+            }
+            if (ukraineMaskLayer) {
+                ukraineMaskLayer.setStyle({
+                    fillColor:   isDark ? '#131e28' : '#e8f0f4',
+                    color:       isDark ? '#2a4258' : '#91afc0',
+                });
+            }
+
+            if (mapReady) {
+                scheduleOverlayRefresh();
+            }
+        };
+
+        function buildUrl(path, searchParams) {
+            const url = new URL(apiBaseUrl.replace(/\/$/, '') + path);
+            if (searchParams) {
+                Object.entries(searchParams).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null && value !== '') {
+                        url.searchParams.set(key, String(value));
+                    }
+                });
+            }
+            return url.toString();
+        }
+
+        async function loadConfig() {
+            setStatus('Завантажуємо мапу…');
+            const response = await fetch(buildUrl('/map/config'), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Не вдалося відкрити мапу.');
+            }
+
+            const config = await response.json();
+            activeConfig = config;
+            const defaultLayer = config.layers.find((layer) => layer.is_default) || config.layers[0];
+
+            if (!defaultLayer) {
+                throw new Error('Не вдалося підготувати мапу.');
+            }
+
+            if (tileLayer) {
+                map.removeLayer(tileLayer);
+            }
+
+            tileLayer = L.tileLayer(defaultLayer.url_template, {
+                attribution: defaultLayer.attribution_uk,
+                minZoom: defaultLayer.min_zoom,
+                maxZoom: defaultLayer.max_zoom,
+                subdomains: defaultLayer.subdomains,
+                opacity: 0.92,
+            }).addTo(map);
+
+            tileLayer.on('tileerror', function () {
+                setStatus('Мапу відкрито. Якщо фон не видно, все одно можна вибрати місце.');
+            });
+
+            refreshLayout();
+        }
+
+        function getVisibleLayers() {
+            if (!activeConfig || !activeConfig.overlay_config || !activeConfig.overlay_config.min_zoom_by_layer) {
+                return ['oblast', 'raion'];
+            }
+
+            const zoom = map.getZoom();
+            const thresholds = activeConfig.overlay_config.min_zoom_by_layer;
+            const layers = ['oblast', 'raion'];
+
+            if (zoom >= Number(thresholds.hromada || 10)) {
+                layers.push('hromada');
+            }
+
+            return layers;
+        }
+
+        function formatBbox(bounds) {
+            return [
+                bounds.getWest().toFixed(6),
+                bounds.getSouth().toFixed(6),
+                bounds.getEast().toFixed(6),
+                bounds.getNorth().toFixed(6)
+            ].join(',');
+        }
+
+        function normalizeRegionTitle(value) {
+            return String(value || '')
+                .toLowerCase()
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function isKyivCityFeature(feature) {
+            var props = feature && feature.properties ? feature.properties : {};
+            var title = normalizeRegionTitle(props.title_uk);
+            return props.region_type === 'city'
+                && (title === 'київ' || title === 'м. київ' || title === 'м київ');
+        }
+
+        function featureStyle(feature, layerId) {
+            const status = feature && feature.properties ? feature.properties.status : ' ';
+            const alertType = feature && feature.properties ? (feature.properties.alert_type || 'air_raid') : 'air_raid';
+            const baseAlertType = layerId === 'special' ? alertType : 'air_raid';
+            const isActive  = status === 'A';
+            const isPartial = status === 'P';
+            const palette = getAlertPalette(baseAlertType);
+
+            if (layerId === 'oblast' && isKyivCityFeature(feature)) {
+                return {
+                    stroke: false,
+                    fillColor: '#000000',
+                    fillOpacity: 0.001,
+                };
+            }
+
+            // Hide borders for raion/hromada (requested), keep only alert fill.
+            if (layerId === 'raion' || layerId === 'hromada') {
+                return {
+                    stroke:      false,
+                    fillColor:   palette.fill,
+                    fillOpacity: isActive ? palette.fillOpacity : 0,
+                };
+            }
+
+            if (layerId === 'special') {
+                return {
+                    stroke:      false,
+                    fillColor:   palette.fill,
+                    fillOpacity: isActive ? palette.fillOpacity : 0,
+                };
+            }
+
+            const weight = layerId === 'oblast' ? 2.5 : layerId === 'raion' ? 1.8 : 1.0;
+            return {
+                color:       (isActive || isPartial) ? palette.stroke : '#4d7a8a',
+                weight:      weight,
+                fillColor:   palette.fill,
+                fillOpacity: isActive ? palette.fillOpacity : 0,  // P = no fill; sub-regions show fill instead
+            };
+        }
+
+        function selectPoint(latlng) {
+            if (window.AndroidBridge && window.AndroidBridge.onPointSelected) {
+                window.AndroidBridge.onPointSelected(latlng.lat, latlng.lng);
+            }
+        }
+
+        function bindFeatureTooltip(feature, layer) {
+            layer.on('click', function (event) {
+                if (event && event.latlng) {
+                    L.DomEvent.stopPropagation(event);
+                    selectPoint(event.latlng);
+                }
+            });
+        }
+
+        function fitToVisibleData() {
+            if (hasFittedToData) {
+                return;
+            }
+
+            const bounds = [];
+            Object.values(overlayLayers).forEach((layer) => {
+                if (layer && layer.getLayers && layer.getLayers().length > 0) {
+                    bounds.push(layer.getBounds());
+                }
+            });
+
+            if (bounds.length === 0) {
+                return;
+            }
+
+            let combinedBounds = bounds[0];
+            for (let index = 1; index < bounds.length; index += 1) {
+                combinedBounds = combinedBounds.extend(bounds[index]);
+            }
+
+            hasFittedToData = true;
+            map.fitBounds(combinedBounds.pad(0.03), {
+                animate: false,
+            });
+            refreshLayout();
+        }
+
+        async function loadLayer(layerId) {
+            const packVersions = activeConfig && activeConfig.overlay_config
+                ? activeConfig.overlay_config.geometry_pack_versions || {}
+                : {};
+            const response = await fetch(buildUrl('/map/features', {
+                layer: layerId,
+                zoom: map.getZoom(),
+                pack_version: packVersions[layerId],
+            }), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Не вдалося оновити мапу.');
+            }
+
+            const data = await response.json();
+            const geoJsonLayer = L.geoJSON(data.features || [], {
+                style: (feature) => featureStyle(feature, layerId),
+                onEachFeature: bindFeatureTooltip,
+            });
+
+            if (overlayLayers[layerId]) {
+                map.removeLayer(overlayLayers[layerId]);
+            }
+
+            overlayLayers[layerId] = geoJsonLayer.addTo(map);
+        }
+
+        async function loadSpecialAlertLayer() {
+            const packVersions = activeConfig && activeConfig.overlay_config
+                ? activeConfig.overlay_config.geometry_pack_versions || {}
+                : {};
+            const response = await fetch(buildUrl('/map/features', {
+                layer: 'hromada',
+                zoom: map.getZoom(),
+                pack_version: packVersions.hromada,
+            }), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Не вдалося оновити спеціальні тривоги на мапі.');
+            }
+
+            const data = await response.json();
+            const specialFeatures = (data.features || []).filter(function(feature) {
+                var props = feature && feature.properties;
+                return props && props.status === 'A' && isSpecialAlertType(props.alert_type);
+            });
+
+            const geoJsonLayer = L.geoJSON(specialFeatures, {
+                style: function(feature) { return featureStyle(feature, 'special'); },
+                onEachFeature: bindFeatureTooltip,
+            });
+
+            if (specialAlertLayer) {
+                map.removeLayer(specialAlertLayer);
+            }
+
+            specialAlertLayer = geoJsonLayer.addTo(map);
+        }
+
+        async function refreshOverlays() {
+            if (!activeConfig) {
+                return;
+            }
+
+            const visibleLayers = getVisibleLayers();
+            setStatus('Оновлюємо мапу…');
+
+            await Promise.all(visibleLayers.map((layerId) => loadLayer(layerId)));
+            await loadSpecialAlertLayer();
+            await loadThreatOverlays();
+
+            Object.keys(overlayLayers).forEach((layerId) => {
+                if (!visibleLayers.includes(layerId) && overlayLayers[layerId]) {
+                    map.removeLayer(overlayLayers[layerId]);
+                    overlayLayers[layerId] = null;
+                }
+            });
+
+            fitToVisibleData();
+            refreshLayout();
+            refreshAlertMarkers();
+            bringAlertLayersToFront();
+            setStatus(null);
+        }
+
+        function scheduleOverlayRefresh() {
+            if (refreshTimerId) {
+                window.clearTimeout(refreshTimerId);
+            }
+
+            refreshTimerId = window.setTimeout(() => {
+                refreshOverlays().catch((error) => {
+                    console.error(error);
+                    setStatus(error.message || 'Не вдалося оновити мапу.');
+                });
+            }, 160);
+        }
+
+        function runWhenReady(fn) {
+            if (mapReady) { fn(); } else { mapReadyQueue.push(fn); }
+        }
+
+        async function initializeMap() {
+            mapReady = false;
+            try {
+                refreshLayout();
+                await loadConfig();
+                await loadUkraineMask();
+                await refreshOverlays();
+                mapReady = true;
+                mapReadyQueue.forEach(function(fn) { fn(); });
+                mapReadyQueue = [];
+            } catch (error) {
+                console.error(error);
+                setStatus(error.message || 'Не вдалося відкрити мапу.');
+            }
+        }
+
+        window.invalidateAlertsUaMap = function () {
+            refreshLayout();
+            window.setTimeout(refreshLayout, 120);
+            window.setTimeout(refreshLayout, 420);
+        };
+
+        window.configureAlertsUa = function (nextApiBaseUrl) {
+            if (!nextApiBaseUrl || typeof nextApiBaseUrl !== 'string') {
+                return;
+            }
+
+            const normalizedUrl = nextApiBaseUrl.replace(/\/$/, '');
+            if (normalizedUrl === apiBaseUrl) {
+                refreshLayout();
+                return;
+            }
+
+            apiBaseUrl = normalizedUrl;
+            hasFittedToData = false;
+            mapReady = false;
+            mapReadyQueue = [];
+            ukraineBoundaryGeometry = null;
+            if (ukraineMaskLayer) {
+                map.removeLayer(ukraineMaskLayer);
+                ukraineMaskLayer = null;
+            }
+            if (specialAlertLayer) {
+                map.removeLayer(specialAlertLayer);
+                specialAlertLayer = null;
+            }
+            if (threatOverlayLayer) {
+                map.removeLayer(threatOverlayLayer);
+                threatOverlayLayer = null;
+            }
+            initializeMap();
+        };
+
+        function pointInRing(ring, x, y) {
+            var inside = false;
+            for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                var xi = ring[i][0], yi = ring[i][1];
+                var xj = ring[j][0], yj = ring[j][1];
+                if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+
+        function pointInGeometry(lng, lat, geom) {
+            if (!geom) { return false; }
+            if (geom.type === 'Polygon') {
+                if (!pointInRing(geom.coordinates[0], lng, lat)) { return false; }
+                for (var h = 1; h < geom.coordinates.length; h++) {
+                    if (pointInRing(geom.coordinates[h], lng, lat)) { return false; }
+                }
+                return true;
+            }
+            if (geom.type === 'MultiPolygon') {
+                return geom.coordinates.some(function(poly) {
+                    if (!pointInRing(poly[0], lng, lat)) { return false; }
+                    for (var h = 1; h < poly.length; h++) {
+                        if (pointInRing(poly[h], lng, lat)) { return false; }
+                    }
+                    return true;
+                });
+            }
+            return false;
+        }
+
+        function isInsideUkraine(latlng) {
+            if (ukraineBoundaryGeometry) {
+                return pointInGeometry(latlng.lng, latlng.lat, ukraineBoundaryGeometry);
+            }
+            // Fallback: check against loaded oblast features
+            if (overlayLayers.oblast) {
+                var found = false;
+                overlayLayers.oblast.eachLayer(function(featureLayer) {
+                    if (found) { return; }
+                    if (featureLayer.feature && featureLayer.feature.geometry) {
+                        if (pointInGeometry(latlng.lng, latlng.lat, featureLayer.feature.geometry)) {
+                            found = true;
+                        }
+                    }
+                });
+                return found;
+            }
+            return false;
+        }
+
+        window.addSubscriptionMarker = function(lat, lon, markerId) {
+            runWhenReady(function() {
+                if (subscriptionMarkers[markerId]) {
+                    map.removeLayer(subscriptionMarkers[markerId]);
+                }
+                var icon = L.divIcon({
+                    className: '',
+                    html: '<div class="sub-marker"></div>',
+                    iconSize: [28, 36],
+                    iconAnchor: [14, 36],
+                });
+                var id = markerId;
+                var marker = L.marker([lat, lon], { icon: icon, zIndexOffset: 600 }).addTo(map);
+                marker.on('click', function() {
+                    if (window.AndroidBridge && window.AndroidBridge.onSubscriptionMarkerTapped) {
+                        window.AndroidBridge.onSubscriptionMarkerTapped(id);
+                    }
+                });
+                subscriptionMarkers[id] = marker;
+            });
+        };
+
+        window.removeSubscriptionMarker = function(markerId) {
+            if (subscriptionMarkers[markerId]) {
+                map.removeLayer(subscriptionMarkers[markerId]);
+                delete subscriptionMarkers[markerId];
+            }
+        };
+
+        window.restoreSubscriptionMarkers = function(markersList) {
+            markersList.forEach(function(m) {
+                window.addSubscriptionMarker(m.lat, m.lon, m.markerId);
+            });
+        };
+
+        map.on('click', function (event) {
+            if (!isInsideUkraine(event.latlng)) { return; }
+            selectPoint(event.latlng);
+        });
+
+        window.addEventListener('resize', refreshLayout);
+
+        // Auto-refresh alert states every 30 seconds
+        setInterval(function () {
+            if (!mapReady) { return; }
+            refreshOverlays().catch(function (error) {
+                console.warn('Auto-refresh failed:', error);
+            });
+        }, 30000);
+
+        initializeMap();
+    </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+[Unit]
+Description=Alerts UA push dispatcher
+After=network.target
+
+[Service]
+Type=oneshot
+User=alerts-ua
+Group=alerts-ua
+WorkingDirectory=/srv/alerts-ua/app/current
+EnvironmentFile=/srv/alerts-ua/env/.env.worker
+ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/workers/push.js

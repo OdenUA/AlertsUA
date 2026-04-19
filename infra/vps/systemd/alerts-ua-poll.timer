@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Alerts UA polling every 60 seconds
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+Unit=alerts-ua-poll.service
+
+[Install]
+WantedBy=timers.target

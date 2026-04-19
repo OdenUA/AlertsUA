@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Alerts UA push dispatcher every 15 seconds
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=15
+Unit=alerts-ua-push.service
+
+[Install]
+WantedBy=timers.target

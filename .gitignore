@@ -1,0 +1,37 @@
+VPS-54592
+TG Gemini
+TG Gemini/
+llm-worker.env
+secrets.env
+
+# Secrets and credentials
+alert-ua-app-firebase-adminsdk-fbsvc-48f98daed8.json
+backend/.env
+backend/.env.*
+.env
+.env.*
+*.pem
+*.key
+!backend/.env.example
+!secrets.env.example
+
+# Android local and generated files
+android-app/local.properties
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/app/google-services.json
+
+# Backend artifacts
+backend/node_modules/
+backend/dist/
+backend/*.tsbuildinfo
+
+# General temporary files
+*.log
+*.tmp
+
+# Local dependencies and oversized local artifacts
+node_modules/
+.tools/gradle-8.7-bin.zip
+docs/research/ukr_admin4.geojson

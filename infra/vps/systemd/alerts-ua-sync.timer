@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Alerts UA Supabase sync every 5 minutes
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=300
+Unit=alerts-ua-sync.service
+
+[Install]
+WantedBy=timers.target
