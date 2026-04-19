@@ -36,6 +36,66 @@ type RegionPoint = {
   longitude: number;
 };
 
+type ThreatVectorDedupeKeyInput = {
+  rawMessageId: string;
+  threatKind: ParseCandidate['threat_kind'];
+  regionHint: string | null;
+  originHint: string | null;
+  targetHint: string | null;
+  directionText: string | null;
+  originUid: number | null;
+  targetUid: number | null;
+  originLat: number | null;
+  originLng: number | null;
+  targetLat: number | null;
+  targetLng: number | null;
+};
+
+export function buildGeminiThreatPrompt(messageText: string) {
+  return [
+    'Extract threats from Ukrainian military alert posts.',
+    'Geographical context:',
+    '- Threats (KAB, UAV, missiles) typically arrive from RF/Belarus (North, East, North-East) or the Black Sea (South).',
+    '- Combine context from multiple lines if they describe the same event. (e.g., "Active aviation in north-east! KAB launches to Kharkiv" = 1 KAB threat towards Kharkiv originating from north-east).',
+    '- If one post describes several simultaneous threats, return one threat object per independently trackable threat.',
+    '- If the same threat kind is reported in multiple current locations with one shared course/target, split it into separate threat objects by current location.',
+    '- Example: "🛵 БпЛА на Сумщині і Харківщині курсом на Полтавщину." = 2 UAV threats: (1) current location Sumy region -> target Poltava region; (2) current location Kharkiv region -> target Poltava region.',
+    '- For each split object, keep the shared target_hint and direction_text the same, but set region_hint to the specific current location. If no earlier launch point is given, origin_hint may repeat that same current location.',
+    '- Do not merge different current locations into one threat object.',
+    '- "БпЛА на півночі Чернігівщини, курс південний" means current location is North Chernihiv region, and movement_bearing_deg is South (180).',
+    '- Directions to bearings: North = 0, North-East = 45, East = 90, South-East = 135, South = 180, South-West = 225, West = 270, North-West = 315.',
+    'Return strict JSON only with this schema:',
+    '{"threats":[{"threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":0.0,"origin_lng":0.0,"target_lat":0.0,"target_lng":0.0,"movement_bearing_deg":0.0}]}',
+    'Coordinates must be WGS84 decimal degrees.',
+    'If exact coordinates are unknown, provide approximate settlement/raion center coordinates.',
+    'If no reliable coordinates or bearing can be extracted, use null for those fields. DO NOT use 0 as fallback.',
+    'No markdown, no comments, no extra keys.',
+    `Text: ${messageText}`,
+  ].join('\n');
+}
+
+export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
+  const normalizeText = (value: string | null) => value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? '';
+  const formatCoords = (lat: number | null, lng: number | null) =>
+    lat !== null && lng !== null ? `${lat.toFixed(4)},${lng.toFixed(4)}` : '';
+
+  return createHash('sha256')
+    .update(
+      [
+        params.rawMessageId,
+        params.threatKind,
+        params.originUid ?? 'unknown',
+        formatCoords(params.originLat, params.originLng),
+        normalizeText(params.originHint ?? params.regionHint),
+        params.targetUid ?? 'unknown',
+        formatCoords(params.targetLat, params.targetLng),
+        normalizeText(params.targetHint ?? params.regionHint),
+        normalizeText(params.directionText),
+      ].join(':'),
+    )
+    .digest('hex');
+}
+
 @Injectable()
 export class GeminiThreatParserService {
   private readonly logger = new Logger(GeminiThreatParserService.name);
@@ -183,21 +243,7 @@ export class GeminiThreatParserService {
     const model = this.configService.get<string>('GEMINI_MODEL') ?? 'gemini-3-flash-preview';
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const prompt = [
-      'Extract threats from Ukrainian military alert posts.',
-      'Geographical context:',
-      '- Threats (KAB, UAV, missiles) typically arrive from RF/Belarus (North, East, North-East) or the Black Sea (South).',
-      '- Combine context from multiple lines if they describe the same event. (e.g., "Active aviation in north-east! KAB launches to Kharkiv" = 1 KAB threat towards Kharkiv originating from north-east).',
-      '- "БпЛА на півночі Чернігівщини, курс південний" means current location is North Chernihiv region, and movement_bearing_deg is South (180).',
-      '- Directions to bearings: North = 0, North-East = 45, East = 90, South-East = 135, South = 180, South-West = 225, West = 270, North-West = 315.',
-      'Return strict JSON only with this schema:',
-      '{"threats":[{"threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":0.0,"origin_lng":0.0,"target_lat":0.0,"target_lng":0.0,"movement_bearing_deg":0.0}]}',
-      'Coordinates must be WGS84 decimal degrees.',
-      'If exact coordinates are unknown, provide approximate settlement/raion center coordinates.',
-      'If no reliable coordinates or bearing can be extracted, use null for those fields. DO NOT use 0 as fallback.',
-      'No markdown, no comments, no extra keys.',
-      `Text: ${messageText}`,
-    ].join('\n');
+    const prompt = buildGeminiThreatPrompt(messageText);
 
     const requestPayload = {
       contents: [
@@ -379,19 +425,20 @@ export class GeminiThreatParserService {
       const occurredAt = new Date(job.message_date);
       const expiresAt = this.estimateExpiry(occurredAt, candidate.threat_kind);
       const vectorId = randomUUID();
-      const dedupeKey = createHash('sha256')
-        .update(
-          [
-            job.raw_message_id,
-            candidate.threat_kind,
-            target?.uid ?? origin?.uid ?? 'unknown',
-            targetLat !== null && targetLng !== null
-              ? `${targetLat.toFixed(4)},${targetLng.toFixed(4)}`
-              : '',
-            candidate.direction_text ?? '',
-          ].join(':'),
-        )
-        .digest('hex');
+      const dedupeKey = buildThreatVectorDedupeKey({
+        rawMessageId: job.raw_message_id,
+        threatKind: candidate.threat_kind,
+        regionHint: candidate.region_hint,
+        originHint: candidate.origin_hint,
+        targetHint: candidate.target_hint,
+        directionText: candidate.direction_text,
+        originUid: origin?.uid ?? null,
+        targetUid: target?.uid ?? null,
+        originLat,
+        originLng,
+        targetLat,
+        targetLng,
+      });
 
       const insertVector = await client.query<{ inserted: number }>(
         `

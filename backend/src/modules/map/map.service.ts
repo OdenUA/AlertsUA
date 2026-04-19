@@ -50,6 +50,7 @@ type ThreatOverlayRow = {
 };
 
 const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
+const UAV_POST_ALERT_GRACE_INTERVAL_SQL = "INTERVAL '1 hour'";
 
 @Injectable()
 export class MapService {
@@ -385,13 +386,29 @@ export class MapService {
         JOIN threat_vectors tv ON tv.vector_id = tvo.vector_id
         LEFT JOIN telegram_messages_raw tmr ON tmr.raw_message_id = tv.raw_message_id
         LEFT JOIN region_catalog rc_anchor ON rc_anchor.uid = COALESCE(tv.target_uid, tv.origin_uid)
+        LEFT JOIN LATERAL (
+          SELECT e.occurred_at AS last_ended_at
+          FROM air_raid_events e
+          WHERE e.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
+            AND e.event_kind = 'ended'
+          ORDER BY e.occurred_at DESC
+          LIMIT 1
+        ) last_end ON TRUE
         LEFT JOIN air_raid_state_current arc_raion
           ON arc_raion.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
         WHERE tvo.status = 'active'
           AND (
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
-              AND arc_raion.status IN ('A', 'P')
+              AND (tv.expires_at IS NULL OR tv.expires_at > NOW())
+              AND (
+                arc_raion.status IN ('A', 'P')
+                OR (
+                  tv.threat_kind = 'uav'
+                  AND last_end.last_ended_at IS NOT NULL
+                  AND last_end.last_ended_at + ${UAV_POST_ALERT_GRACE_INTERVAL_SQL} > NOW()
+                )
+              )
             )
             OR (
               COALESCE(tv.target_uid, tv.origin_uid) IS NULL
