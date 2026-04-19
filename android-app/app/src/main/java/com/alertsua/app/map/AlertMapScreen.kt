@@ -1,5 +1,12 @@
 package com.alertsua.app.map
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import android.graphics.BitmapFactory
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -57,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.data.OblastAlertHistory
@@ -123,6 +130,7 @@ fun AlertMapScreen(
     var actionMode by remember { mutableStateOf(SheetActionMode.SUBSCRIBE) }
     var activeSubscriptionId by remember { mutableStateOf<String?>(null) }
     var isActionInProgress by remember { mutableStateOf(false) }
+    var retrySubscribeAfterPermissionGrant by remember { mutableStateOf(false) }
 
     // ── Subscription pin list (persisted) ────────────────────────────────────
     val subscriptionPins = remember {
@@ -131,6 +139,76 @@ fun AlertMapScreen(
 
     // ── Map controller ───────────────────────────────────────────────────────
     val mapController = remember { MapController() }
+
+    suspend fun runSubscribeAction() {
+        isActionInProgress = true
+        try {
+            repository.ensureInstallationRegistered(activeApiBaseUrl)
+            val subscriptionId = repository.subscribeToPoint(
+                rawApiBaseUrl = activeApiBaseUrl,
+                latitude = selectedLat,
+                longitude = selectedLon,
+                levelLabel = selectedLevel.apiLabel,
+            )
+            val pin = SubscriptionPin(
+                subscriptionId = subscriptionId,
+                lat = selectedLat,
+                lon = selectedLon,
+                levelLabel = selectedLevel.apiLabel,
+            )
+            subscriptionPins.add(pin)
+            repository.saveSubscriptionPins(subscriptionPins)
+            mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
+            snackbarHostState.showSnackbar(context.getString(R.string.subscribe_success))
+            showBottomSheet = false
+        } catch (e: Exception) {
+            val msg = if (e.message == "NO_INSTALLATION_TOKEN") {
+                context.getString(R.string.subscribe_no_token)
+            } else {
+                context.getString(R.string.subscribe_error)
+            }
+            snackbarHostState.showSnackbar(msg)
+        } finally {
+            isActionInProgress = false
+        }
+    }
+
+    suspend fun runUnsubscribeAction() {
+        isActionInProgress = true
+        try {
+            val subscriptionId = activeSubscriptionId
+                ?: throw IllegalStateException("NO_ACTIVE_SUBSCRIPTION")
+            val tappedPin = subscriptionPins.find { it.subscriptionId == subscriptionId }
+            repository.deleteSubscription(activeApiBaseUrl, subscriptionId)
+            if (tappedPin != null) {
+                subscriptionPins.remove(tappedPin)
+                repository.saveSubscriptionPins(subscriptionPins)
+            }
+            mapController.removeSubscriptionMarker(subscriptionId)
+            snackbarHostState.showSnackbar(context.getString(R.string.unsubscribe_success))
+            showBottomSheet = false
+        } catch (e: Exception) {
+            snackbarHostState.showSnackbar(context.getString(R.string.unsubscribe_error))
+        } finally {
+            isActionInProgress = false
+        }
+    }
+
+    val requestNotificationPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { isGranted ->
+        val shouldRetrySubscribe = retrySubscribeAfterPermissionGrant
+        retrySubscribeAfterPermissionGrant = false
+        if (isGranted && shouldRetrySubscribe) {
+            coroutineScope.launch {
+                runSubscribeAction()
+            }
+        } else if (!isGranted) {
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar(context.getString(R.string.subscribe_permission_required))
+            }
+        }
+    }
 
     LaunchedEffect(refreshTrigger) {
         if (refreshTrigger > 0) {
@@ -192,6 +270,7 @@ fun AlertMapScreen(
     bridge.pointSelectedHandler = { latitude, longitude ->
         selectedLat = latitude
         selectedLon = longitude
+        retrySubscribeAfterPermissionGrant = false
         actionMode = SheetActionMode.SUBSCRIBE
         activeSubscriptionId = null
         resolvedPoint = null
@@ -218,6 +297,7 @@ fun AlertMapScreen(
         } else {
             selectedLat = tappedPin.lat
             selectedLon = tappedPin.lon
+            retrySubscribeAfterPermissionGrant = false
             actionMode = SheetActionMode.UNSUBSCRIBE
             activeSubscriptionId = tappedPin.subscriptionId
             selectedLevel = levelFromApiLabel(tappedPin.levelLabel) ?: selectedLevel
@@ -255,7 +335,10 @@ fun AlertMapScreen(
         // ── Subscribe sheet ──────────────────────────────────────────────────
         if (showBottomSheet) {
             ModalBottomSheet(
-                onDismissRequest = { showBottomSheet = false },
+                onDismissRequest = {
+                    retrySubscribeAfterPermissionGrant = false
+                    showBottomSheet = false
+                },
                 sheetState = sheetState,
                 containerColor = MaterialTheme.colorScheme.surface,
             ) {
@@ -271,52 +354,16 @@ fun AlertMapScreen(
                     isActionInProgress = isActionInProgress,
                     isActionDestructive = !isSubscribeMode,
                     onPrimaryAction = {
-                        coroutineScope.launch {
-                            isActionInProgress = true
-                            try {
+                        if (isSubscribeMode && !context.hasNotificationPermission()) {
+                            retrySubscribeAfterPermissionGrant = true
+                            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            coroutineScope.launch {
                                 if (isSubscribeMode) {
-                                    val subscriptionId = repository.subscribeToPoint(
-                                        rawApiBaseUrl = activeApiBaseUrl,
-                                        latitude = selectedLat,
-                                        longitude = selectedLon,
-                                        levelLabel = selectedLevel.apiLabel,
-                                    )
-                                    val pin = SubscriptionPin(
-                                        subscriptionId = subscriptionId,
-                                        lat = selectedLat,
-                                        lon = selectedLon,
-                                        levelLabel = selectedLevel.apiLabel,
-                                    )
-                                    subscriptionPins.add(pin)
-                                    repository.saveSubscriptionPins(subscriptionPins)
-                                    mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
-                                    snackbarHostState.showSnackbar(context.getString(R.string.subscribe_success))
+                                    runSubscribeAction()
                                 } else {
-                                    val subscriptionId = activeSubscriptionId
-                                        ?: throw IllegalStateException("NO_ACTIVE_SUBSCRIPTION")
-                                    val tappedPin = subscriptionPins.find { it.subscriptionId == subscriptionId }
-                                    repository.deleteSubscription(activeApiBaseUrl, subscriptionId)
-                                    if (tappedPin != null) {
-                                        subscriptionPins.remove(tappedPin)
-                                        repository.saveSubscriptionPins(subscriptionPins)
-                                    }
-                                    mapController.removeSubscriptionMarker(subscriptionId)
-                                    snackbarHostState.showSnackbar(context.getString(R.string.unsubscribe_success))
+                                    runUnsubscribeAction()
                                 }
-                                showBottomSheet = false
-                            } catch (e: Exception) {
-                                val msg = if (isSubscribeMode) {
-                                    if (e.message == "NO_INSTALLATION_TOKEN") {
-                                        context.getString(R.string.subscribe_no_token)
-                                    } else {
-                                        context.getString(R.string.subscribe_error)
-                                    }
-                                } else {
-                                    context.getString(R.string.unsubscribe_error)
-                                }
-                                snackbarHostState.showSnackbar(msg)
-                            } finally {
-                                isActionInProgress = false
                             }
                         }
                     },
@@ -477,6 +524,17 @@ private fun levelFromApiLabel(label: String?): SubscriptionLevel? {
         SubscriptionLevel.OBLAST.apiLabel -> SubscriptionLevel.OBLAST
         else -> null
     }
+}
+
+private fun Context.hasNotificationPermission(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        return true
+    }
+
+    return ContextCompat.checkSelfPermission(
+        this,
+        Manifest.permission.POST_NOTIFICATIONS,
+    ) == PackageManager.PERMISSION_GRANTED
 }
 
 // ─── Region hierarchy rows ────────────────────────────────────────────────────

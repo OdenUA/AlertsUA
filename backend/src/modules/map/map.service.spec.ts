@@ -23,8 +23,9 @@ test('getThreatOverlays keeps UAVs visible shortly after alert end and still enf
   assert.match(capturedSql, /event_kind = 'ended'/);
   assert.match(capturedSql, /tv\.threat_kind = 'uav'/);
   assert.match(capturedSql, /last_end\.last_ended_at \+ INTERVAL '1 hour' > NOW\(\)/);
+  assert.match(capturedSql, /tv\.occurred_at \+ INTERVAL '2 hours' > NOW\(\)/);
   assert.match(capturedSql, /COALESCE\(tv\.target_uid, tv\.origin_uid\) IS NOT NULL/);
-  assert.match(capturedSql, /tv\.expires_at IS NULL OR tv\.expires_at > NOW\(\)/);
+  assert.match(capturedSql, /COALESCE\(tv\.expires_at, tv\.occurred_at \+ INTERVAL '2 hours'\) > NOW\(\)/);
 });
 
 test('getThreatOverlays still applies bbox filtering when requested', async () => {

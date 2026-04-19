@@ -2,8 +2,6 @@ package com.alertsua.app.ui
 
 import android.app.Activity
 import android.content.res.Configuration
-import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,21 +45,27 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.alertsua.app.R
+import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.map.AlertMapScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertsUaApp() {
     val context = LocalContext.current
+    val repository = remember(context) { AlertsRepository(context) }
     val activity = context as? Activity
     val view = LocalView.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    val systemDark = isSystemInDarkTheme()
-    var darkMode by rememberSaveable { mutableStateOf(systemDark) }
+    var darkMode by rememberSaveable { mutableStateOf(repository.loadDarkModeEnabled()) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showThreats by rememberSaveable { mutableStateOf(true) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
+    val toggleDarkMode: () -> Unit = {
+        val nextValue = !darkMode
+        darkMode = nextValue
+        repository.saveDarkModeEnabled(nextValue)
+    }
 
     DisposableEffect(activity, view, isFullscreen) {
         val window = activity?.window
@@ -141,7 +145,7 @@ fun AlertsUaApp() {
                                     contentDescription = "Manual Refresh"
                                 )
                             }
-                            IconButton(onClick = { darkMode = !darkMode }) {
+                            IconButton(onClick = toggleDarkMode) {
                                 Icon(
                                     imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
                                     contentDescription = stringResource(
@@ -215,7 +219,7 @@ fun AlertsUaApp() {
                                 contentDescription = "Manual Refresh"
                             )
                         }
-                        IconButton(onClick = { darkMode = !darkMode }) {
+                        IconButton(onClick = toggleDarkMode) {
                             Icon(
                                 imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
                                 contentDescription = stringResource(

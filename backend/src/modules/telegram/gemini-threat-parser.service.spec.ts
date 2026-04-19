@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildGeminiThreatPrompt, buildThreatVectorDedupeKey } from './gemini-threat-parser.service';
+import {
+  buildGeminiThreatPrompt,
+  buildThreatVectorDedupeKey,
+  getThreatTtlMinutes,
+} from './gemini-threat-parser.service';
 
 test('buildGeminiThreatPrompt asks the LLM to split shared-course multi-region UAV posts', () => {
   const prompt = buildGeminiThreatPrompt('🛵 БпЛА на Сумщині і Харківщині курсом на Полтавщину.');
@@ -56,4 +60,11 @@ test('buildThreatVectorDedupeKey still deduplicates identical parsed threats fro
   };
 
   assert.strictEqual(buildThreatVectorDedupeKey(params), buildThreatVectorDedupeKey(params));
+});
+
+test('getThreatTtlMinutes caps telegram threats at two hours', () => {
+  assert.equal(getThreatTtlMinutes('uav'), 120);
+  assert.equal(getThreatTtlMinutes('kab'), 40);
+  assert.equal(getThreatTtlMinutes('missile'), 35);
+  assert.equal(getThreatTtlMinutes('unknown'), 45);
 });

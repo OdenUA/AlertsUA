@@ -168,7 +168,7 @@
             preferCanvas: true,
             attributionControl: true,
             scrollWheelZoom: true,
-        }).setView([49.0, 31.0], 6);
+        }).setView([49.0, 31.0], 7);
 
         map.getContainer().tabIndex = 0;
         map.on('mouseover', function () {
@@ -201,6 +201,7 @@
         let mapReady = false;
         let mapReadyQueue = [];
         const subscriptionMarkers = {};
+        const INITIAL_FIT_ZOOM_STEP = 1;
 
         const statusPalette = {
             'A': '#d7263d',
@@ -725,15 +726,62 @@
                 && (title === 'київ' || title === 'м. київ' || title === 'м київ');
         }
 
+        function isKyivOblastFeature(feature) {
+            var props = feature && feature.properties ? feature.properties : {};
+            return props.region_type === 'oblast' && normalizeRegionTitle(props.title_uk) === 'київська область';
+        }
+
+        function applyKyivCityInheritedOblastState(features) {
+            if (!Array.isArray(features) || features.length === 0) {
+                return features;
+            }
+
+            var kyivOblastFeature = features.find(isKyivOblastFeature);
+            if (!kyivOblastFeature || !kyivOblastFeature.properties) {
+                return features;
+            }
+
+            var oblastStatus = kyivOblastFeature.properties.status || ' ';
+            var oblastAlertType = kyivOblastFeature.properties.alert_type || 'air_raid';
+
+            features.forEach(function(feature) {
+                if (!feature || !feature.properties || !isKyivCityFeature(feature)) {
+                    return;
+                }
+
+                feature.properties.inherited_oblast_status = oblastStatus;
+                feature.properties.inherited_oblast_alert_type = oblastAlertType;
+            });
+
+            return features;
+        }
+
         function featureStyle(feature, layerId) {
-            const status = feature && feature.properties ? feature.properties.status : ' ';
-            const alertType = feature && feature.properties ? (feature.properties.alert_type || 'air_raid') : 'air_raid';
+            const props = feature && feature.properties ? feature.properties : {};
+            const status = props.status || ' ';
+            const alertType = props.alert_type || 'air_raid';
             const baseAlertType = layerId === 'special' ? alertType : 'air_raid';
             const isActive  = status === 'A';
             const isPartial = status === 'P';
             const palette = getAlertPalette(baseAlertType);
 
             if (layerId === 'oblast' && isKyivCityFeature(feature)) {
+                const inheritedStatus = props.inherited_oblast_status || ' ';
+                const effectiveStatus = isActive ? status : inheritedStatus;
+
+                if (effectiveStatus === 'A') {
+                    const effectiveAlertType = isActive
+                        ? alertType
+                        : (props.inherited_oblast_alert_type || 'air_raid');
+                    const effectivePalette = getAlertPalette(effectiveAlertType);
+
+                    return {
+                        stroke: false,
+                        fillColor: effectivePalette.fill,
+                        fillOpacity: effectivePalette.fillOpacity,
+                    };
+                }
+
                 return {
                     stroke: false,
                     fillColor: '#000000',
@@ -807,6 +855,9 @@
             map.fitBounds(combinedBounds.pad(0.03), {
                 animate: false,
             });
+            map.setZoom(Math.min(map.getZoom() + INITIAL_FIT_ZOOM_STEP, map.getMaxZoom()), {
+                animate: false,
+            });
             refreshLayout();
         }
 
@@ -829,7 +880,12 @@
             }
 
             const data = await response.json();
-            const geoJsonLayer = L.geoJSON(data.features || [], {
+            const features = data.features || [];
+            if (layerId === 'oblast') {
+                applyKyivCityInheritedOblastState(features);
+            }
+
+            const geoJsonLayer = L.geoJSON(features, {
                 style: (feature) => featureStyle(feature, layerId),
                 onEachFeature: bindFeatureTooltip,
             });

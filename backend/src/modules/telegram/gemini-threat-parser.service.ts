@@ -96,6 +96,13 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
     .digest('hex');
 }
 
+export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown') {
+  const baseTtlMinutes =
+    threatKind === 'uav' ? 180 : threatKind === 'kab' ? 40 : threatKind === 'missile' ? 35 : 45;
+
+  return Math.min(baseTtlMinutes, 120);
+}
+
 @Injectable()
 export class GeminiThreatParserService {
   private readonly logger = new Logger(GeminiThreatParserService.name);
@@ -885,8 +892,7 @@ export class GeminiThreatParserService {
   }
 
   private estimateExpiry(occurredAt: Date, threatKind: ParseCandidate['threat_kind']) {
-    const ttlMinutes =
-      threatKind === 'uav' ? 180 : threatKind === 'kab' ? 40 : threatKind === 'missile' ? 35 : 45;
+    const ttlMinutes = getThreatTtlMinutes(threatKind);
     return new Date(occurredAt.getTime() + ttlMinutes * 60_000);
   }
 

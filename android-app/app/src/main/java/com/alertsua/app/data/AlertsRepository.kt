@@ -83,6 +83,12 @@ class AlertsRepository(context: Context) {
         preferences.edit().putString(KEY_API_BASE_URL, normalizeApiBaseUrl(rawValue)).apply()
     }
 
+    fun saveDarkModeEnabled(isEnabled: Boolean) {
+        preferences.edit().putBoolean(KEY_DARK_MODE_ENABLED, isEnabled).apply()
+    }
+
+    fun loadDarkModeEnabled(): Boolean = preferences.getBoolean(KEY_DARK_MODE_ENABLED, false)
+
     fun normalizeApiBaseUrl(rawValue: String): String {
         val trimmed = rawValue.trim().removeSuffix("/")
         if (trimmed.isBlank()) {
@@ -406,6 +412,7 @@ class AlertsRepository(context: Context) {
         const val LEGACY_EMULATOR_API_BASE_URL = "http://10.0.2.2:43100/api/v1"
         const val PREFERENCES_NAME       = "alerts_ua_preferences"
         const val KEY_API_BASE_URL       = "api_base_url"
+        const val KEY_DARK_MODE_ENABLED  = "dark_mode_enabled"
         const val KEY_FCM_TOKEN          = "fcm_token"
         const val KEY_INSTALLATION_TOKEN = "installation_token"
         const val KEY_SUBSCRIPTION_PINS  = "subscription_pins"

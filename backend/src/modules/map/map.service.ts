@@ -51,6 +51,7 @@ type ThreatOverlayRow = {
 
 const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
 const UAV_POST_ALERT_GRACE_INTERVAL_SQL = "INTERVAL '1 hour'";
+const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '2 hours'";
 
 @Injectable()
 export class MapService {
@@ -400,7 +401,8 @@ export class MapService {
           AND (
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
-              AND (tv.expires_at IS NULL OR tv.expires_at > NOW())
+              AND COALESCE(tv.expires_at, tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL}) > NOW()
+              AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
               AND (
                 arc_raion.status IN ('A', 'P')
                 OR (
@@ -412,7 +414,8 @@ export class MapService {
             )
             OR (
               COALESCE(tv.target_uid, tv.origin_uid) IS NULL
-              AND (tv.expires_at IS NULL OR tv.expires_at > NOW())
+              AND COALESCE(tv.expires_at, tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL}) > NOW()
+              AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
             )
           )
           ${bboxClause}

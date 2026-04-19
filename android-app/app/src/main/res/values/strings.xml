@@ -26,6 +26,7 @@
     <string name="subscribe_confirm">Підписатися</string>
     <string name="subscribe_success">Ви підписані на сповіщення</string>
     <string name="subscribe_error">Не вдалося підписатися. Спробуйте ще раз.</string>
+    <string name="subscribe_permission_required">Дозвольте сповіщення, щоб підписатися на push-сповіщення</string>
     <string name="subscribe_no_token">Увімкніть сповіщення у налаштуваннях телефону</string>
     <string name="subscribe_loading">Підписуємо…</string>
     <string name="push_channel_name">Сповіщення про тривоги</string>
