@@ -190,6 +190,7 @@
         let alertMarkersLayer = null;
         let specialAlertLayer = null;
         let threatOverlayLayer = null;
+        let threatOverlayData = [];
         let hasFittedToData = false;
         let overlayLayers = {
             oblast: null,
@@ -328,6 +329,169 @@
             return [lat, lng];
         }
 
+        function getThreatMarkerSeparationPx() {
+            var zoom = map.getZoom();
+            if (zoom <= 5) {
+                return 56;
+            }
+            if (zoom <= 6) {
+                return 46;
+            }
+            if (zoom <= 7) {
+                return 38;
+            }
+            if (zoom <= 8) {
+                return 32;
+            }
+            if (zoom <= 10) {
+                return 24;
+            }
+            return 18;
+        }
+
+        function resolveThreatMarkerEntries(overlays) {
+            var zoom = map.getZoom();
+            var minSeparationPx = getThreatMarkerSeparationPx();
+            var entries = [];
+
+            overlays.forEach(function (overlay, index) {
+                var markerLatLng = extractOverlayMarkerLatLng(overlay);
+                if (!markerLatLng) {
+                    return;
+                }
+
+                var basePoint = map.project(L.latLng(markerLatLng[0], markerLatLng[1]), zoom);
+                entries.push({
+                    overlay: overlay,
+                    index: index,
+                    basePoint: L.point(basePoint.x, basePoint.y),
+                    point: L.point(basePoint.x, basePoint.y),
+                });
+            });
+
+            if (entries.length <= 1) {
+                return entries;
+            }
+
+            var maxIterations = 12;
+            var maxOffsetPx = minSeparationPx * 2.8;
+
+            for (var iteration = 0; iteration < maxIterations; iteration += 1) {
+                var moved = false;
+
+                for (var leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
+                    for (var rightIndex = leftIndex + 1; rightIndex < entries.length; rightIndex += 1) {
+                        var leftEntry = entries[leftIndex];
+                        var rightEntry = entries[rightIndex];
+                        var deltaX = rightEntry.point.x - leftEntry.point.x;
+                        var deltaY = rightEntry.point.y - leftEntry.point.y;
+                        var distance = Math.sqrt((deltaX * deltaX) + (deltaY * deltaY));
+
+                        if (distance >= minSeparationPx) {
+                            continue;
+                        }
+
+                        moved = true;
+
+                        if (distance < 0.01) {
+                            var seedAngle = (leftEntry.index + rightEntry.index + iteration + 1) * 2.3999632297;
+                            deltaX = Math.cos(seedAngle);
+                            deltaY = Math.sin(seedAngle);
+                            distance = 1;
+                        }
+
+                        var overlap = (minSeparationPx - distance) / 2;
+                        var unitX = deltaX / distance;
+                        var unitY = deltaY / distance;
+
+                        leftEntry.point.x -= unitX * overlap;
+                        leftEntry.point.y -= unitY * overlap;
+                        rightEntry.point.x += unitX * overlap;
+                        rightEntry.point.y += unitY * overlap;
+                    }
+                }
+
+                entries.forEach(function (entry) {
+                    var tetherX = entry.point.x - entry.basePoint.x;
+                    var tetherY = entry.point.y - entry.basePoint.y;
+                    var tetherDistance = Math.sqrt((tetherX * tetherX) + (tetherY * tetherY));
+
+                    if (tetherDistance > maxOffsetPx) {
+                        var clampScale = maxOffsetPx / tetherDistance;
+                        entry.point.x = entry.basePoint.x + (tetherX * clampScale);
+                        entry.point.y = entry.basePoint.y + (tetherY * clampScale);
+                    }
+                });
+
+                if (!moved) {
+                    break;
+                }
+            }
+
+            return entries;
+        }
+
+        function buildThreatOverlayLayer(overlays) {
+            var layerGroup = L.layerGroup();
+
+            overlays.forEach(function (overlay) {
+                if (!overlay.area) {
+                    return;
+                }
+
+                L.geoJSON({
+                    type: 'Feature',
+                    geometry: overlay.area,
+                    properties: {}
+                }, {
+                    style: {
+                        color: overlay.color_hex || '#d7263d',
+                        weight: 1.4,
+                        opacity: 0.7,
+                        fillColor: overlay.color_hex || '#d7263d',
+                        fillOpacity: 0.16,
+                    },
+                    interactive: false,
+                }).addTo(layerGroup);
+            });
+
+            resolveThreatMarkerEntries(overlays).forEach(function (entry) {
+                try {
+                    var overlay = entry.overlay;
+                    var markerLatLng = map.unproject(entry.point, map.getZoom());
+                    var icon = makeThreatIcon(overlay.threat_kind || overlay.icon_type || 'unknown', overlay.movement_bearing_deg);
+                    var mk = L.marker([markerLatLng.lat, markerLatLng.lng], {
+                        icon: icon,
+                        interactive: true,
+                        zIndexOffset: 760,
+                    });
+
+                    if (overlay.message_text && overlay.message_date) {
+                        var msgTime = new Date(overlay.message_date).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+                        var popupContent = '<b>' + msgTime + '</b><br><br>' + overlay.message_text;
+                        mk.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
+                    }
+
+                    mk.addTo(layerGroup);
+                } catch (err) {
+                    console.error('Error drawing overlay marker:', err, entry.overlay);
+                }
+            });
+
+            return layerGroup;
+        }
+
+        function renderThreatOverlays() {
+            if (threatOverlayLayer) {
+                map.removeLayer(threatOverlayLayer);
+            }
+
+            threatOverlayLayer = buildThreatOverlayLayer(threatOverlayData);
+            if (showThreats) {
+                threatOverlayLayer.addTo(map);
+            }
+        }
+
         let showThreats = true;
 
         function setThreatsVisibility(visible) {
@@ -355,82 +519,8 @@
             }
 
             const data = await response.json();
-            const overlays = data.overlays || [];
-            const layerGroup = L.layerGroup();
-
-            const markerCounts = {};
-
-            overlays.forEach(function (overlay) {
-                try {
-                    if (overlay.area) {
-                        L.geoJSON({
-                            type: 'Feature',
-                            geometry: overlay.area,
-                            properties: {}
-                        }, {
-                            style: {
-                                color: overlay.color_hex || '#d7263d',
-                                weight: 1.4,
-                                opacity: 0.7,
-                                fillColor: overlay.color_hex || '#d7263d',
-                                fillOpacity: 0.16,
-                            },
-                            interactive: false,
-                        }).addTo(layerGroup);
-                    }
-
-                    // We do not render the global corridor lines anymore.
-                    // The threat direction is visually drawn by rotating the threat icons.
-
-                    var markerLatLng = extractOverlayMarkerLatLng(overlay);
-                    if (markerLatLng) {
-                        var coordKey = markerLatLng[0].toFixed(3) + ',' + markerLatLng[1].toFixed(3);
-                        if (markerCounts[coordKey]) {
-                            var count = markerCounts[coordKey];
-                            
-                            // Calculate a small spiral offset to prevent exact overlap
-                            // ~0.04 degrees is roughly 4-5km
-                            var baseOffset = 0.045;
-                            var radius = baseOffset * Math.ceil(count / 6);
-                            var angleDelta = (Math.PI * 2) / 6;
-                            var offsetAngle = count * angleDelta;
-                            
-                            markerLatLng[0] += Math.sin(offsetAngle) * radius;
-                            // account for longitude shrinking at higher latitudes
-                            markerLatLng[1] += Math.cos(offsetAngle) * radius * 1.5;
-                            
-                            markerCounts[coordKey] += 1;
-                        } else {
-                            markerCounts[coordKey] = 1;
-                        }
-
-                        var icon = makeThreatIcon(overlay.threat_kind || overlay.icon_type || 'unknown', overlay.movement_bearing_deg);
-                        var mk = L.marker(markerLatLng, {
-                            icon: icon,
-                            interactive: true,
-                            zIndexOffset: 760,
-                        });
-                        
-                        if (overlay.message_text && overlay.message_date) {
-                            var msgTime = new Date(overlay.message_date).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-                            var popupContent = '<b>' + msgTime + '</b><br><br>' + overlay.message_text;
-                            mk.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
-                        }
-                        
-                        mk.addTo(layerGroup);
-                    }
-                } catch (err) {
-                    console.error('Error drawing overlay:', err, overlay);
-                }
-            });
-
-            if (threatOverlayLayer) {
-                map.removeLayer(threatOverlayLayer);
-            }
-            threatOverlayLayer = layerGroup;
-            if (showThreats) {
-                threatOverlayLayer.addTo(map);
-            }
+            threatOverlayData = data.overlays || [];
+            renderThreatOverlays();
         }
 
         function getFeaturePixelBox(featureLayer) {
@@ -1120,6 +1210,16 @@
         map.on('click', function (event) {
             if (!isInsideUkraine(event.latlng)) { return; }
             selectPoint(event.latlng);
+        });
+
+        map.on('zoomend', function () {
+            if (!mapReady) {
+                return;
+            }
+
+            refreshAlertMarkers();
+            renderThreatOverlays();
+            bringAlertLayersToFront();
         });
 
         window.addEventListener('resize', refreshLayout);

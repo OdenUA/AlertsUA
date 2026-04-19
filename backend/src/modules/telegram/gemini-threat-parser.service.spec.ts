@@ -14,6 +14,14 @@ test('buildGeminiThreatPrompt asks the LLM to split shared-course multi-region U
   assert.match(prompt, /do not merge different current locations into one threat object/i);
 });
 
+test('buildGeminiThreatPrompt asks the LLM to keep one current location when splitting one-origin multi-target UAV posts', () => {
+  const prompt = buildGeminiThreatPrompt('🛵 Група БпЛА на Сумщині курсом на Полтавщину та Харківщину.');
+
+  assert.match(prompt, /region_hint must describe the threat's current location now/i);
+  assert.match(prompt, /Сумщині курсом на Полтавщину та Харківщину/u);
+  assert.match(prompt, /split it into separate threat objects by target while keeping the same current location in region_hint/i);
+});
+
 test('buildThreatVectorDedupeKey keeps two origins from one post distinct when only region_hint differs', () => {
   const common = {
     rawMessageId: '42',

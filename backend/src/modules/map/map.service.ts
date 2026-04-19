@@ -380,7 +380,7 @@ export class MapService {
                tv.expires_at::text,
                tmr.message_text,
                tmr.message_date::text AS message_date,
-               ST_AsGeoJSON(COALESCE(tv.target_geom, tv.origin_geom)) AS marker_json,
+               ST_AsGeoJSON(COALESCE(tv.origin_geom, tv.target_geom)) AS marker_json,
                ST_AsGeoJSON(tv.corridor_geom) AS corridor_json,
                ST_AsGeoJSON(tv.danger_area_geom) AS area_json
         FROM threat_visual_overlays tvo
