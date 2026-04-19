@@ -3,6 +3,7 @@ package com.alertsua.app.notifications
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -40,10 +41,11 @@ class AlertFirebaseService : FirebaseMessagingService() {
 
         // Red for alarm start, green for all-clear
         val color = if (isStart) 0xFFD32F2F.toInt() else 0xFF388E3C.toInt()
-        val smallIcon = if (isStart) android.R.drawable.ic_dialog_alert else android.R.drawable.ic_dialog_info
+        val largeIcon = BitmapFactory.decodeResource(resources, R.drawable.ic_notification_large)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(smallIcon)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setLargeIcon(largeIcon)
             .setColor(color)
             .setContentTitle(title)
             .setContentText(body)

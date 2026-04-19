@@ -4,6 +4,26 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+fun getSigningValue(name: String): String? {
+    val envValue = System.getenv(name)?.trim()
+    if (!envValue.isNullOrEmpty()) return envValue
+
+    val projectValue = project.findProperty(name)?.toString()?.trim()
+    if (!projectValue.isNullOrEmpty()) return projectValue
+
+    return null
+}
+
+val releaseStoreFile = getSigningValue("RELEASE_STORE_FILE")
+val releaseStorePassword = getSigningValue("RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = getSigningValue("RELEASE_KEY_ALIAS")
+val releaseKeyPassword = getSigningValue("RELEASE_KEY_PASSWORD")
+
+val hasReleaseSigning = !releaseStoreFile.isNullOrEmpty() &&
+    !releaseStorePassword.isNullOrEmpty() &&
+    !releaseKeyAlias.isNullOrEmpty() &&
+    !releaseKeyPassword.isNullOrEmpty()
+
 android {
     namespace = "com.alertsua.app"
     compileSdk = 36
@@ -19,9 +39,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -51,6 +85,14 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+tasks.whenTaskAdded {
+    if (name == "bundleRelease" && !hasReleaseSigning) {
+        throw GradleException(
+            "Release signing is not configured. Set RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.",
+        )
     }
 }
 
