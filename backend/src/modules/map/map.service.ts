@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { calculateBearingDegrees, resolveMovementBearingDegrees } from '../../common/utils/bearing.util';
 import { DatabaseService } from '../../common/database/database.service';
 import { TimeUtil } from '../../common/utils/time.util';
 
@@ -50,7 +51,7 @@ type ThreatOverlayRow = {
 };
 
 const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
-const UAV_POST_ALERT_GRACE_INTERVAL_SQL = "INTERVAL '1 hour'";
+const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
 const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '2 hours'";
 
 @Injectable()
@@ -388,13 +389,14 @@ export class MapService {
         LEFT JOIN telegram_messages_raw tmr ON tmr.raw_message_id = tv.raw_message_id
         LEFT JOIN region_catalog rc_anchor ON rc_anchor.uid = COALESCE(tv.target_uid, tv.origin_uid)
         LEFT JOIN LATERAL (
-          SELECT e.occurred_at AS last_ended_at
+          SELECT e.occurred_at AS first_ended_at
           FROM air_raid_events e
           WHERE e.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
             AND e.event_kind = 'ended'
-          ORDER BY e.occurred_at DESC
+            AND e.occurred_at >= tv.occurred_at
+          ORDER BY e.occurred_at ASC
           LIMIT 1
-        ) last_end ON TRUE
+        ) ended_since_occurrence ON TRUE
         LEFT JOIN air_raid_state_current arc_raion
           ON arc_raion.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
         WHERE tvo.status = 'active'
@@ -403,13 +405,10 @@ export class MapService {
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
               AND COALESCE(tv.expires_at, tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL}) > NOW()
               AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
+              AND ended_since_occurrence.first_ended_at IS NULL
               AND (
                 arc_raion.status IN ('A', 'P')
-                OR (
-                  tv.threat_kind = 'uav'
-                  AND last_end.last_ended_at IS NOT NULL
-                  AND last_end.last_ended_at + ${UAV_POST_ALERT_GRACE_INTERVAL_SQL} > NOW()
-                )
+                OR tv.occurred_at + ${THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL} > NOW()
               )
             )
             OR (
@@ -426,23 +425,62 @@ export class MapService {
 
     return {
       generated_at: TimeUtil.getNowInKyiv(),
-      overlays: result.rows.map((row) => ({
-        overlay_id: row.overlay_id,
-        vector_id: row.vector_id,
-        threat_kind: row.threat_kind,
-        confidence: Number(row.confidence),
-        movement_bearing_deg: row.movement_bearing_deg,
-        icon_type: row.icon_type,
-        color_hex: row.color_hex,
-        occurred_at: row.occurred_at,
-        expires_at: row.expires_at,
-        message_text: row.message_text,
-        message_date: row.message_date,
-        marker: row.marker_json ? JSON.parse(row.marker_json) : null,
-        corridor: row.corridor_json ? JSON.parse(row.corridor_json) : null,
-        area: row.area_json ? JSON.parse(row.area_json) : null,
-      })),
+      overlays: result.rows.map((row) => {
+        const marker = row.marker_json ? JSON.parse(row.marker_json) : null;
+        const corridor = row.corridor_json ? JSON.parse(row.corridor_json) : null;
+        const area = row.area_json ? JSON.parse(row.area_json) : null;
+
+        return {
+          overlay_id: row.overlay_id,
+          vector_id: row.vector_id,
+          threat_kind: row.threat_kind,
+          confidence: Number(row.confidence),
+          movement_bearing_deg: this.resolveOverlayBearing(row.movement_bearing_deg, corridor),
+          icon_type: row.icon_type,
+          color_hex: row.color_hex,
+          occurred_at: row.occurred_at,
+          expires_at: row.expires_at,
+          message_text: row.message_text,
+          message_date: row.message_date,
+          marker,
+          corridor,
+          area,
+        };
+      }),
     };
+  }
+
+  private resolveOverlayBearing(storedBearing: number | null, corridor: unknown) {
+    return resolveMovementBearingDegrees(storedBearing, this.getCorridorBearing(corridor));
+  }
+
+  private getCorridorBearing(corridor: unknown) {
+    if (!corridor || typeof corridor !== 'object') {
+      return null;
+    }
+
+    const maybeLineString = corridor as { type?: string; coordinates?: unknown };
+    if (maybeLineString.type !== 'LineString' || !Array.isArray(maybeLineString.coordinates)) {
+      return null;
+    }
+
+    const coordinates = maybeLineString.coordinates;
+    if (coordinates.length < 2) {
+      return null;
+    }
+
+    const start = coordinates[0];
+    const end = coordinates[coordinates.length - 1];
+    if (!Array.isArray(start) || !Array.isArray(end) || start.length < 2 || end.length < 2) {
+      return null;
+    }
+
+    const [startLng, startLat, endLng, endLat] = [start[0], start[1], end[0], end[1]].map((value) => Number(value));
+    if (![startLat, startLng, endLat, endLng].every((value) => Number.isFinite(value))) {
+      return null;
+    }
+
+    return calculateBearingDegrees(startLat, startLng, endLat, endLng);
   }
 
   private resolveLayerRegionTypes(layer: string) {
