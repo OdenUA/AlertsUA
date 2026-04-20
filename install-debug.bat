@@ -47,4 +47,5 @@ echo [*] Restarting app...
 
 echo.
 echo [+] App launched on %EMULATOR%.
+echo [i] Use logcat-app.bat for Alerts-only runtime and crash logs.
 endlocal

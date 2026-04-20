@@ -20,6 +20,11 @@
 - У PostgreSQL створено БД `alerts_ua` з PostGIS i застосовано базову hot-schema.
 - Перший iмпорт XLSX завершився успiшно: `1622` записiв у `region_catalog`.
 
+## Android Debug
+
+- Лог `com.google.android.apps.wellbeing` / `ResourcesManager failed to open APK .../base.apk` пiсля `adb install -r` є системним шумом емульованого Android через застарiлий шлях до попереднього APK, а не крешем `com.alertsua.app`.
+- Для перевiрки реальних помилок застосунку використовуйте `logcat-app.bat`: скрипт фiльтрує `com.alertsua.app`, `AndroidRuntime` i `FATAL EXCEPTION`.
+
 ## Наступнi кроки
 
 1. Встановити залежностi backend i запустити локальний dev server.
