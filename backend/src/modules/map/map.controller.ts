@@ -47,4 +47,9 @@ export class MapController {
   getThreatOverlays(@Query('bbox') bbox?: string) {
     return this.mapService.getThreatOverlays(bbox);
   }
+
+  @Get('active-alerts')
+  getActiveAlerts() {
+    return this.mapService.getActiveAlerts();
+  }
 }

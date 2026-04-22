@@ -21,6 +21,7 @@ android-app/.gradle/
 android-app/build/
 android-app/app/build/
 android-app/app/google-services.json
+GooglePlay
 
 # Backend artifacts
 backend/node_modules/

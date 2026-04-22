@@ -17,9 +17,13 @@ test('getThreatOverlays keeps anchored threats visible briefly before any alert 
 
   const service = new MapService(fakeDatabaseService as never);
   const result = await service.getThreatOverlays();
+  const anchoredBranchMatch = capturedSql.match(
+    /COALESCE\(tv\.target_uid, tv\.origin_uid\) IS NOT NULL([\s\S]*?)OR \(\s*COALESCE\(tv\.target_uid, tv\.origin_uid\) IS NULL/,
+  );
 
   assert.equal(result.overlays.length, 0);
   assert.equal(capturedValues.length, 0);
+  assert.ok(anchoredBranchMatch);
   assert.match(capturedSql, /event_kind = 'ended'/);
   assert.match(capturedSql, /e\.occurred_at >= tv\.occurred_at/);
   assert.match(capturedSql, /tv\.occurred_at \+ INTERVAL '2 hours' > NOW\(\)/);
@@ -28,6 +32,7 @@ test('getThreatOverlays keeps anchored threats visible briefly before any alert 
   assert.match(capturedSql, /COALESCE\(tv\.expires_at, tv\.occurred_at \+ INTERVAL '2 hours'\) > NOW\(\)/);
   assert.match(capturedSql, /arc_raion\.status IN \('A', 'P'\)/);
   assert.match(capturedSql, /ended_since_occurrence\.first_ended_at IS NULL/);
+  assert.doesNotMatch(anchoredBranchMatch[1], /tv\.expires_at/);
   assert.doesNotMatch(capturedSql, /tv\.threat_kind = 'uav'/);
   assert.doesNotMatch(capturedSql, /last_end\.last_ended_at \+ INTERVAL '1 hour' > NOW\(\)/);
 });

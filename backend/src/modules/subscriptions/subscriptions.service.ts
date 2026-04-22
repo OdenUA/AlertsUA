@@ -95,6 +95,15 @@ type PushTokenRow = {
   installation_id: string;
 };
 
+type ScopedSubscriptionSource = {
+  label_user?: string | null;
+  leaf_uid: number | null;
+  raion_uid: number | null;
+  oblast_uid: number | null;
+};
+
+type SubscriptionScope = 'hromada' | 'raion' | 'oblast';
+
 type EffectiveState = {
   effective_status: AlertStatus;
   effective_uid: number | null;
@@ -224,7 +233,13 @@ export class SubscriptionsService {
         resolvedPoint.raion_uid,
         resolvedPoint.oblast_uid,
       );
-      const effectiveState = this.evaluateEffectiveState(resolvedPoint, stateContext.statesByUid);
+      const effectiveState = this.evaluateEffectiveState(
+        {
+          ...resolvedPoint,
+          label_user: dto.label_user ?? null,
+        },
+        stateContext.statesByUid,
+      );
       const subscriptionId = randomUUID();
       const now = TimeUtil.getNowInKyiv();
 
@@ -500,7 +515,7 @@ export class SubscriptionsService {
     const transitionAt = input.occurred_at.toISOString();
 
     for (const subscription of subscriptionsResult.rows) {
-      const previousRuntime = runtimeBySubscription.get(subscription.subscription_id) ?? {
+      const previousRuntimeRaw = runtimeBySubscription.get(subscription.subscription_id) ?? {
         subscription_id: subscription.subscription_id,
         effective_status: ' ' as AlertStatus,
         effective_uid: null,
@@ -511,6 +526,11 @@ export class SubscriptionsService {
         last_end_event_id: null,
       };
       const nextRuntime = this.evaluateEffectiveState(subscription, statesByUid);
+      const previousRuntime = this.normalizeRuntimeForScope(
+        subscription,
+        previousRuntimeRaw,
+        nextRuntime,
+      );
       const previousWasActive = ACTIVE_STATUSES.has(previousRuntime.effective_status);
       const nextIsActive = ACTIVE_STATUSES.has(nextRuntime.effective_status);
       const stateChanged =
@@ -518,12 +538,12 @@ export class SubscriptionsService {
         previousRuntime.effective_uid !== nextRuntime.effective_uid ||
         previousRuntime.effective_started_at !== nextRuntime.effective_started_at;
 
-      let lastStartEventId = previousRuntime.last_start_event_id;
-      let lastEndEventId = previousRuntime.last_end_event_id;
+      let lastStartEventId = previousRuntimeRaw.last_start_event_id;
+      let lastEndEventId = previousRuntimeRaw.last_end_event_id;
 
       if (!previousWasActive && nextIsActive && nextRuntime.effective_uid !== null) {
         lastStartEventId =
-          eventsByKey.get(`${nextRuntime.effective_uid}:started`) ?? previousRuntime.last_start_event_id;
+          eventsByKey.get(`${nextRuntime.effective_uid}:started`) ?? previousRuntimeRaw.last_start_event_id;
         queuedDispatches += await this.queueDispatchesForTransition(client, {
           subscription,
           dispatch_kind: 'start',
@@ -535,7 +555,7 @@ export class SubscriptionsService {
 
       if (previousWasActive && !nextIsActive && previousRuntime.effective_uid !== null) {
         lastEndEventId =
-          eventsByKey.get(`${previousRuntime.effective_uid}:ended`) ?? previousRuntime.last_end_event_id;
+          eventsByKey.get(`${previousRuntime.effective_uid}:ended`) ?? previousRuntimeRaw.last_end_event_id;
         queuedDispatches += await this.queueDispatchesForTransition(client, {
           subscription,
           dispatch_kind: 'end',
@@ -571,7 +591,7 @@ export class SubscriptionsService {
           nextRuntime.effective_status,
           nextRuntime.effective_uid,
           nextRuntime.effective_started_at,
-          stateChanged ? transitionAt : previousRuntime.last_transition_at,
+          stateChanged ? transitionAt : previousRuntimeRaw.last_transition_at,
           input.state_version,
           lastStartEventId,
           lastEndEventId,
@@ -1399,36 +1419,84 @@ export class SubscriptionsService {
     };
   }
 
-  private evaluateEffectiveState(
-    source: {
-      leaf_uid: number | null;
-      raion_uid: number | null;
-      oblast_uid: number | null;
-    },
-    statesByUid: Map<number, Pick<StateRow, 'status' | 'active_from'>>,
-  ): EffectiveState {
-    const chain = [source.leaf_uid, source.raion_uid, source.oblast_uid]
-      .filter((uid): uid is number => uid !== null)
-      .map((uid) => ({ uid, state: statesByUid.get(uid) }));
-
-    for (const item of chain) {
-      if (item.state && ACTIVE_STATUSES.has(item.state.status)) {
-        return {
-          effective_status: item.state.status,
-          effective_uid: item.uid,
-          effective_started_at: item.state.active_from,
-        };
-      }
+  private resolveSubscriptionScope(labelUser: string | null | undefined): SubscriptionScope {
+    if (labelUser === 'Район') {
+      return 'raion';
     }
 
-    for (const item of chain) {
-      if (item.state && item.state.status !== ' ') {
-        return {
-          effective_status: item.state.status,
-          effective_uid: null,
-          effective_started_at: null,
-        };
-      }
+    if (labelUser === 'Область') {
+      return 'oblast';
+    }
+
+    return 'hromada';
+  }
+
+  private resolveScopeTargetUid(source: ScopedSubscriptionSource) {
+    switch (this.resolveSubscriptionScope(source.label_user)) {
+      case 'oblast':
+        return source.oblast_uid ?? source.raion_uid ?? source.leaf_uid;
+      case 'raion':
+        return source.raion_uid ?? source.leaf_uid ?? source.oblast_uid;
+      default:
+        return source.leaf_uid ?? source.raion_uid ?? source.oblast_uid;
+    }
+  }
+
+  private normalizeRuntimeForScope(
+    source: ScopedSubscriptionSource,
+    previousRuntime: RuntimeRow,
+    nextRuntime: EffectiveState,
+  ): RuntimeRow {
+    const targetUid = this.resolveScopeTargetUid(source);
+
+    if (previousRuntime.effective_uid === null || previousRuntime.effective_uid === targetUid) {
+      return previousRuntime;
+    }
+
+    return {
+      ...previousRuntime,
+      effective_status: nextRuntime.effective_status,
+      effective_uid: nextRuntime.effective_uid,
+      effective_started_at: nextRuntime.effective_started_at,
+    };
+  }
+
+  private evaluateEffectiveState(
+    source: ScopedSubscriptionSource,
+    statesByUid: Map<number, Pick<StateRow, 'status' | 'active_from'>>,
+  ): EffectiveState {
+    const targetUid = this.resolveScopeTargetUid(source);
+    if (targetUid === null) {
+      return {
+        effective_status: ' ',
+        effective_uid: null,
+        effective_started_at: null,
+      };
+    }
+
+    const state = statesByUid.get(targetUid);
+    if (!state) {
+      return {
+        effective_status: ' ',
+        effective_uid: null,
+        effective_started_at: null,
+      };
+    }
+
+    if (ACTIVE_STATUSES.has(state.status)) {
+      return {
+        effective_status: state.status,
+        effective_uid: targetUid,
+        effective_started_at: state.active_from,
+      };
+    }
+
+    if (state.status !== ' ') {
+      return {
+        effective_status: state.status,
+        effective_uid: null,
+        effective_started_at: null,
+      };
     }
 
     return {

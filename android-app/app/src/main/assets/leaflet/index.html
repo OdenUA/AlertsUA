@@ -191,6 +191,7 @@
         let specialAlertLayer = null;
         let threatOverlayLayer = null;
         let threatOverlayData = [];
+        let activeAlertsLayer = null;
         let hasFittedToData = false;
         let overlayLayers = {
             oblast: null,
@@ -327,6 +328,24 @@
             }
 
             return [lat, lng];
+        }
+
+        function normalizeBearingDegrees(value) {
+            if (value === null || value === undefined || value === '') {
+                return null;
+            }
+
+            var numeric = Number(value);
+            if (!Number.isFinite(numeric)) {
+                return null;
+            }
+
+            var normalized = numeric % 360;
+            if (normalized < 0) {
+                normalized += 360;
+            }
+
+            return normalized;
         }
 
         function getThreatMarkerSeparationPx() {
@@ -523,6 +542,40 @@
             renderThreatOverlays();
         }
 
+        async function loadActiveAlerts() {
+            const response = await fetch(buildUrl('/map/active-alerts'), {
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (!response.ok) { return; }
+
+            const data = await response.json();
+            const features = data.features || [];
+
+            if (activeAlertsLayer) {
+                map.removeLayer(activeAlertsLayer);
+            }
+
+            if (features.length === 0) {
+                activeAlertsLayer = null;
+                return;
+            }
+
+            activeAlertsLayer = L.geoJSON(features, {
+                style: function(feature) {
+                    var props = feature && feature.properties ? feature.properties : {};
+                    var palette = getAlertPalette(props.alert_type || 'air_raid');
+                    return {
+                        stroke: false,
+                        fillColor: palette.fill,
+                        fillOpacity: palette.fillOpacity * 0.85,
+                    };
+                },
+                onEachFeature: bindFeatureTooltip,
+                interactive: true,
+            }).addTo(map);
+        }
+
         function getFeaturePixelBox(featureLayer) {
             var bounds = featureLayer.getBounds();
             if (!bounds || !bounds.isValid()) {
@@ -595,6 +648,9 @@
                         layer.bringToFront();
                     }
                 });
+            }
+            if (activeAlertsLayer) {
+                activeAlertsLayer.bringToFront();
             }
             if (threatOverlayLayer) {
                 threatOverlayLayer.eachLayer(function(layer) {
@@ -1033,6 +1089,7 @@
 
             await Promise.all(visibleLayers.map((layerId) => loadLayer(layerId)));
             await loadSpecialAlertLayer();
+            await loadActiveAlerts();
             await loadThreatOverlays();
 
             Object.keys(overlayLayers).forEach((layerId) => {
@@ -1111,6 +1168,10 @@
             if (specialAlertLayer) {
                 map.removeLayer(specialAlertLayer);
                 specialAlertLayer = null;
+            }
+            if (activeAlertsLayer) {
+                map.removeLayer(activeAlertsLayer);
+                activeAlertsLayer = null;
             }
             if (threatOverlayLayer) {
                 map.removeLayer(threatOverlayLayer);

@@ -3,17 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
-import {
-  calculateBearingDegrees,
-  normalizeBearingDegrees,
-  resolveMovementBearingDegrees,
-} from '../../common/utils/bearing.util';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
 
 type ParseCandidate = {
+  action: 'new' | 'update' | 'clear';
   threat_kind: 'uav' | 'kab' | 'missile' | 'unknown';
   confidence: number;
   region_hint: string | null;
@@ -56,17 +52,15 @@ type ThreatVectorDedupeKeyInput = {
   targetLng: number | null;
 };
 
-type LlmProvider = 'grok' | 'gemini';
-
 type LlmTarget = {
-  provider: LlmProvider;
+  provider: 'grok' | 'gemini';
   model: string;
   apiKey: string;
 };
 
 const REGION_HINT_STOP_WORDS = new Set(['область', 'район', 'region', 'oblast', 'raion', 'district']);
 
-export function buildGeminiThreatPrompt(messageText: string) {
+export function buildGeminiThreatPrompt(messageText: string, contextText?: string) {
   return [
     'Extract threats from Ukrainian military alert posts.',
     'Geographical context:',
@@ -84,14 +78,16 @@ export function buildGeminiThreatPrompt(messageText: string) {
     '- region_hint, origin_hint, target_hint, and direction_text must be written in Ukrainian only. Never return English place or direction names; translate them to natural Ukrainian forms before output.',
     '- "БпЛА на півночі Чернігівщини, курс південний" means current location is North Chernihiv region, and movement_bearing_deg is South (180).',
     '- Directions to bearings: North = 0, North-East = 45, East = 90, South-East = 135, South = 180, South-West = 225, West = 270, North-West = 315.',
+    '- "Швидкісна ціль" (high-speed target) typically means a missile threat. Extract it as "missile".',
+    '- Action determination: Set "action" to "new" for newly detected threats. Set "action" to "update" if the target message updates a threat from the context (e.g. course change). Set "action" to "clear" if the target message is a cancellation or reports the threat destroyed (e.g. "Відбій", "Збито", "Чисто").',
+    '- Even for "update" and "clear", provide the threat_kind and region/target hints so the previous threat can be identified.',
     'Return strict JSON only with this schema:',
-    '{"threats":[{"threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null}]}',
+    '{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":0.0,"origin_lng":0.0,"target_lat":0.0,"target_lng":0.0,"movement_bearing_deg":0.0}]}',
     'Coordinates must be WGS84 decimal degrees.',
     'If exact coordinates are unknown, provide approximate settlement/raion center coordinates.',
-    'When coordinates are known, movement_bearing_deg must match the direction from origin_lat/origin_lng to target_lat/target_lng.',
     'If no reliable coordinates or bearing can be extracted, use null for those fields. DO NOT use 0 as fallback.',
     'No markdown, no comments, no extra keys.',
-    `Text: ${messageText}`,
+    contextText ? `Recent context messages (for reference only, do not extract threats from these unless they are updated in the target message):\n${contextText}\n\nTarget message to parse:\n${messageText}` : `Text: ${messageText}`,
   ].join('\n');
 }
 
@@ -117,9 +113,12 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
     .digest('hex');
 }
 
-export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown') {
+export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown', hasTarget: boolean) {
+  if (!hasTarget) {
+    return 60;
+  }
   const baseTtlMinutes =
-    threatKind === 'uav' ? 180 : threatKind === 'kab' ? 40 : threatKind === 'missile' ? 35 : 45;
+    threatKind === 'uav' ? 180 : threatKind === 'kab' ? 60 : threatKind === 'missile' ? 35 : 45;
 
   return Math.min(baseTtlMinutes, 120);
 }
@@ -176,7 +175,7 @@ export class GeminiThreatParserService {
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly subscriptionsService: SubscriptionsService,
-  ) {}
+  ) { }
 
   async processPendingJobs() {
     if (!this.databaseService.isConfigured()) {
@@ -203,15 +202,23 @@ export class GeminiThreatParserService {
     for (const job of pendingJobs) {
       try {
         const attemptCount = await this.markJobProcessing(job.job_id);
-        
-        const lowerText = job.message_text.toLowerCase();
-        if (lowerText.includes('відбій') || lowerText.includes('збито') || lowerText.includes('подавлено')) {
-          await this.markJobSuccess(job.job_id); // we mark as success to not re-parse
-          successfulJobs += 1;
-          continue;
-        }
 
-        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text);
+        const contextRows = await this.databaseService.query<{ message_text: string; message_date: string }>(
+          `
+            SELECT message_text, message_date::text
+            FROM telegram_messages_raw
+            WHERE message_date <= $1
+              AND raw_message_id != $2
+            ORDER BY message_date DESC
+            LIMIT 15
+          `,
+          [job.message_date, job.raw_message_id]
+        );
+        const contextText = contextRows.rows.length > 0
+          ? contextRows.rows.reverse().map(r => `[${r.message_date}] ${r.message_text}`).join('\n')
+          : undefined;
+
+        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, contextText);
 
         if (candidates.length === 0) {
           await this.markJobFailed(job.job_id, 'No candidates were extracted by parser.', true);
@@ -306,28 +313,34 @@ export class GeminiThreatParserService {
     );
   }
 
-  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string) {
+  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string, contextText?: string) {
     const llmTargets = this.buildLlmTargets();
     const maxRequestAttempts = this.getAliasedNumberEnv(['LLM_REQUEST_MAX_ATTEMPTS', 'GEMINI_REQUEST_MAX_ATTEMPTS'], 3);
     const retryBaseDelayMs = this.getAliasedNumberEnv(['LLM_REQUEST_RETRY_DELAY_MS', 'GEMINI_REQUEST_RETRY_DELAY_MS'], 1_500);
-    const timeoutMs = this.getAliasedNumberEnv(['LLM_TIMEOUT_MS', 'GEMINI_TIMEOUT_MS'], 30000);
-    const prompt = buildGeminiThreatPrompt(messageText);
-
+    const timeoutMs = this.getAliasedNumberEnv(['LLM_TIMEOUT_MS', 'GEMINI_TIMEOUT_MS'], 30_000);
+    const prompt = buildGeminiThreatPrompt(messageText, contextText);
     let lastError: unknown = null;
 
     for (let targetIndex = 0; targetIndex < llmTargets.length; targetIndex += 1) {
-      const activeTarget = llmTargets[targetIndex];
-      const requestPayloadJson = JSON.stringify(this.buildLlmRequestPayload(activeTarget, prompt));
+      const baseTarget = llmTargets[targetIndex]!;
+      let activeTarget = baseTarget;
+      let requestAttemptLimit = maxRequestAttempts;
+      const geminiFallbackModel =
+        activeTarget.provider === 'gemini'
+          ? this.configService.get<string>('GEMINI_FALLBACK_MODEL') ?? 'gemini-2.5-flash'
+          : null;
 
-      for (let requestAttempt = 1; requestAttempt <= maxRequestAttempts; requestAttempt += 1) {
+      for (let requestAttempt = 1; requestAttempt <= requestAttemptLimit; requestAttempt += 1) {
+        const requestPayloadJson = JSON.stringify(this.buildLlmRequestPayload(activeTarget, prompt));
         let responseStatus: number | null = null;
         let responseBody = '';
         let parsedCandidates: ParseCandidate[] = [];
         let parseErrorText: string | null = null;
         let shouldRetryCurrentTarget = false;
+        let shouldSwitchGeminiModel = false;
 
         this.logger.log(
-          `LLM request job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${maxRequestAttempts} model=${activeTarget.model} payload=${requestPayloadJson}`,
+          `LLM request job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${requestAttemptLimit} model=${activeTarget.model} payload=${requestPayloadJson}`,
         );
 
         try {
@@ -341,7 +354,7 @@ export class GeminiThreatParserService {
           responseStatus = response.status;
           responseBody = await response.text();
           this.logger.log(
-            `LLM response job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${maxRequestAttempts} status=${response.status} model=${activeTarget.model} body=${responseBody}`,
+            `LLM response job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${requestAttemptLimit} status=${response.status} model=${activeTarget.model} body=${responseBody}`,
           );
 
           if (!response.ok) {
@@ -349,8 +362,9 @@ export class GeminiThreatParserService {
           }
 
           parsedCandidates = this.parseLlmCandidates(activeTarget, responseBody);
+
           this.logger.log(
-            `LLM parsed candidates job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${maxRequestAttempts} model=${activeTarget.model} payload=${JSON.stringify(parsedCandidates)}`,
+            `LLM parsed candidates job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${requestAttemptLimit} model=${activeTarget.model} payload=${JSON.stringify(parsedCandidates)}`,
           );
 
           return parsedCandidates
@@ -359,8 +373,13 @@ export class GeminiThreatParserService {
         } catch (error) {
           lastError = error;
           parseErrorText = this.stringifyError(error);
+          shouldSwitchGeminiModel =
+            activeTarget.provider === 'gemini' &&
+            geminiFallbackModel !== null &&
+            activeTarget.model !== geminiFallbackModel &&
+            shouldFallbackToGemini25Flash(responseStatus, parseErrorText);
           shouldRetryCurrentTarget =
-            requestAttempt < maxRequestAttempts &&
+            (requestAttempt < requestAttemptLimit || shouldSwitchGeminiModel) &&
             isRetriableGeminiFailure(responseStatus, parseErrorText);
         } finally {
           await this.persistLlmExchange({
@@ -372,27 +391,41 @@ export class GeminiThreatParserService {
             responseBody,
             parsedCandidates,
             errorText: parseErrorText
-              ? `provider=${activeTarget.provider}; target=${targetIndex + 1}/${llmTargets.length}; request_attempt=${requestAttempt}/${maxRequestAttempts}; ${parseErrorText}`
+              ? `provider=${activeTarget.provider}; target=${targetIndex + 1}/${llmTargets.length}; request_attempt=${requestAttempt}/${requestAttemptLimit};${shouldSwitchGeminiModel ? ` fallback_model=${geminiFallbackModel};` : ''} ${parseErrorText}`
               : null,
           });
         }
 
-        if (shouldRetryCurrentTarget) {
-          const retryDelayMs = getGeminiRetryDelayMs(requestAttempt, retryBaseDelayMs);
-          this.logger.warn(
-            `LLM request retry scheduled job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${maxRequestAttempts} model=${activeTarget.model} delay_ms=${retryDelayMs}`,
-          );
-          await this.delay(retryDelayMs);
-          continue;
+        if (!shouldRetryCurrentTarget) {
+          break;
         }
 
-        const fallbackTarget = llmTargets[targetIndex + 1];
-        if (fallbackTarget) {
+        if (shouldSwitchGeminiModel && geminiFallbackModel !== null) {
+          const previousTarget = activeTarget;
+          if (requestAttempt === requestAttemptLimit) {
+            requestAttemptLimit += 1;
+          }
+          activeTarget = {
+            ...activeTarget,
+            model: geminiFallbackModel,
+          };
           this.logger.warn(
-            `LLM model fallback scheduled job=${jobId} job_attempt=${attemptCount} from_provider=${activeTarget.provider} from_model=${activeTarget.model} to_provider=${fallbackTarget.provider} to_model=${fallbackTarget.model}`,
+            `LLM model fallback scheduled job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} from_provider=${previousTarget.provider} from_model=${previousTarget.model} to_provider=${activeTarget.provider} to_model=${activeTarget.model}`,
           );
         }
-        break;
+
+        const retryDelayMs = getGeminiRetryDelayMs(requestAttempt, retryBaseDelayMs);
+        this.logger.warn(
+          `LLM request retry scheduled job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${requestAttemptLimit} model=${activeTarget.model} delay_ms=${retryDelayMs}`,
+        );
+        await this.delay(retryDelayMs);
+      }
+
+      const fallbackTarget = llmTargets[targetIndex + 1];
+      if (fallbackTarget) {
+        this.logger.warn(
+          `LLM provider fallback scheduled job=${jobId} job_attempt=${attemptCount} from_provider=${activeTarget.provider} from_model=${activeTarget.model} to_provider=${fallbackTarget.provider} to_model=${fallbackTarget.model}`,
+        );
       }
     }
 
@@ -415,20 +448,11 @@ export class GeminiThreatParserService {
     }
 
     if (geminiApiKey) {
-      const primaryGeminiModel = this.configService.get<string>('GEMINI_MODEL') ?? 'gemini-3-flash-preview';
-      const fallbackGeminiModel = this.configService.get<string>('GEMINI_FALLBACK_MODEL') ?? 'gemini-2.5-flash';
       targets.push({
         provider: 'gemini',
-        model: primaryGeminiModel,
+        model: this.configService.get<string>('GEMINI_MODEL') ?? 'gemini-3-flash-preview',
         apiKey: geminiApiKey,
       });
-      if (fallbackGeminiModel !== primaryGeminiModel) {
-        targets.push({
-          provider: 'gemini',
-          model: fallbackGeminiModel,
-          apiKey: geminiApiKey,
-        });
-      }
     }
 
     if (targets.length === 0) {
@@ -478,24 +502,21 @@ export class GeminiThreatParserService {
   }
 
   private getLlmHeaders(target: LlmTarget) {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
     if (target.provider === 'grok') {
-      return {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${target.apiKey}`,
-      } as Record<string, string>;
+      headers.Authorization = `Bearer ${target.apiKey}`;
     }
 
-    return {
-      'Content-Type': 'application/json',
-    } as Record<string, string>;
+    return headers;
   }
 
   private parseLlmCandidates(target: LlmTarget, responseBody: string) {
-    const textPayload =
-      target.provider === 'grok'
-        ? this.extractGrokTextPayload(responseBody)
-        : this.extractGeminiTextPayload(responseBody);
-
+    const textPayload = target.provider === 'grok'
+      ? this.extractGrokTextPayload(responseBody)
+      : this.extractGeminiTextPayload(responseBody);
     const jsonPayload = this.unwrapJson(textPayload);
     if (!jsonPayload) {
       throw new Error(`${this.describeLlmTarget(target)} returned empty JSON payload.`);
@@ -526,20 +547,17 @@ export class GeminiThreatParserService {
     const parsedBody = JSON.parse(responseBody) as {
       choices?: Array<{
         message?: {
-          content?: string | Array<{ type?: string; text?: string }>;
+          content?: string | Array<{ text?: string }>;
         };
       }>;
     };
 
     const content = parsedBody.choices?.[0]?.message?.content;
-    const textPayload =
-      typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content
-              .map((part) => (typeof part?.text === 'string' ? part.text : ''))
-              .join('')
-          : '';
+    const textPayload = typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('')
+        : '';
 
     if (!textPayload.trim()) {
       throw new Error('Grok returned no text payload.');
@@ -623,10 +641,12 @@ export class GeminiThreatParserService {
       return null;
     }
 
+    const action = candidate.action ?? 'new';
     const threatKind = this.normalizeThreatKind(candidate.threat_kind);
     const confidence = Math.max(0, Math.min(1, Number(candidate.confidence ?? 0)));
 
     return {
+      action,
       threat_kind: threatKind,
       confidence,
       region_hint: this.toNullableString(candidate.region_hint),
@@ -658,15 +678,14 @@ export class GeminiThreatParserService {
       const targetLat = candidate.target_lat ?? target?.latitude ?? null;
       const targetLng = candidate.target_lng ?? target?.longitude ?? null;
 
-      const derivedBearing =
-        originLat !== null && originLng !== null && targetLat !== null && targetLng !== null
+      const bearing =
+        candidate.movement_bearing_deg ??
+        (originLat !== null && originLng !== null && targetLat !== null && targetLng !== null
           ? this.calculateBearing(originLat, originLng, targetLat, targetLng)
-          : null;
-
-      const bearing = resolveMovementBearingDegrees(candidate.movement_bearing_deg, derivedBearing);
+          : null);
 
       const occurredAt = new Date(job.message_date);
-      const expiresAt = this.estimateExpiry(occurredAt, candidate.threat_kind);
+      const expiresAt = this.estimateExpiry(occurredAt, candidate.threat_kind, target !== null);
       const vectorId = randomUUID();
       const dedupeKey = buildThreatVectorDedupeKey({
         rawMessageId: job.raw_message_id,
@@ -682,6 +701,40 @@ export class GeminiThreatParserService {
         targetLat,
         targetLng,
       });
+
+      if (candidate.action === 'update' || candidate.action === 'clear') {
+        const updateResult = await client.query(
+          `
+            UPDATE threat_vectors
+            SET expires_at = NOW()
+            WHERE threat_kind = $1
+              AND expires_at > NOW()
+              AND (
+                ($2::int IS NOT NULL AND target_uid = $2)
+                OR ($3::int IS NOT NULL AND origin_uid = $3)
+              )
+            RETURNING vector_id
+          `,
+          [candidate.threat_kind, target?.uid ?? null, origin?.uid ?? null]
+        );
+
+        if (updateResult.rows.length > 0) {
+          const updatedVectorIds = updateResult.rows.map(r => r.vector_id);
+          await client.query(
+            `
+              UPDATE threat_visual_overlays
+              SET status = 'inactive',
+                  updated_at = NOW()
+              WHERE vector_id = ANY($1::uuid[])
+            `,
+            [updatedVectorIds]
+          );
+        }
+      }
+
+      if (candidate.action === 'clear') {
+        continue;
+      }
 
       const insertVector = await client.query<{ inserted: number }>(
         `
@@ -905,7 +958,7 @@ export class GeminiThreatParserService {
     push(translated);
 
     const normalized = translated
-      .replace(/\b(напрямок|курс|на\s+півночі|на\s+півдні|на\s+заході|на\s+сході|північний|південний|західний|східний)\b/gi, ' ')
+      .replace(/\b(напрямок|курс|на\s+півночі|на\s+півдні|на\s+заході|на\s+сході|північний|південний|західний|східний|схід|захід|південь|північ|центр)\b/gi, ' ')
       .replace(/\b(область|район|region|oblast|raion|district)\b/gi, ' ')
       .replace(/\b(н\.п\.|м\.)\s*/gi, ' ')
       .replace(/щин(а|і|у|ою)?/gi, '')
@@ -1129,13 +1182,26 @@ export class GeminiThreatParserService {
     }
   }
 
-  private estimateExpiry(occurredAt: Date, threatKind: ParseCandidate['threat_kind']) {
-    const ttlMinutes = getThreatTtlMinutes(threatKind);
+  private estimateExpiry(occurredAt: Date, threatKind: ParseCandidate['threat_kind'], hasTarget: boolean) {
+    const ttlMinutes = getThreatTtlMinutes(threatKind, hasTarget);
     return new Date(occurredAt.getTime() + ttlMinutes * 60_000);
   }
 
   private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number) {
-    return calculateBearingDegrees(lat1, lon1, lat2, lon2);
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const toDeg = (value: number) => (value * 180) / Math.PI;
+
+    const phi1 = toRad(lat1);
+    const phi2 = toRad(lat2);
+    const deltaLambda = toRad(lon2 - lon1);
+
+    const y = Math.sin(deltaLambda) * Math.cos(phi2);
+    const x =
+      Math.cos(phi1) * Math.sin(phi2) -
+      Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+    const theta = toDeg(Math.atan2(y, x));
+    return (theta + 360) % 360;
   }
 
   private unwrapJson(payload: string) {
@@ -1173,7 +1239,15 @@ export class GeminiThreatParserService {
   }
 
   private toBearing(value: unknown) {
-    return normalizeBearingDegrees(value);
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    const normalized = parsed % 360;
+    return normalized < 0 ? normalized + 360 : normalized;
   }
 
   private stringifyError(error: unknown) {

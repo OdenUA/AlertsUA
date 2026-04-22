@@ -17,9 +17,12 @@ TELEGRAM_SESSION_STRING="INSERT_TELEGRAM_SESSION_STRING"
 # Example: @kpszsu,@channel2,"Channel Name"
 TELEGRAM_CHANNEL_REFS=@kpszsu
 
-# Gemini API Configuration
+# LLM Configuration
+GROK_API_KEY=INSERT_GROK_API_KEY
+GROK_MODEL=grok-4-1-fast-reasoning
 GEMINI_API_KEY=INSERT_GEMINI_API_KEY
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 
 # Optional: Telegram Ingest Settings
 TELEGRAM_INGEST_LIMIT=100

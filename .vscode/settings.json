@@ -1,3 +1,34 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "previewLimit": 50,
+            "server": "se-mariadb-dr.isd.dp.ua",
+            "port": 3306,
+            "driver": "MariaDB",
+            "name": "webmenu",
+            "database": "se_webmenu",
+            "username": "webmenu_ro"
+        },
+        {
+            "ssh": "Enabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "sshOptions": {
+                "port": 22,
+                "host": "173.242.53.129",
+                "username": "root",
+                "privateKeyPath": "D:\\Alerts\\VPS-54592"
+            },
+            "driver": "PostgreSQL",
+            "name": "Alerts UA",
+            "database": "alerts_ua",
+            "username": "alerts_ua_app"
+        }
+    ]
 }

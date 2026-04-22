@@ -44,7 +44,7 @@ class AlertFirebaseService : FirebaseMessagingService() {
         val largeIcon = BitmapFactory.decodeResource(resources, R.drawable.ic_notification_large)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification_small)
             .setLargeIcon(largeIcon)
             .setColor(color)
             .setContentTitle(title)

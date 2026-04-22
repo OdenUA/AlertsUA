@@ -14,6 +14,14 @@ type MapFeatureRow = {
   geometry_json: string;
 };
 
+type ActiveAlertRow = {
+  uid: number;
+  title_uk: string;
+  region_type: string;
+  alert_type: string;
+  geometry_json: string;
+};
+
 type RegionIndexRow = {
   uid: number;
   title_uk: string;
@@ -344,6 +352,55 @@ export class MapService {
     };
   }
 
+  async getActiveAlerts() {
+    if (!this.databaseService.isConfigured()) {
+      return {
+        generated_at: TimeUtil.getNowInKyiv(),
+        features: [],
+        note_uk: 'База даних недоступна.',
+      };
+    }
+
+    // Returns active-alert geometries for raion + hromada at a simplified LOD.
+    // This is always served regardless of map zoom so alerts are visible at any scale.
+    const result = await this.databaseService.query<ActiveAlertRow>(
+      `
+        SELECT rc.uid,
+               rc.title_uk,
+               rc.region_type,
+               COALESCE(arc.alert_type, 'air_raid') AS alert_type,
+               ST_AsGeoJSON(
+                 COALESCE(
+                   rgl.geom,
+                   ST_Simplify(rg.geom, 0.01)
+                 )
+               ) AS geometry_json
+        FROM region_catalog rc
+        JOIN region_geometry rg ON rg.uid = rc.uid
+        LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
+        JOIN air_raid_state_current arc ON arc.uid = rc.uid
+        WHERE rc.is_active = TRUE
+          AND rc.region_type IN ('raion', 'hromada')
+          AND arc.status = 'A'
+        ORDER BY rc.region_type DESC, rc.uid ASC
+      `,
+    );
+
+    return {
+      generated_at: TimeUtil.getNowInKyiv(),
+      features: result.rows.map((row) => ({
+        type: 'Feature',
+        geometry: JSON.parse(row.geometry_json),
+        properties: {
+          uid: row.uid,
+          title_uk: row.title_uk,
+          region_type: row.region_type,
+          alert_type: row.alert_type,
+        },
+      })),
+    };
+  }
+
   async getThreatOverlays(bbox?: string) {
     if (!this.databaseService.isConfigured()) {
       return {
@@ -403,7 +460,6 @@ export class MapService {
           AND (
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
-              AND COALESCE(tv.expires_at, tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL}) > NOW()
               AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
               AND ended_since_occurrence.first_ended_at IS NULL
               AND (

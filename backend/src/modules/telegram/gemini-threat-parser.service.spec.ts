@@ -33,14 +33,6 @@ test('buildGeminiThreatPrompt requires hints and directions to be returned in Uk
   assert.match(prompt, /Never return English place or direction names/i);
 });
 
-test('buildGeminiThreatPrompt uses null placeholders for unknown numeric fields', () => {
-  const prompt = buildGeminiThreatPrompt('🛵 БпЛА на півночі Чернігівщини.');
-
-  assert.match(prompt, /"origin_lat":null/);
-  assert.match(prompt, /"movement_bearing_deg":null/);
-  assert.match(prompt, /DO NOT use 0 as fallback/i);
-});
-
 test('buildThreatVectorDedupeKey keeps two origins from one post distinct when only region_hint differs', () => {
   const common = {
     rawMessageId: '42',
@@ -90,10 +82,11 @@ test('buildThreatVectorDedupeKey still deduplicates identical parsed threats fro
 });
 
 test('getThreatTtlMinutes caps telegram threats at two hours', () => {
-  assert.equal(getThreatTtlMinutes('uav'), 120);
-  assert.equal(getThreatTtlMinutes('kab'), 40);
-  assert.equal(getThreatTtlMinutes('missile'), 35);
-  assert.equal(getThreatTtlMinutes('unknown'), 45);
+  assert.equal(getThreatTtlMinutes('uav', true), 120);
+  assert.equal(getThreatTtlMinutes('kab', true), 60);
+  assert.equal(getThreatTtlMinutes('missile', true), 35);
+  assert.equal(getThreatTtlMinutes('unknown', true), 45);
+  assert.equal(getThreatTtlMinutes('missile', false), 60);
 });
 
 test('buildRegionHintVariants does not emit generic administrative words for English region hints', () => {
@@ -123,7 +116,7 @@ test('isRetriableGeminiFailure retries transient HTTP responses and network-like
   assert.equal(isRetriableGeminiFailure(400, 'Gemini request failed: HTTP 400'), false);
   assert.equal(isRetriableGeminiFailure(null, 'fetch failed'), true);
   assert.equal(isRetriableGeminiFailure(null, 'Gemini returned no text payload.'), true);
-  assert.equal(isRetriableGeminiFailure(null, 'No LLM API key is configured.'), false);
+  assert.equal(isRetriableGeminiFailure(null, 'GEMINI_API_KEY is not configured.'), false);
 });
 
 test('shouldFallbackToGemini25Flash only switches models for timeout and 503 overload failures', () => {
@@ -140,10 +133,8 @@ test('shouldFallbackToGemini25Flash only switches models for timeout and 503 ove
   assert.equal(shouldFallbackToGemini25Flash(null, 'Gemini returned no text payload.'), false);
 });
 
-test('parseWithGemini falls back from grok to gemini-3 and then gemini-2.5 in order', async () => {
+test('parseWithGemini retries the same request on gemini-2.5-flash after a 503 overload on the primary model', async () => {
   const configValues: Record<string, string> = {
-    GROK_API_KEY: 'test-grok-api-key',
-    GROK_MODEL: 'grok-4-1-fast-reasoning',
     GEMINI_API_KEY: 'test-api-key',
     GEMINI_MODEL: 'gemini-3-flash-preview',
     GEMINI_FALLBACK_MODEL: 'gemini-2.5-flash',
@@ -152,7 +143,6 @@ test('parseWithGemini falls back from grok to gemini-3 and then gemini-2.5 in or
     GEMINI_TIMEOUT_MS: '30000',
   };
   const requestedEndpoints: string[] = [];
-  const requestBodies: string[] = [];
   const originalFetch = global.fetch;
   const service = new GeminiThreatParserService(
     {
@@ -166,12 +156,11 @@ test('parseWithGemini falls back from grok to gemini-3 and then gemini-2.5 in or
     {} as never,
   );
 
-  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  global.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
     requestedEndpoints.push(url);
-    requestBodies.push(typeof init?.body === 'string' ? init.body : '');
 
-    if (requestedEndpoints.length <= 2) {
+    if (requestedEndpoints.length === 1) {
       return new Response(
         JSON.stringify({
           error: {
@@ -214,33 +203,30 @@ test('parseWithGemini falls back from grok to gemini-3 and then gemini-2.5 in or
     ).parseWithGemini('job-1', 1, 'Тестове повідомлення');
 
     assert.deepEqual(parsed, []);
-    assert.equal(requestedEndpoints.length, 3);
-    assert.equal(requestedEndpoints[0], 'https://api.x.ai/v1/chat/completions');
-    assert.match(requestBodies[0], /"model":"grok-4-1-fast-reasoning"/);
-    assert.match(requestedEndpoints[1], /models\/gemini-3-flash-preview:generateContent/);
-    assert.match(requestedEndpoints[2], /models\/gemini-2\.5-flash:generateContent/);
+    assert.equal(requestedEndpoints.length, 2);
+    assert.match(requestedEndpoints[0], /models\/gemini-3-flash-preview:generateContent/);
+    assert.match(requestedEndpoints[1], /models\/gemini-2\.5-flash:generateContent/);
   } finally {
     global.fetch = originalFetch;
   }
 });
 
-test('persistCandidates replaces default zero bearing with a derived course when coordinates disagree', async () => {
-  const capturedBearingParams: unknown[] = [];
-  const fakeClient = {
-    query: async (sql: string, params: unknown[] = []) => {
-      if (sql.includes('INSERT INTO threat_vectors')) {
-        capturedBearingParams.push(params[15]);
-        return { rowCount: 1, rows: [{ inserted: 1 }] };
-      }
-
-      return { rowCount: 0, rows: [] };
-    },
+test('parseWithGemini tries Grok first and falls back to Gemini when Grok fails', async () => {
+  const configValues: Record<string, string> = {
+    GROK_API_KEY: 'grok-api-key',
+    GROK_MODEL: 'grok-4-1-fast-reasoning',
+    GEMINI_API_KEY: 'gemini-api-key',
+    GEMINI_MODEL: 'gemini-3-flash-preview',
+    GEMINI_REQUEST_MAX_ATTEMPTS: '1',
+    GEMINI_REQUEST_RETRY_DELAY_MS: '1',
+    GEMINI_TIMEOUT_MS: '30000',
   };
-
+  const requests: Array<{ url: string; authorization: string | null; body: string }> = [];
+  const originalFetch = global.fetch;
   const service = new GeminiThreatParserService(
     {
-      get() {
-        return '';
+      get(name: string) {
+        return configValues[name];
       },
     } as never,
     {
@@ -249,50 +235,63 @@ test('persistCandidates replaces default zero bearing with a derived course when
     {} as never,
   );
 
-  (service as unknown as { resolveRegionHint: (client: unknown, hint: string | null) => Promise<null> }).resolveRegionHint =
-    async () => null;
-  (
-    service as unknown as {
-      applyThreatVectorToRuntime: (
-        client: unknown,
-        uid: number | null,
-        candidate: unknown,
-        occurredAt: Date,
-      ) => Promise<null>;
-    }
-  ).applyThreatVectorToRuntime = async () => null;
+  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    requests.push({
+      url: String(input),
+      authorization: headers.Authorization ?? null,
+      body: String(init?.body ?? ''),
+    });
 
-  await (
-    service as unknown as {
-      persistCandidates: (client: typeof fakeClient, job: unknown, candidates: unknown[]) => Promise<unknown>;
+    if (requests.length === 1) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 503,
+            message: 'Grok temporary failure',
+          },
+        }),
+        {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
     }
-  ).persistCandidates(
-    fakeClient,
-    {
-      job_id: 'job-1',
-      raw_message_id: 'raw-1',
-      message_text: 'Тестове повідомлення',
-      message_date: '2026-04-20T10:00:00.000Z',
-    },
-    [
+
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: '{"threats":[]}' }],
+            },
+          },
+        ],
+      }),
       {
-        threat_kind: 'uav',
-        confidence: 0.9,
-        region_hint: 'Чернігівщина',
-        origin_hint: null,
-        target_hint: 'Київщина',
-        direction_text: 'південний',
-        origin_lat: 50,
-        origin_lng: 30,
-        target_lat: 49,
-        target_lng: 30,
-        movement_bearing_deg: 0,
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
       },
-    ],
-  );
+    );
+  }) as typeof fetch;
 
-  assert.equal(capturedBearingParams.length, 1);
-  assert.equal(capturedBearingParams[0], 180);
+  try {
+    const parsed = await (
+      service as unknown as {
+        parseWithGemini: (jobId: string, attemptCount: number, messageText: string) => Promise<unknown[]>;
+      }
+    ).parseWithGemini('job-2', 1, 'Тестове повідомлення');
+
+    assert.deepEqual(parsed, []);
+    assert.equal(requests.length, 2);
+    assert.match(requests[0]!.url, /api\.x\.ai\/v1\/chat\/completions/);
+    assert.equal(requests[0]!.authorization, 'Bearer grok-api-key');
+    assert.match(requests[0]!.body, /"model":"grok-4-1-fast-reasoning"/);
+    assert.match(requests[1]!.url, /models\/gemini-3-flash-preview:generateContent/);
+    assert.equal(requests[1]!.authorization, null);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('getGeminiRetryDelayMs uses exponential backoff and caps the delay', () => {
