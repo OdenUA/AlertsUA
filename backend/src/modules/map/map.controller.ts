@@ -52,4 +52,9 @@ export class MapController {
   getActiveAlerts() {
     return this.mapService.getActiveAlerts();
   }
+
+  @Get('simplified-oblast')
+  getSimplifiedOblastMap() {
+    return this.mapService.getSimplifiedOblastMap();
+  }
 }

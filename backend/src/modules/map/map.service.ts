@@ -61,6 +61,7 @@ type ThreatOverlayRow = {
 const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
 const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
 const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '2 hours'";
+const THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL = "INTERVAL '5 minutes'";
 
 @Injectable()
 export class MapService {
@@ -458,19 +459,27 @@ export class MapService {
           ON arc_raion.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
         WHERE tvo.status = 'active'
           AND (
+            -- Threats with region anchoring (target_uid or origin_uid): check alert status
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
               AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
-              AND ended_since_occurrence.first_ended_at IS NULL
               AND (
+                -- Alert hasn't ended yet
+                ended_since_occurrence.first_ended_at IS NULL
+                -- Or alert ended recently (within grace period)
+                OR tv.occurred_at + ${THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL} > NOW()
+              )
+              AND (
+                -- Alert is still active in the region
                 arc_raion.status IN ('A', 'P')
+                -- Or threat is recent enough (pending alert interval)
                 OR tv.occurred_at + ${THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL} > NOW()
               )
             )
+            -- Threats WITHOUT region anchoring (e.g., Black Sea threats): show based on expiry only
             OR (
               COALESCE(tv.target_uid, tv.origin_uid) IS NULL
               AND COALESCE(tv.expires_at, tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL}) > NOW()
-              AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
             )
           )
           ${bboxClause}
@@ -579,6 +588,68 @@ export class MapService {
 
     const [west, south, east, north] = parts;
     return { west, south, east, north };
+  }
+
+  async getSimplifiedOblastMap() {
+    if (!this.databaseService.isConfigured()) {
+      return {
+        generated_at: TimeUtil.getNowInKyiv(),
+        oblasts: [],
+        note_uk: 'База даних недоступна. Спрощену карту тимчасово не можна отримати.',
+      };
+    }
+
+    const result = await this.databaseService.query<{
+      uid: number;
+      title_uk: string;
+      status: 'A' | 'P' | 'N' | ' ';
+      alert_type: string;
+      geometry_json: string;
+      center_lon: number;
+      center_lat: number;
+      bounds_west: number;
+      bounds_south: number;
+      bounds_east: number;
+      bounds_north: number;
+    }>(
+      `
+        SELECT rc.uid,
+               rc.title_uk,
+               COALESCE(arc.status, 'N') AS status,
+               COALESCE(arc.alert_type, 'air_raid') AS alert_type,
+               ST_AsGeoJSON(ST_SimplifyPreserveTopology(rg.geom, 0.01)) AS geometry_json,
+               ST_X(rg.centroid) AS center_lon,
+               ST_Y(rg.centroid) AS center_lat,
+               ST_XMin(rg.bbox) AS bounds_west,
+               ST_YMin(rg.bbox) AS bounds_south,
+               ST_XMax(rg.bbox) AS bounds_east,
+               ST_YMax(rg.bbox) AS bounds_north
+        FROM region_catalog rc
+        JOIN region_geometry rg ON rg.uid = rc.uid
+        LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+        WHERE rc.is_active = TRUE
+          AND rc.region_type = 'oblast'
+        ORDER BY rc.uid ASC
+      `,
+    );
+
+    return {
+      generated_at: TimeUtil.getNowInKyiv(),
+      oblasts: result.rows.map((row) => ({
+        uid: row.uid,
+        title_uk: row.title_uk,
+        status: row.status,
+        alert_type: row.alert_type,
+        geometry: JSON.parse(row.geometry_json),
+        center: { lat: row.center_lat, lon: row.center_lon },
+        bounds: {
+          west: row.bounds_west,
+          south: row.bounds_south,
+          east: row.bounds_east,
+          north: row.bounds_north,
+        },
+      })),
+    };
   }
 
 }
