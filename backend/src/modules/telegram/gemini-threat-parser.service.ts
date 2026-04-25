@@ -60,32 +60,129 @@ type LlmTarget = {
 
 const REGION_HINT_STOP_WORDS = new Set(['область', 'район', 'region', 'oblast', 'raion', 'district']);
 
+// NEW: Add directional words that should never match as standalone region names
+const DIRECTIONAL_STOP_WORDS = new Set([
+  'схід', 'захід', 'північ', 'південь',
+  'східний', 'західний', 'північний', 'південний',
+  'східна', 'західна', 'північна', 'південна',
+  'східне', 'західне', 'північне', 'південне',
+  'східні', 'західні', 'північні', 'південні',
+  'на сході', 'на заході', 'на півночі', 'на півдні',
+  'east', 'west', 'north', 'south', 'center', 'центр'
+]);
+
 export function buildGeminiThreatPrompt(messageText: string, contextText?: string) {
   return [
     'Extract threats from Ukrainian military alert posts.',
-    'Geographical context:',
-    '- Threats (KAB, UAV, missiles) typically arrive from RF/Belarus (North, East, North-East) or the Black Sea (South).',
-    '- Combine context from multiple lines if they describe the same event. (e.g., "Active aviation in north-east! KAB launches to Kharkiv" = 1 KAB threat towards Kharkiv originating from north-east).',
-    '- If one post describes several simultaneous threats, return one threat object per independently trackable threat.',
-    '- region_hint must describe the threat\'s current location now. target_hint must describe only where it is heading. Never replace the current location with a destination unless the post explicitly says the threat is already there.',
-    '- If the same threat kind is reported in multiple current locations with one shared course/target, split it into separate threat objects by current location.',
-    '- Example: "🛵 БпЛА на Сумщині і Харківщині курсом на Полтавщину." = 2 UAV threats: (1) current location Sumy region -> target Poltava region; (2) current location Kharkiv region -> target Poltava region.',
-    '- For each split object, keep the shared target_hint and direction_text the same, but set region_hint to the specific current location. If no earlier launch point is given, origin_hint may repeat that same current location.',
-    '- If the same threat kind is reported in one current location with multiple targets/courses, split it into separate threat objects by target while keeping the same current location in region_hint.',
-    '- Example: "🛵 Група БпЛА на Сумщині курсом на Полтавщину та Харківщину." = 2 UAV threats: (1) current location Sumy region -> target Poltava region; (2) current location Sumy region -> target Kharkiv region.',
-    '- For each split object in that case, keep region_hint and origin_hint as the shared current location, but set target_hint and direction_text to the specific destination for that object.',
-    '- Do not merge different current locations into one threat object.',
-    '- region_hint, origin_hint, target_hint, and direction_text must be written in Ukrainian only. Never return English place or direction names; translate them to natural Ukrainian forms before output.',
-    '- "БпЛА на півночі Чернігівщини, курс південний" means current location is North Chernihiv region, and movement_bearing_deg is South (180).',
-    '- Directions to bearings: North = 0, North-East = 45, East = 90, South-East = 135, South = 180, South-West = 225, West = 270, North-West = 315.',
-    '- "Швидкісна ціль" (high-speed target) typically means a missile threat. Extract it as "missile".',
-    '- Action determination: Set "action" to "new" for newly detected threats. Set "action" to "update" if the target message updates a threat from the context (e.g. course change). Set "action" to "clear" if the target message is a cancellation or reports the threat destroyed (e.g. "Відбій", "Збито", "Чисто").',
-    '- Even for "update" and "clear", provide the threat_kind and region/target hints so the previous threat can be identified.',
+    '',
+    'CRITICAL: Distinguish between ORIGIN (where threat comes FROM) and TARGET (where threat is GOING TO).',
+    '',
+    'LINGUISTIC PATTERNS (Ukrainian):',
+    '',
+    'ORIGIN INDICATORS (source/launch point):',
+    '- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)',
+    '- "від [місце]" = from [place]',
+    '- "із [місце]" = from [place]',
+    '- "з-під [місце]" = from under [place]',
+    '- "з-за [місце]" = from behind [place]',
+    '',
+    'TARGET INDICATORS (destination):',
+    '- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)',
+    '- "в [місце]" = to/in [place]',
+    '- "у [місце]" = to/in [place]',
+    '- "в напрямку [місце]" = towards [place]',
+    '- "курсом на [місце]" = course towards [place]',
+    '',
+    'CURRENT LOCATION (where threat is NOW):',
+    '- "БпЛА на [місто]" = UAV heading TO [city] (not currently there)',
+    '- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city]',
+    '- "БпЛА над [місто]" = UAV currently OVER [city]',
+    '- "БпЛА на [область]" = UAV heading TO [region]',
+    '',
+    'GEOGRAPHIC RULES:',
+    '',
+    'Black Sea (Чорне море):',
+    '- Coordinates: WATER, latitude < 46°N, approximately 45.0°N, 31.0°E',
+    '- If message says "з Чорного моря" → origin_lat/lng MUST be in WATER (~45.0°N, 31.0°E)',
+    '- If message says "з акваторії Чорного моря" → origin_lat/lng MUST be in WATER',
+    '',
+    'Odesa (Одеса):',
+    '- Coordinates: LAND, latitude ~46.5°N, longitude ~30.7°E',
+    '- If message says "на Одесу" or "в напрямку Одеси" → target_lat/lng MUST be on LAND',
+    '',
+    'CRITICAL EXAMPLES (study these carefully):',
+    '',
+    'Example 1: "🛵 Нові групи ворожих БпЛА у напрямку Одеси з Чорного моря."',
+    '- ORIGIN: "з Чорного моря" → Black Sea (WATER, ~45.0°N, 31.0°E)',
+    '- TARGET: "у напрямку Одеси" → Odesa (LAND, ~46.5°N, 30.7°E)',
+    '- Bearing: ~320° (from Black Sea to Odesa)',
+    '',
+    'Example 2: "🛵 Одещина - БпЛА на Одесу/Чорноморське з акваторїї Чорного моря."',
+    '- ORIGIN: "з акваторії Чорного моря" → Black Sea aquatory (WATER, ~45.0°N, 31.0°E)',
+    '- TARGET: "на Одесу/Чорноморське" → Odesa/Chornomorsk (LAND, ~46.5°N, 30.7°E for Odesa)',
+    '',
+    'Example 3: "🛵 БпЛА з Черкащини курсом на Кіровоградщину."',
+    '- ORIGIN: "з Черкащини" → Cherkasy region (~49.5°N, 32.0°E)',
+    '- TARGET: "курсом на Кіровоградщину" → Kirovohrad region (~48.5°N, 32.0°E)',
+    '- Bearing: ~180° (south)',
+    '',
+    'Example 4: "🛵 БпЛА на Дніпро з південного заходу."',
+    '- ORIGIN: "з південного заходу" → southwest (~48.0°N, 34.0°E)',
+    '- TARGET: "на Дніпро" → Dnipro city (~48.5°N, 35.0°E)',
+    '- Bearing: ~45° (northeast)',
+    '',
+    'Example 5: "🛵 Група БпЛА на півночі Київщини- курс на Житомирщину."',
+    '- ORIGIN: "на півночі Київщини" → north of Kyiv region (~50.5°N, 30.5°E)',
+    '- TARGET: "на Житомирщину" → Zhytomyr region (~50.3°N, 28.7°E)',
+    '- Bearing: ~270° (west)',
+    '',
+    'Example 6: "🛵 БпЛА курсом на м.Харків з півночі."',
+    '- ORIGIN: "з півночі" → north (~50.0°N, 36.0°E)',
+    '- TARGET: "курсом на м.Харків" → Kharkiv city (~49.9°N, 36.2°E)',
+    '- Bearing: ~180° (south)',
+    '',
+    'Example 7: "🛵 БпЛА з Херсонщини курсом на Миколаївщину"',
+    '- ORIGIN: "з Херсонщини" → Kherson region (~46.6°N, 33.0°E)',
+    '- TARGET: "курсом на Миколаївщину" → Mykolaiv region (~47.0°N, 32.0°E)',
+    '- Bearing: ~315° (northwest)',
+    '',
+    'Example 8: "🛵 БпЛА в районі м. Запоріжжя"',
+    '- CURRENT LOCATION: "в районі м. Запоріжжя" = in area of Zaporizhzhia city',
+    '- No clear movement direction → origin and target may both be Zaporizhzhia',
+    '',
+    'Example 9: "🛵 Запоріжжя - БпЛА в напрямку міста з півдня."',
+    '- ORIGIN: "з півдня" → south (~47.0°N, 35.0°E)',
+    '- TARGET: "в напрямку міста" (referring to Zaporizhzhia) → Zaporizhzhia city (~47.8°N, 35.1°E)',
+    '- Bearing: ~0° (north)',
+    '',
+    'Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."',
+    '- ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)',
+    '- TARGET: "курсом на Одесу" → Odesa (LAND, ~46.5°N, 30.7°E)',
+    '- Bearing: ~320°',
+    '',
+    'COORDINATE REQUIREMENTS:',
+    '- You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng',
+    '- DO NOT rely on server-side hints or fallbacks',
+    '- If both origin and target are specified, they MUST be different coordinates (>1km apart)',
+    '- If exact coordinates are unknown, provide approximate center coordinates of the region/city',
+    '- Coordinates: latitude (-90 to 90), longitude (-180 to 180)',
+    '- NEVER use 0.0, 0.0 as fallback - use null instead',
+    '',
+    'BEARING CALCULATION:',
+    '- movement_bearing_deg = direction FROM origin TO target (0-360 degrees)',
+    '- Formula: calculate bearing from (origin_lat, origin_lng) to (target_lat, target_lng)',
+    '- Directions: North=0, North-East=45, East=90, South-East=135, South=180, South-West=225, West=270, North-West=315',
+    '- Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°',
+    '',
+    'OTHER RULES:',
+    '- Combine context from multiple lines if they describe the same event',
+    '- If one post describes several simultaneous threats, return one threat object per independently trackable threat',
+    '- "Швидкісна ціль" (high-speed target) = missile threat',
+    '- Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)',
+    '- All hints (region_hint, origin_hint, target_hint, direction_text) must be in Ukrainian only',
+    '',
     'Return strict JSON only with this schema:',
-    '{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":0.0,"origin_lng":0.0,"target_lat":0.0,"target_lng":0.0,"movement_bearing_deg":0.0}]}',
-    'Coordinates must be WGS84 decimal degrees.',
-    'If exact coordinates are unknown, provide approximate settlement/raion center coordinates.',
-    'If no reliable coordinates or bearing can be extracted, use null for those fields. DO NOT use 0 as fallback.',
+    '{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null}]}',
     'No markdown, no comments, no extra keys.',
     contextText ? `Recent context messages (for reference only, do not extract threats from these unless they are updated in the target message):\n${contextText}\n\nTarget message to parse:\n${messageText}` : `Text: ${messageText}`,
   ].join('\n');
@@ -118,9 +215,9 @@ export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unk
     return 60;
   }
   const baseTtlMinutes =
-    threatKind === 'uav' ? 180 : threatKind === 'kab' ? 60 : threatKind === 'missile' ? 35 : 45;
+    threatKind === 'uav' ? 60 : threatKind === 'kab' ? 60 : threatKind === 'missile' ? 35 : 45;
 
-  return Math.min(baseTtlMinutes, 120);
+  return Math.min(baseTtlMinutes, 60);
 }
 
 export function isRetriableGeminiFailure(responseStatus: number | null, errorMessage: string | null | undefined) {
@@ -218,7 +315,7 @@ export class GeminiThreatParserService {
           ? contextRows.rows.reverse().map(r => `[${r.message_date}] ${r.message_text}`).join('\n')
           : undefined;
 
-        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, contextText);
+        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, contextText, job.raw_message_id);
 
         if (candidates.length === 0) {
           await this.markJobFailed(job.job_id, 'No candidates were extracted by parser.', true);
@@ -313,7 +410,7 @@ export class GeminiThreatParserService {
     );
   }
 
-  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string, contextText?: string) {
+  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string, contextText?: string, rawMessageId?: string) {
     const llmTargets = this.buildLlmTargets();
     const maxRequestAttempts = this.getAliasedNumberEnv(['LLM_REQUEST_MAX_ATTEMPTS', 'GEMINI_REQUEST_MAX_ATTEMPTS'], 3);
     const retryBaseDelayMs = this.getAliasedNumberEnv(['LLM_REQUEST_RETRY_DELAY_MS', 'GEMINI_REQUEST_RETRY_DELAY_MS'], 1_500);
@@ -393,6 +490,7 @@ export class GeminiThreatParserService {
             errorText: parseErrorText
               ? `provider=${activeTarget.provider}; target=${targetIndex + 1}/${llmTargets.length}; request_attempt=${requestAttempt}/${requestAttemptLimit};${shouldSwitchGeminiModel ? ` fallback_model=${geminiFallbackModel};` : ''} ${parseErrorText}`
               : null,
+            rawMessageId,
           });
         }
 
@@ -591,6 +689,7 @@ export class GeminiThreatParserService {
     responseBody: string;
     parsedCandidates: ParseCandidate[];
     errorText: string | null;
+    rawMessageId?: string;
   }) {
     try {
       await this.databaseService.query(
@@ -605,6 +704,7 @@ export class GeminiThreatParserService {
             response_body,
             parsed_candidates,
             error_text,
+            raw_message_id,
             created_at
           ) VALUES (
             $1,
@@ -616,6 +716,7 @@ export class GeminiThreatParserService {
             $7,
             $8::jsonb,
             $9,
+            $10,
             NOW()
           )
         `,
@@ -629,6 +730,7 @@ export class GeminiThreatParserService {
           params.responseBody,
           JSON.stringify(params.parsedCandidates),
           params.errorText,
+          params.rawMessageId ?? null,
         ],
       );
     } catch (error) {
@@ -645,13 +747,13 @@ export class GeminiThreatParserService {
     const threatKind = this.normalizeThreatKind(candidate.threat_kind);
     const confidence = Math.max(0, Math.min(1, Number(candidate.confidence ?? 0)));
 
-    return {
+    const sanitized = {
       action,
       threat_kind: threatKind,
       confidence,
-      region_hint: this.toNullableString(candidate.region_hint),
-      origin_hint: this.toNullableString(candidate.origin_hint),
-      target_hint: this.toNullableString(candidate.target_hint),
+      region_hint: this.cleanDirectionalWords(this.toNullableString(candidate.region_hint)),
+      origin_hint: this.cleanDirectionalWords(this.toNullableString(candidate.origin_hint)),
+      target_hint: this.cleanDirectionalWords(this.toNullableString(candidate.target_hint)),
       direction_text: this.toNullableString(candidate.direction_text),
       origin_lat: this.toLatitude(candidate.origin_lat),
       origin_lng: this.toLongitude(candidate.origin_lng),
@@ -659,6 +761,27 @@ export class GeminiThreatParserService {
       target_lng: this.toLongitude(candidate.target_lng),
       movement_bearing_deg: this.toBearing(candidate.movement_bearing_deg),
     };
+
+    // Validate coordinates and log warnings for suspicious patterns
+    return this.validateAndCorrectCoordinates(sanitized);
+  }
+
+  private cleanDirectionalWords(hint: string | null): string | null {
+    if (!hint) {
+      return null;
+    }
+
+    const cleaned = hint
+      // Remove directional phrases first
+      .replace(/(?:^|\s)(на\s+півночі|на\s+півдні|на\s+заході|на\s+сході)(?:\s|$)/gi, ' ')
+      // Then remove individual directional words
+      .replace(/(?:^|\s)(північний|південний|західний|східний|схід|захід|південь|північ|центр|east|west|north|south|center)(?:\s|$)/gi, ' ')
+      // Remove motion verbs
+      .replace(/(?:^|\s)(напрямок|курс)(?:\s|$)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return cleaned || null;
   }
 
   private async persistCandidates(
@@ -670,13 +793,51 @@ export class GeminiThreatParserService {
 
     for (const candidate of candidates) {
       const fallbackHint = candidate.region_hint;
+
+      // Hybrid approach: Priority to LLM coordinates, fallback to region_catalog
+      let originLat = candidate.origin_lat;
+      let originLng = candidate.origin_lng;
+
+      // Fallback: if LLM coordinates are missing or invalid, use region_catalog
+      if (!this.areValidCoordinates(originLat, originLng)) {
+        const resolvedOrigin = await this.resolveRegionHintFromCatalog(client, candidate.origin_hint ?? fallbackHint);
+        if (resolvedOrigin) {
+          originLat = resolvedOrigin.latitude;
+          originLng = resolvedOrigin.longitude;
+          this.logger.debug(`Used region_catalog fallback for origin: ${candidate.origin_hint} -> ${originLat}, ${originLng}`);
+        } else {
+          // Final fallback to old resolveRegionHint method
+          const origin = await this.resolveRegionHint(client, candidate.origin_hint ?? fallbackHint);
+          if (origin) {
+            originLat = origin.latitude;
+            originLng = origin.longitude;
+          }
+        }
+      }
+
+      // Same logic for target
+      let targetLat = candidate.target_lat;
+      let targetLng = candidate.target_lng;
+
+      if (!this.areValidCoordinates(targetLat, targetLng)) {
+        const resolvedTarget = await this.resolveRegionHintFromCatalog(client, candidate.target_hint ?? fallbackHint);
+        if (resolvedTarget) {
+          targetLat = resolvedTarget.latitude;
+          targetLng = resolvedTarget.longitude;
+          this.logger.debug(`Used region_catalog fallback for target: ${candidate.target_hint} -> ${targetLat}, ${targetLng}`);
+        } else {
+          // Final fallback to old resolveRegionHint method
+          const target = await this.resolveRegionHint(client, candidate.target_hint ?? fallbackHint);
+          if (target) {
+            targetLat = target.latitude;
+            targetLng = target.longitude;
+          }
+        }
+      }
+
+      // Get UIDs for database consistency (still needed for deduplication)
       const origin = await this.resolveRegionHint(client, candidate.origin_hint ?? fallbackHint);
       const target = await this.resolveRegionHint(client, candidate.target_hint ?? fallbackHint);
-
-      const originLat = candidate.origin_lat ?? origin?.latitude ?? null;
-      const originLng = candidate.origin_lng ?? origin?.longitude ?? null;
-      const targetLat = candidate.target_lat ?? target?.latitude ?? null;
-      const targetLng = candidate.target_lng ?? target?.longitude ?? null;
 
       const bearing =
         candidate.movement_bearing_deg ??
@@ -684,8 +845,17 @@ export class GeminiThreatParserService {
           ? this.calculateBearing(originLat, originLng, targetLat, targetLng)
           : null);
 
+      // Validate bearing matches direction hints
+      if (bearing !== null && candidate.direction_text) {
+        this.validateBearingAgainstDirection(bearing, candidate.direction_text);
+      }
+
       const occurredAt = new Date(job.message_date);
-      const expiresAt = this.estimateExpiry(occurredAt, candidate.threat_kind, target !== null);
+      // Determine if threat has a target based on either region catalog OR coordinates
+      // This ensures threats from Black Sea (no region) but with coordinates get proper TTL
+      const hasTargetCoordinates = this.areValidCoordinates(targetLat, targetLng);
+      const hasTargetRegion = target !== null;
+      const expiresAt = this.estimateExpiry(occurredAt, candidate.threat_kind, hasTargetRegion || hasTargetCoordinates);
       const vectorId = randomUUID();
       const dedupeKey = buildThreatVectorDedupeKey({
         rawMessageId: job.raw_message_id,
@@ -903,6 +1073,15 @@ export class GeminiThreatParserService {
             WHERE rc.title_uk ILIKE ('%' || hint_variant || '%')
           )
         ORDER BY
+          -- MODIFIED: Improved prioritization
+          CASE
+            WHEN rc.title_uk = ANY($1::text[]) THEN 0  -- Exact match first
+            WHEN EXISTS (
+              SELECT 1 FROM unnest($1::text[]) AS hint_variant
+              WHERE rc.title_uk ILIKE (hint_variant || '%')
+            ) THEN 1  -- Starts with hint
+            ELSE 2  -- Contains hint
+          END,
           CASE rc.region_type
             WHEN 'oblast' THEN 0
             WHEN 'raion' THEN 1
@@ -929,7 +1108,18 @@ export class GeminiThreatParserService {
         .replace(/\s+/g, ' ')
         .trim();
 
-      if (cleaned.length >= 3 && !REGION_HINT_STOP_WORDS.has(cleaned.toLowerCase())) {
+      const lowerCleaned = cleaned.toLowerCase();
+
+      // MODIFIED: Enhanced directional word filtering
+      // Check if cleaned contains any directional words as substrings
+      const containsDirectionalWord = Array.from(DIRECTIONAL_STOP_WORDS).some(stopWord =>
+        lowerCleaned.includes(stopWord)
+      );
+
+      if (cleaned.length >= 3 &&
+          !REGION_HINT_STOP_WORDS.has(lowerCleaned) &&
+          !DIRECTIONAL_STOP_WORDS.has(lowerCleaned) &&
+          !containsDirectionalWord) {
         values.add(cleaned);
       }
     };
@@ -958,7 +1148,8 @@ export class GeminiThreatParserService {
     push(translated);
 
     const normalized = translated
-      .replace(/\b(напрямок|курс|на\s+півночі|на\s+півдні|на\s+заході|на\s+сході|північний|південний|західний|східний|схід|захід|південь|північ|центр)\b/gi, ' ')
+      // MODIFIED: Add English directional words and center
+      .replace(/\b(напрямок|курс|на\s+півночі|на\s+півдні|на\s+заході|на\s+сході|північний|південний|західний|східний|схід|захід|південь|північ|центр|east|west|north|south|center)\b/gi, ' ')
       .replace(/\b(область|район|region|oblast|raion|district)\b/gi, ' ')
       .replace(/\b(н\.п\.|м\.)\s*/gi, ' ')
       .replace(/щин(а|і|у|ою)?/gi, '')
@@ -972,9 +1163,31 @@ export class GeminiThreatParserService {
       push('Нова Одеса');
     }
 
+    // MODIFIED: Improved word extraction with multi-word phrases
     const words = normalized
       .split(' ')
-      .filter((word) => word.length >= 4 && !REGION_HINT_STOP_WORDS.has(word.toLowerCase()));
+      .filter((word) => {
+        const lowerWord = word.toLowerCase();
+        return word.length >= 4 &&
+               !REGION_HINT_STOP_WORDS.has(lowerWord) &&
+               !DIRECTIONAL_STOP_WORDS.has(lowerWord);
+      });
+
+    // Add meaningful 2-word combinations for better geographic context
+    if (words.length >= 2) {
+      for (let i = 0; i < words.length - 1; i++) {
+        push(`${words[i]} ${words[i + 1]}`);
+      }
+    }
+
+    // Add meaningful 3-word combinations for complex geographic names
+    if (words.length >= 3) {
+      for (let i = 0; i < words.length - 2; i++) {
+        push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+      }
+    }
+
+    // Finally add individual words
     words.forEach((word) => push(word));
 
     return Array.from(values);
@@ -1201,7 +1414,14 @@ export class GeminiThreatParserService {
       Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
 
     const theta = toDeg(Math.atan2(y, x));
-    return (theta + 360) % 360;
+    const bearing = (theta + 360) % 360;
+
+    // Debug logging for bearing calculations
+    this.logger.debug(
+      `Calculated bearing: ${bearing.toFixed(1)}° from origin (${lat1.toFixed(4)}, ${lon1.toFixed(4)}) to target (${lat2.toFixed(4)}, ${lon2.toFixed(4)})`
+    );
+
+    return bearing;
   }
 
   private unwrapJson(payload: string) {
@@ -1270,5 +1490,218 @@ export class GeminiThreatParserService {
     }
 
     return parsed;
+  }
+
+  private areValidCoordinates(lat: number | null, lng: number | null): boolean {
+    if (lat === null || lng === null) {
+      return false;
+    }
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return false;
+    }
+
+    if (lat === 0 && lng === 0) {
+      return false;
+    }
+
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return false;
+    }
+
+    // Check if coordinates are reasonably close to Ukraine (45-52°N, 22-40°E)
+    // Allow some margin for Black Sea and neighboring regions
+    if (lat < 43 || lat > 55 || lng < 20 || lng > 42) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private async resolveRegionHintFromCatalog(client: PoolClient, hint: string | null): Promise<RegionPoint | null> {
+    const value = this.toNullableString(hint);
+    if (!value) {
+      return null;
+    }
+
+    // Normalize the hint: lowercase, remove common suffixes
+    const normalizedHint = value
+      .toLowerCase()
+      .replace(/щина$/gi, 'щина') // Normalize oblast names
+      .replace(/щина$/gi, 'щин')  // Alternative normalization
+      .replace(/щина$/gi, 'щину')
+      .replace(/щина$/gi, 'щині')
+      .replace(/щина$/gi, 'щиною')
+      .replace(/область$/gi, '')
+      .replace(/район$/gi, '')
+      .replace(/обл\.$/gi, '')
+      .replace(/р-н$/gi, '')
+      .trim();
+
+    if (normalizedHint.length < 3) {
+      return null;
+    }
+
+    // Get all active oblasts from region_catalog
+    const oblastsResult = await client.query<{ uid: number; title_uk: string; latitude: number; longitude: number }>(
+      `
+        SELECT rc.uid,
+               rc.title_uk,
+               ST_Y(ST_Centroid(rg.geom)) AS latitude,
+               ST_X(ST_Centroid(rg.geom)) AS longitude
+        FROM region_catalog rc
+        JOIN region_geometry rg ON rg.uid = rc.uid
+        WHERE rc.region_type = 'oblast'
+          AND rc.is_active = TRUE
+        ORDER BY CHAR_LENGTH(rc.title_uk) DESC
+      `
+    );
+
+    // Try to find matching oblast
+    for (const oblast of oblastsResult.rows) {
+      const normalizedOblast = oblast.title_uk
+        .toLowerCase()
+        .replace(/ська$/gi, 'ськ')
+        .replace(/ська$/gi, 'ська')
+        .replace(/ська$/gi, 'ській')
+        .replace(/ська$/gi, 'ську')
+        .replace(/ська$/gi, 'ською')
+        .replace(/область$/gi, '')
+        .trim();
+
+      // Check if normalized hint contains normalized oblast name (or vice versa)
+      if (normalizedHint.includes(normalizedOblast) || normalizedOblast.includes(normalizedHint)) {
+        return {
+          uid: oblast.uid,
+          title_uk: oblast.title_uk,
+          latitude: oblast.latitude,
+          longitude: oblast.longitude,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const R = 6371; // Earth's radius in km
+
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  private validateAndCorrectCoordinates(candidate: ParseCandidate): ParseCandidate {
+    const result = { ...candidate };
+
+    // Check if origin and target are too close (< 1km)
+    if (this.areValidCoordinates(result.origin_lat, result.origin_lng) &&
+        this.areValidCoordinates(result.target_lat, result.target_lng)) {
+      const distance = this.calculateDistance(
+        result.origin_lat!,
+        result.origin_lng!,
+        result.target_lat!,
+        result.target_lng!
+      );
+
+      if (distance < 1) {
+        this.logger.warn(
+          `Origin and target coordinates too close (${distance.toFixed(2)}km). ` +
+          `Origin: ${result.origin_lat}, ${result.origin_lng}, ` +
+          `Target: ${result.target_lat}, ${result.target_lng}, ` +
+          `Origin hint: ${result.origin_hint}, Target hint: ${result.target_hint}`
+        );
+      }
+    }
+
+    // Check if origin claims to be from Black Sea but has land coordinates
+    if (result.origin_hint && result.origin_hint.toLowerCase().includes('чорного моря')) {
+      if (this.areValidCoordinates(result.origin_lat, result.origin_lng) && result.origin_lat! > 46) {
+        this.logger.warn(
+          `Origin hint mentions Black Sea but coordinates are on land (lat=${result.origin_lat}). ` +
+          `Expected latitude < 46°N for water. Origin hint: ${result.origin_hint}`
+        );
+      }
+    }
+
+    // Check if target claims to be Odesa but coordinates don't match
+    if (result.target_hint && (result.target_hint.toLowerCase().includes('одес') || result.target_hint.toLowerCase().includes('чорномор'))) {
+      if (this.areValidCoordinates(result.target_lat, result.target_lng)) {
+        const distanceToOdesa = this.calculateDistance(
+          result.target_lat!,
+          result.target_lng!,
+          46.5, // Odesa approximate latitude
+          30.7  // Odesa approximate longitude
+        );
+
+        if (distanceToOdesa > 50) {
+          this.logger.warn(
+            `Target hint mentions Odesa/Chornomorsk but coordinates are far from Odesa (${distanceToOdesa.toFixed(2)}km). ` +
+            `Target: ${result.target_lat}, ${result.target_lng}, Target hint: ${result.target_hint}`
+          );
+        }
+      }
+    }
+
+    return result;
+  }
+
+  private validateBearingAgainstDirection(bearing: number, directionText: string): void {
+    const normalizedDirection = directionText.toLowerCase();
+    let expectedRange: [number, number] | null = null;
+
+    // Define expected bearing ranges for different directions (with ±45° tolerance)
+    if (normalizedDirection.includes('північ') && !normalizedDirection.includes('півден')) {
+      // North (0° ± 45° = 315-360° and 0-45°)
+      expectedRange = [315, 45]; // Special case: wraps around 0
+    } else if (normalizedDirection.includes('півден')) {
+      // South (180° ± 45° = 135-225°)
+      expectedRange = [135, 225];
+    } else if (normalizedDirection.includes('схід') && !normalizedDirection.includes('захід')) {
+      // East (90° ± 45° = 45-135°)
+      expectedRange = [45, 135];
+    } else if (normalizedDirection.includes('захід')) {
+      // West (270° ± 45° = 225-315°)
+      expectedRange = [225, 315];
+    } else if (normalizedDirection.includes('північно-схід') || normalizedDirection.includes('пн-сх')) {
+      // North-East (45° ± 22.5° = 22.5-67.5°)
+      expectedRange = [22.5, 67.5];
+    } else if (normalizedDirection.includes('південно-схід') || normalizedDirection.includes('пд-сх')) {
+      // South-East (135° ± 22.5° = 112.5-157.5°)
+      expectedRange = [112.5, 157.5];
+    } else if (normalizedDirection.includes('південно-захід') || normalizedDirection.includes('пд-зх')) {
+      // South-West (225° ± 22.5° = 202.5-247.5°)
+      expectedRange = [202.5, 247.5];
+    } else if (normalizedDirection.includes('північно-захід') || normalizedDirection.includes('пн-зх')) {
+      // North-West (315° ± 22.5° = 292.5-337.5°)
+      expectedRange = [292.5, 337.5];
+    }
+
+    if (expectedRange) {
+      const [min, max] = expectedRange;
+      let inRange = false;
+
+      if (min > max) {
+        // Range wraps around 0° (e.g., North: 315-360° and 0-45°)
+        inRange = bearing >= min || bearing <= max;
+      } else {
+        // Normal range
+        inRange = bearing >= min && bearing <= max;
+      }
+
+      if (!inRange) {
+        this.logger.warn(
+          `Bearing ${bearing.toFixed(1)}° does not match direction "${directionText}" ` +
+          `(expected range: ${min.toFixed(1)}°-${max.toFixed(1)}°)`
+        );
+      }
+    }
   }
 }

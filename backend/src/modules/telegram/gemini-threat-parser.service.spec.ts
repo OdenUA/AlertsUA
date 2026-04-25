@@ -81,8 +81,8 @@ test('buildThreatVectorDedupeKey still deduplicates identical parsed threats fro
   assert.strictEqual(buildThreatVectorDedupeKey(params), buildThreatVectorDedupeKey(params));
 });
 
-test('getThreatTtlMinutes caps telegram threats at two hours', () => {
-  assert.equal(getThreatTtlMinutes('uav', true), 120);
+test('getThreatTtlMinutes caps telegram threats at one hour', () => {
+  assert.equal(getThreatTtlMinutes('uav', true), 60);
   assert.equal(getThreatTtlMinutes('kab', true), 60);
   assert.equal(getThreatTtlMinutes('missile', true), 35);
   assert.equal(getThreatTtlMinutes('unknown', true), 45);
