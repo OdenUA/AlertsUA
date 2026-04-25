@@ -244,6 +244,10 @@ export class AlertsService {
           const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
           await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
           this.logger.log(`Alerts cache refreshed (304 response): state_version=${previousMetadata.state_version}`);
+
+          // Rebuild precomputed alert layer even on 304
+          await this.rebuildAlertLayer(client);
+          this.logger.log('Precomputed alert layer rebuilt (304 response)');
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache on 304: ${error}`);
@@ -315,6 +319,10 @@ export class AlertsService {
           const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
           await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
           this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousMetadata.state_version}`);
+
+          // Rebuild precomputed alert layer even when no changes
+          await this.rebuildAlertLayer(client);
+          this.logger.log('Precomputed alert layer rebuilt (no changes)');
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache: ${error}`);
@@ -791,6 +799,14 @@ export class AlertsService {
       }
     }
 
+    // Rebuild precomputed alert layer for fast map rendering
+    try {
+      await this.rebuildAlertLayer(client);
+      this.logger.log('Precomputed alert layer rebuilt');
+    } catch (error) {
+      this.logger.error(`Failed to rebuild alert layer: ${error}`);
+    }
+
     return {
       state_version: nextStateVersion,
       bootstrap_mode: bootstrapMode,
@@ -919,5 +935,49 @@ export class AlertsService {
     }
 
     return String(error).slice(0, 500);
+  }
+
+  private async rebuildAlertLayer(client: PoolClient): Promise<void> {
+    // Clear existing alert layer
+    await client.query('DELETE FROM alert_layer_features');
+
+    // Insert all regions with active alerts (raions and hromadas that are subscription_leaf)
+    // Also include oblasts with direct alerts (like Kyiv city)
+    const result = await client.query<{
+      uid: number;
+      region_type: string;
+      alert_type: string;
+      geometry_json: string;
+    }>(
+      `
+        INSERT INTO alert_layer_features (uid, region_type, alert_type, geometry_json)
+        SELECT rc.uid,
+               rc.region_type,
+               arc.alert_type,
+               ST_AsGeoJSON(
+                 COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.01))
+               ) AS geometry_json
+        FROM air_raid_state_current arc
+        JOIN region_catalog rc ON rc.uid = arc.uid
+        JOIN region_geometry rg ON rg.uid = rc.uid
+        LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
+        WHERE arc.status = 'A'
+          AND (
+            -- Include oblasts/cities with direct alerts
+            rc.region_type IN ('oblast', 'city')
+            OR
+            -- Include subscription_leaf regions (hromadas, some raions)
+            rc.is_subscription_leaf = TRUE
+          )
+        ON CONFLICT (feature_id) DO UPDATE SET
+          uid = EXCLUDED.uid,
+          region_type = EXCLUDED.region_type,
+          alert_type = EXCLUDED.alert_type,
+          geometry_json = EXCLUDED.geometry_json,
+          updated_at = NOW();
+      `,
+    );
+
+    this.logger.debug(`Rebuilt alert layer: ${result.rowCount} features`);
   }
 }

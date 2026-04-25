@@ -443,6 +443,56 @@ export class MapService {
     };
   }
 
+  async getAlertsLayer() {
+    if (!this.databaseService.isConfigured()) {
+      return {
+        generated_at: TimeUtil.getNowInKyiv(),
+        features: [],
+        note_uk: 'База даних недоступна.',
+      };
+    }
+
+    const result = await this.databaseService.query<{
+      uid: number;
+      region_type: string;
+      alert_type: string;
+      geometry_json: string;
+      updated_at: string;
+    }>(
+      `
+        SELECT uid,
+               region_type,
+               alert_type,
+               geometry_json,
+               updated_at
+        FROM alert_layer_features
+        ORDER BY
+          CASE region_type
+            WHEN 'oblast' THEN 1
+            WHEN 'city' THEN 2
+            WHEN 'raion' THEN 3
+            WHEN 'hromada' THEN 4
+            ELSE 5
+          END,
+          uid ASC
+      `,
+    );
+
+    return {
+      generated_at: TimeUtil.getNowInKyiv(),
+      features: result.rows.map((row) => ({
+        type: 'Feature',
+        geometry: JSON.parse(row.geometry_json),
+        properties: {
+          uid: row.uid,
+          region_type: row.region_type,
+          alert_type: row.alert_type,
+        },
+      })),
+      updated_at: result.rows[0]?.updated_at,
+    };
+  }
+
   async getThreatOverlays(bbox?: string) {
     if (!this.databaseService.isConfigured()) {
       return {
