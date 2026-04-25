@@ -52,18 +52,15 @@ function refreshAlertMarkers() {
 }
 
 function bringAlertLayersToFront() {
-    if (overlayLayers.oblast) {
-        overlayLayers.oblast.bringToFront();
+    // Bring the precomputed alert layer to front
+    if (alertLayersGroup) {
+        alertLayersGroup.bringToFront();
     }
-    if (overlayLayers.raion) {
-        overlayLayers.raion.bringToFront();
-    }
-    if (overlayLayers.hromada) {
-        overlayLayers.hromada.bringToFront();
-    }
+    // Special alert layer for special alert types
     if (specialAlertLayer) {
         specialAlertLayer.bringToFront();
     }
+    // Alert markers (icons) should be on top
     if (alertMarkersLayer) {
         alertMarkersLayer.eachLayer(function(layer) {
             if (layer && layer.bringToFront) {
@@ -71,6 +68,7 @@ function bringAlertLayersToFront() {
             }
         });
     }
+    // Threat overlays should be on top of everything
     if (threatOverlayLayer) {
         threatOverlayLayer.eachLayer(function(layer) {
             if (layer && layer.bringToFront) {
@@ -331,28 +329,55 @@ async function loadSpecialAlertLayer() {
     specialAlertLayer = geoJsonLayer.addTo(map);
 }
 
+async function loadAlertsLayer() {
+    const response = await fetch(buildUrl('/map/alerts-layer'), {
+        headers: {
+            'Accept': 'application/json'
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error('Не вдалося оновити шар тривог.');
+    }
+
+    const data = await response.json();
+    const features = data.features || [];
+
+    // Remove old alerts layer if exists
+    if (alertLayersGroup) {
+        map.removeLayer(alertLayersGroup);
+    }
+
+    // Create new alerts layer
+    alertLayersGroup = L.geoJSON(features, {
+        style: function(feature) {
+            const props = feature && feature.properties;
+            const alertType = props && props.alert_type || 'air_raid';
+            const palette = getAlertPalette(alertType);
+
+            return {
+                stroke: false,
+                fillColor: palette.fill,
+                fillOpacity: palette.fillOpacity,
+            };
+        },
+        onEachFeature: bindFeatureTooltip,
+    }).addTo(map);
+}
+
 async function refreshOverlays() {
     if (!activeConfig) {
         return;
     }
 
-    const visibleLayers = getVisibleLayers();
     setStatus('Оновлюємо мапу…');
 
-    await Promise.all(visibleLayers.map((layerId) => loadLayer(layerId)));
-    await loadSpecialAlertLayer();
+    // Load single precomputed alert layer (replaces 3 separate layer requests)
+    await loadAlertsLayer();
     await loadThreatOverlays();
-
-    Object.keys(overlayLayers).forEach((layerId) => {
-        if (!visibleLayers.includes(layerId) && overlayLayers[layerId]) {
-            map.removeLayer(overlayLayers[layerId]);
-            overlayLayers[layerId] = null;
-        }
-    });
 
     fitToVisibleData();
     refreshLayout();
-    refreshAlertMarkers();
     bringAlertLayersToFront();
     setStatus(null);
 }

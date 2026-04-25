@@ -9,7 +9,7 @@ const map = L.map('map', {
     scrollWheelZoom: true,
     //-}).setView([49.0, 31.0], 7);
     minZoom: 5,
-    maxZoom: 8,
+    maxZoom: 9,
 }).setView([49.0, 31.0], 5);
 
 map.getContainer().tabIndex = 0;
@@ -32,6 +32,7 @@ let activeConfig = null;
 let ukraineMaskLayer = null;
 let alertMarkersLayer = null;
 let specialAlertLayer = null;
+let alertLayersGroup = null;
 let threatOverlayLayer = null;
 let threatOverlayData = [];
 let hasFittedToData = false;
