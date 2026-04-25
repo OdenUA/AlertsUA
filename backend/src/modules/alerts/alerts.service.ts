@@ -942,7 +942,7 @@ export class AlertsService {
     await client.query('DELETE FROM alert_layer_features');
 
     // Insert all regions with active alerts (raions and hromadas that are subscription_leaf)
-    // Also include oblasts with direct alerts (like Kyiv city)
+    // Also include cities (like Kyiv city) but NOT oblasts - their children are included instead
     const result = await client.query<{
       uid: number;
       region_type: string;
@@ -963,8 +963,8 @@ export class AlertsService {
         LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
         WHERE arc.status = 'A'
           AND (
-            -- Include oblasts/cities with direct alerts
-            rc.region_type IN ('oblast', 'city')
+            -- Include cities with direct alerts (but not oblasts, their children are included)
+            rc.region_type = 'city'
             OR
             -- Include subscription_leaf regions (hromadas, some raions)
             rc.is_subscription_leaf = TRUE

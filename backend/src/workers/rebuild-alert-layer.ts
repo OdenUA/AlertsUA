@@ -18,7 +18,7 @@ async function rebuildAlertLayer() {
     await client.query('DELETE FROM alert_layer_features');
     console.log('✓ Cleared existing data');
 
-    // Insert all regions with active alerts
+    // Insert all regions with active alerts (excluding oblasts - their children are included)
     const result = await client.query(
       `
         INSERT INTO alert_layer_features (uid, region_type, alert_type, geometry_json)
@@ -34,7 +34,7 @@ async function rebuildAlertLayer() {
         LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
         WHERE arc.status = 'A'
           AND (
-            rc.region_type IN ('oblast', 'city')
+            rc.region_type = 'city'
             OR
             rc.is_subscription_leaf = TRUE
           )
