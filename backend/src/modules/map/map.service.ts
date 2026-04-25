@@ -1,7 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { calculateBearingDegrees, resolveMovementBearingDegrees } from '../../common/utils/bearing.util';
 import { DatabaseService } from '../../common/database/database.service';
 import { TimeUtil } from '../../common/utils/time.util';
+import { CacheService } from '../../common/cache/cache.service';
+import { MapBundleService } from './map-bundle.service';
+import { CACHE_KEYS, CACHE_TTL } from '../../common/cache/cache.constants';
+import type { AlertsBundleDto, FeaturesBundleDto } from '../../common/cache/dto/cache-bundle.dto';
 
 type MapFeatureRow = {
   uid: number;
@@ -65,7 +69,13 @@ const THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL = "INTERVAL '5 minutes'";
 
 @Injectable()
 export class MapService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  private readonly logger = new Logger(MapService.name);
+
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly cacheService: CacheService,
+    private readonly mapBundleService: MapBundleService,
+  ) {}
 
   async getRegions() {
     if (!this.databaseService.isConfigured()) {
@@ -259,98 +269,62 @@ export class MapService {
       };
     }
 
-    const regionTypes = this.resolveLayerRegionTypes(layer);
     const selectedLod = this.resolveLod(layer, zoom);
     const parsedBbox = this.parseBbox(bbox);
-    const values: unknown[] = [regionTypes, selectedLod];
-    let bboxClause = '';
+    const cacheKey = CACHE_KEYS.FEATURES(layer, selectedLod) + (bbox ? `:${bbox}` : '');
 
-    if (parsedBbox) {
-      values.push(parsedBbox.west, parsedBbox.south, parsedBbox.east, parsedBbox.north);
-      bboxClause = `
-        AND COALESCE(rgl.geom, rg.geom) && ST_MakeEnvelope($3, $4, $5, $6, 4326)
-        AND ST_Intersects(COALESCE(rgl.geom, rg.geom), ST_MakeEnvelope($3, $4, $5, $6, 4326))
-      `;
+    // Try cache first
+    const cached = await this.cacheService.get<FeaturesBundleDto>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Cache hit for features: ${cacheKey}`);
+      const alertsBundle = await this.cacheService.get<AlertsBundleDto>(CACHE_KEYS.ALERTS_CURRENT);
+      this.mapBundleService.mergeAlertsStatus(cached, alertsBundle);
+      return {
+        layer,
+        bbox: bbox ?? null,
+        zoom: zoom ?? null,
+        pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
+        features: this.buildFeaturesFromBundle(cached),
+      };
     }
 
-    const result = await this.databaseService.query<MapFeatureRow>(
-      `
-        WITH base AS (
-          SELECT rc.uid,
-                 rc.title_uk,
-                 rc.region_type,
-                 rc.parent_uid,
-                 rc.oblast_uid,
-                 COALESCE(arc.status, ' ') AS raw_status,
-                 COALESCE(arc.alert_type, 'air_raid') AS alert_type,
-                 ST_AsGeoJSON(COALESCE(rgl.geom, rg.geom)) AS geometry_json
-          FROM region_catalog rc
-          JOIN region_geometry rg ON rg.uid = rc.uid
-          LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = $2
-          LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
-          WHERE rc.is_active = TRUE
-            AND rc.region_type = ANY($1::text[])
-            ${bboxClause}
-        ),
-        coverage AS (
-          SELECT
-            b.uid,
-            COUNT(leaf.uid)::int AS total_leaf_count,
-            COUNT(*) FILTER (WHERE leaf_state.status = 'A')::int AS active_leaf_count
-          FROM base b
-          JOIN region_catalog leaf ON leaf.is_active = TRUE
-            AND leaf.is_subscription_leaf = TRUE
-            AND (
-              (b.region_type = 'oblast' AND leaf.oblast_uid = b.uid)
-              OR
-              (b.region_type = 'raion' AND leaf.raion_uid = b.uid)
-            )
-          LEFT JOIN air_raid_state_current leaf_state ON leaf_state.uid = leaf.uid
-          WHERE b.region_type IN ('oblast', 'raion')
-          GROUP BY b.uid
-        )
-        SELECT b.uid,
-               b.title_uk,
-               b.region_type,
-               b.parent_uid,
-               b.oblast_uid,
-               CASE
-                 WHEN b.region_type IN ('oblast', 'raion') AND c.total_leaf_count > 0 THEN
-                   CASE
-                     WHEN c.active_leaf_count = 0 THEN 'N'
-                     WHEN c.active_leaf_count = c.total_leaf_count THEN 'A'
-                     ELSE 'P'
-                   END
-                 ELSE b.raw_status
-               END AS status,
-               b.alert_type,
-               b.geometry_json
-        FROM base b
-        LEFT JOIN coverage c ON c.uid = b.uid
-        ORDER BY b.uid ASC
-      `,
-      values,
-    );
+    // Cache miss - build bundle
+    this.logger.debug(`Cache miss for features: ${cacheKey}`);
+    const bundle = await this.mapBundleService.buildFeaturesBundle(layer, selectedLod, parsedBbox ?? undefined);
+
+    // Merge alerts status
+    const alertsBundle = await this.cacheService.get<AlertsBundleDto>(CACHE_KEYS.ALERTS_CURRENT);
+    this.mapBundleService.mergeAlertsStatus(bundle, alertsBundle);
+
+    // Cache the bundle
+    await this.cacheService.set(cacheKey, bundle, CACHE_TTL.FEATURES);
 
     return {
       layer,
       bbox: bbox ?? null,
       zoom: zoom ?? null,
       pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
-      features: result.rows.map((row) => ({
-        type: 'Feature',
-        geometry: JSON.parse(row.geometry_json),
-        properties: {
-          uid: row.uid,
-          title_uk: row.title_uk,
-          region_type: row.region_type,
-          parent_uid: row.parent_uid,
-          oblast_uid: row.oblast_uid,
-          status: row.status,
-          alert_type: row.alert_type,
-        },
-      })),
+      features: this.buildFeaturesFromBundle(bundle),
     };
+  }
+
+  private buildFeaturesFromBundle(bundle: FeaturesBundleDto) {
+    return bundle.features.geometries.map((geom) => {
+      const status = bundle.features.status_lookup[geom.uid];
+      return {
+        type: 'Feature',
+        geometry: geom.geometry,
+        properties: {
+          uid: geom.uid,
+          title_uk: geom.title_uk,
+          region_type: geom.region_type,
+          parent_uid: geom.parent_uid,
+          oblast_uid: geom.oblast_uid,
+          status: status?.status ?? ' ',
+          alert_type: status?.alert_type ?? 'air_raid',
+        },
+      };
+    });
   }
 
   async getActiveAlerts() {
@@ -362,8 +336,27 @@ export class MapService {
       };
     }
 
-    // Returns active-alert geometries for raion + hromada at a simplified LOD.
-    // This is always served regardless of map zoom so alerts are visible at any scale.
+    // Try to get from cache first
+    const cached = await this.cacheService.get<AlertsBundleDto>(CACHE_KEYS.ALERTS_CURRENT);
+    if (cached) {
+      this.logger.debug(`Cache hit for alerts: state_version=${cached.state_version}`);
+      return {
+        generated_at: cached.generated_at,
+        features: cached.active_alerts.features.map((f) => ({
+          type: 'Feature',
+          geometry: f.geometry,
+          properties: {
+            uid: f.uid,
+            title_uk: f.title_uk,
+            region_type: f.region_type,
+            alert_type: f.alert_type,
+          },
+        })),
+      };
+    }
+
+    // Cache miss - fall back to database query
+    this.logger.debug('Cache miss for alerts, querying database');
     const result = await this.databaseService.query<ActiveAlertRow>(
       `
         SELECT rc.uid,
@@ -408,6 +401,17 @@ export class MapService {
         generated_at: TimeUtil.getNowInKyiv(),
         overlays: [],
         note_uk: 'База даних недоступна. Шар загроз тимчасово не можна отримати.',
+      };
+    }
+
+    // Try cache first for non-bbox requests (full map)
+    const cacheKey = bbox ? `threats:${bbox}` : CACHE_KEYS.THREATS_BUCKET(Date.now());
+    const cached = await this.cacheService.get<any>(cacheKey);
+    if (cached && !bbox) {
+      this.logger.debug(`Cache hit for threats: bucket=${cached.bucket_ts}`);
+      return {
+        generated_at: cached.generated_at,
+        overlays: cached.overlays,
       };
     }
 
@@ -488,30 +492,43 @@ export class MapService {
       values,
     );
 
+    const overlays = result.rows.map((row) => {
+      const marker = row.marker_json ? JSON.parse(row.marker_json) : null;
+      const corridor = row.corridor_json ? JSON.parse(row.corridor_json) : null;
+      const area = row.area_json ? JSON.parse(row.area_json) : null;
+
+      return {
+        overlay_id: row.overlay_id,
+        vector_id: row.vector_id,
+        threat_kind: row.threat_kind,
+        confidence: Number(row.confidence),
+        movement_bearing_deg: this.resolveOverlayBearing(row.movement_bearing_deg, corridor),
+        icon_type: row.icon_type,
+        color_hex: row.color_hex,
+        occurred_at: row.occurred_at,
+        expires_at: row.expires_at,
+        message_text: row.message_text,
+        message_date: row.message_date,
+        marker,
+        corridor,
+        area,
+      };
+    });
+
+    // Cache non-bbox requests
+    if (!bbox && overlays.length > 0) {
+      const bucketTs = Math.floor(Date.now() / 300000) * 300000;
+      const bundle = {
+        bucket_ts: bucketTs,
+        generated_at: TimeUtil.getNowInKyiv(),
+        overlays: overlays,
+      };
+      await this.cacheService.set(CACHE_KEYS.THREATS_BUCKET(Date.now()), bundle, CACHE_TTL.THREATS);
+    }
+
     return {
       generated_at: TimeUtil.getNowInKyiv(),
-      overlays: result.rows.map((row) => {
-        const marker = row.marker_json ? JSON.parse(row.marker_json) : null;
-        const corridor = row.corridor_json ? JSON.parse(row.corridor_json) : null;
-        const area = row.area_json ? JSON.parse(row.area_json) : null;
-
-        return {
-          overlay_id: row.overlay_id,
-          vector_id: row.vector_id,
-          threat_kind: row.threat_kind,
-          confidence: Number(row.confidence),
-          movement_bearing_deg: this.resolveOverlayBearing(row.movement_bearing_deg, corridor),
-          icon_type: row.icon_type,
-          color_hex: row.color_hex,
-          occurred_at: row.occurred_at,
-          expires_at: row.expires_at,
-          message_text: row.message_text,
-          message_date: row.message_date,
-          marker,
-          corridor,
-          area,
-        };
-      }),
+      overlays: overlays,
     };
   }
 

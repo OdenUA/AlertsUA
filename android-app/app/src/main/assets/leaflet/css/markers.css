@@ -1,0 +1,55 @@
+/* ─── Alert Type Markers ──────────────────────────────── */
+.al-marker {
+    pointer-events: none;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.al-marker img {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+    animation: al-pulse 2s infinite;
+}
+.al-marker.threat-marker img {
+    animation: threat-pulse 2s infinite;
+    transform: rotate(var(--threat-bearing-deg, 0deg)) scale(1);
+    transform-origin: center center;
+}
+.al-marker.al-small img {
+    width: 20px;
+    height: 20px;
+}
+.threat-hit-area {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0);
+}
+
+/* ─── Subscription Pin Markers ───────────────────────── */
+.sub-marker {
+    width: 28px;
+    height: 36px;
+    background: #1976d2;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    border: 2.5px solid rgba(255,255,255,0.88);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.42);
+    position: relative;
+    cursor: pointer;
+}
+.sub-marker::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    background: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+}

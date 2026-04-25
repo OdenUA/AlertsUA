@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
@@ -141,6 +141,7 @@ const ACTIVE_STATUSES = new Set<AlertStatus>(['A', 'P']);
 
 @Injectable()
 export class SubscriptionsService {
+  private readonly logger = new Logger(SubscriptionsService.name);
   private kyivOblastUidCache: number | null | undefined;
 
   constructor(
@@ -709,292 +710,22 @@ export class SubscriptionsService {
   }
 
   private async loadOblastHistory(oblastUid: number) {
+    const oblastTitleResult = await this.databaseService.query<{ title_uk: string }>(
+      'SELECT title_uk FROM region_catalog WHERE uid = $1',
+      [oblastUid],
+    );
+    const oblastTitle = oblastTitleResult.rows[0]?.title_uk ?? '';
+
+    const isSpecialOblast = oblastTitle === 'Луганська область' || oblastTitle === 'Автономна Республіка Крим';
+
+    this.logger.log(`[loadOblastHistory] oblastTitle=${oblastTitle}, isSpecial=${isSpecialOblast}`);
+
     const [activeResult, endedResult, raionLeafCountResult] = await Promise.all([
-      this.databaseService.query<OblastActiveHistoryRow>(
-        `
-          WITH target_hromadas AS (
-            SELECT rc.uid,
-                   rc.region_type,
-                   rc.title_uk AS region_title_uk,
-                   rc.raion_uid,
-                   rr.title_uk AS raion_title_uk
-            FROM region_catalog rc
-            LEFT JOIN region_catalog rr ON rr.uid = rc.raion_uid
-            WHERE rc.is_active = TRUE
-              AND rc.oblast_uid = $1
-              AND rc.region_type IN ('hromada', 'city')
-          ),
-          active_hromadas AS (
-            SELECT th.*,
-                   arc.active_from::text AS started_at,
-                   arc.alert_type
-            FROM target_hromadas th
-            JOIN air_raid_state_current arc ON arc.uid = th.uid
-            WHERE arc.status = 'A'
-              AND arc.active_from IS NOT NULL
-          ),
-          -- Total hromadas per raion
-          raion_total AS (
-            SELECT raion_uid, COUNT(*) AS total
-            FROM target_hromadas
-            WHERE raion_uid IS NOT NULL
-            GROUP BY raion_uid
-          ),
-          -- Active count per raion
-          raion_active AS (
-            SELECT raion_uid,
-                   COUNT(*) AS active_count,
-                   MIN(started_at) AS earliest_started_at
-            FROM active_hromadas
-            WHERE raion_uid IS NOT NULL
-            GROUP BY raion_uid
-          ),
-          -- Dominant alert type per raion (most common among its active hromadas)
-          raion_type_counts AS (
-            SELECT raion_uid, alert_type, COUNT(*) AS cnt
-            FROM active_hromadas WHERE raion_uid IS NOT NULL
-            GROUP BY raion_uid, alert_type
-          ),
-          raion_dominant_type AS (
-            SELECT DISTINCT ON (raion_uid) raion_uid, alert_type AS dominant_alert_type
-            FROM raion_type_counts
-            ORDER BY raion_uid, cnt DESC
-          ),
-          -- Raions where every hromada is active
-          fully_covered_raions AS (
-            SELECT ra.raion_uid,
-                   ra.earliest_started_at,
-                   rdt.dominant_alert_type AS alert_type
-            FROM raion_active ra
-            JOIN raion_total rt ON rt.raion_uid = ra.raion_uid
-            JOIN raion_dominant_type rdt ON rdt.raion_uid = ra.raion_uid
-            WHERE ra.active_count = rt.total
-          ),
-          -- Total raions in this oblast
-          all_oblast_raions AS (
-            SELECT uid AS raion_uid
-            FROM region_catalog
-            WHERE is_active = TRUE AND oblast_uid = $1 AND region_type = 'raion'
-          ),
-          -- Is every raion in the oblast fully covered?
-          oblast_coverage AS (
-            SELECT (
-              (SELECT COUNT(*) FROM fully_covered_raions) =
-              (SELECT COUNT(*) FROM all_oblast_raions)
-              AND (SELECT COUNT(*) FROM all_oblast_raions) > 0
-            ) AS is_fully_covered
-          ),
-          -- Dominant alert type across all fully covered raions
-          oblast_type_counts AS (
-            SELECT alert_type, COUNT(*) AS cnt
-            FROM fully_covered_raions
-            GROUP BY alert_type
-          ),
-          oblast_dominant_type AS (
-            SELECT alert_type FROM oblast_type_counts ORDER BY cnt DESC LIMIT 1
-          ),
-          oblast_info AS (
-            SELECT title_uk FROM region_catalog WHERE uid = $1
-          )
-
-          -- ── CASE 1: Oblast fully covered ─────────────────────────────────
-          -- Single oblast card with dominant type and earliest start time
-          SELECT 'oblast'                      AS region_type,
-                 oi.title_uk                  AS region_title_uk,
-                 NULL::text                   AS raion_title_uk,
-                 MIN(fcr.earliest_started_at) AS started_at,
-                 odt.alert_type               AS alert_type
-          FROM oblast_coverage oc
-          CROSS JOIN oblast_info oi
-          CROSS JOIN oblast_dominant_type odt
-          JOIN fully_covered_raions fcr ON TRUE
-          WHERE oc.is_fully_covered = TRUE
-          GROUP BY oi.title_uk, odt.alert_type
-
-          UNION ALL
-
-          -- Exception raions whose dominant type differs from the oblast dominant
-          SELECT 'raion'                  AS region_type,
-                 rc.title_uk             AS region_title_uk,
-                 NULL::text              AS raion_title_uk,
-                 fcr.earliest_started_at AS started_at,
-                 fcr.alert_type          AS alert_type
-          FROM oblast_coverage oc
-          CROSS JOIN oblast_dominant_type odt
-          JOIN fully_covered_raions fcr ON fcr.alert_type <> odt.alert_type
-          JOIN region_catalog rc ON rc.uid = fcr.raion_uid
-          WHERE oc.is_fully_covered = TRUE
-
-          UNION ALL
-
-          -- Exception hromadas within conforming raions (type differs from oblast dominant)
-          SELECT ah.region_type,
-                 ah.region_title_uk,
-                 ah.raion_title_uk,
-                 ah.started_at,
-                 ah.alert_type
-          FROM oblast_coverage oc
-          CROSS JOIN oblast_dominant_type odt
-          JOIN active_hromadas ah ON ah.alert_type <> odt.alert_type
-          -- only within raions that themselves conform to the dominant type
-          JOIN fully_covered_raions fcr
-            ON fcr.raion_uid = ah.raion_uid
-           AND fcr.alert_type = odt.alert_type
-          WHERE oc.is_fully_covered = TRUE
-
-          UNION ALL
-
-          -- Exception hromadas within exception raions (type differs from raion dominant)
-          SELECT ah.region_type,
-                 ah.region_title_uk,
-                 ah.raion_title_uk,
-                 ah.started_at,
-                 ah.alert_type
-          FROM oblast_coverage oc
-          CROSS JOIN oblast_dominant_type odt
-          JOIN fully_covered_raions fcr ON fcr.alert_type <> odt.alert_type
-          JOIN active_hromadas ah ON ah.raion_uid = fcr.raion_uid
-          WHERE oc.is_fully_covered = TRUE
-            AND ah.alert_type <> fcr.alert_type
-
-          -- ── CASE 2: Oblast NOT fully covered (existing logic) ────────────
-          UNION ALL
-
-          -- Consolidated raion cards
-          SELECT 'raion'                  AS region_type,
-                 rc.title_uk             AS region_title_uk,
-                 NULL::text              AS raion_title_uk,
-                 fcr.earliest_started_at AS started_at,
-                 fcr.alert_type          AS alert_type
-          FROM oblast_coverage oc
-          JOIN fully_covered_raions fcr ON TRUE
-          JOIN region_catalog rc ON rc.uid = fcr.raion_uid
-          WHERE oc.is_fully_covered = FALSE
-
-          UNION ALL
-
-          -- Individual hromadas not in any fully covered raion
-          SELECT ah.region_type,
-                 ah.region_title_uk,
-                 ah.raion_title_uk,
-                 ah.started_at,
-                 ah.alert_type
-          FROM oblast_coverage oc
-          JOIN active_hromadas ah
-            ON ah.raion_uid IS NULL
-            OR ah.raion_uid NOT IN (SELECT raion_uid FROM fully_covered_raions)
-          WHERE oc.is_fully_covered = FALSE
-
-          UNION ALL
-
-          -- Exception hromadas within fully covered raions (type differs from raion dominant)
-          SELECT ah.region_type,
-                 ah.region_title_uk,
-                 ah.raion_title_uk,
-                 ah.started_at,
-                 ah.alert_type
-          FROM oblast_coverage oc
-          JOIN fully_covered_raions fcr ON TRUE
-          JOIN active_hromadas ah ON ah.raion_uid = fcr.raion_uid
-          WHERE oc.is_fully_covered = FALSE
-            AND ah.alert_type <> fcr.alert_type
-
-          UNION ALL
-
-          -- Direct raion-level alerts not yet consolidated
-          SELECT tr.region_type,
-                 tr.region_title_uk,
-                 NULL::text            AS raion_title_uk,
-                 arc.active_from::text AS started_at,
-                 arc.alert_type
-          FROM oblast_coverage oc
-          JOIN (
-            SELECT rc.uid, rc.region_type, rc.title_uk AS region_title_uk
-            FROM region_catalog rc
-            WHERE rc.is_active = TRUE
-              AND rc.oblast_uid = $1
-              AND rc.region_type = 'raion'
-              AND rc.uid NOT IN (SELECT raion_uid FROM fully_covered_raions)
-          ) tr ON TRUE
-          JOIN air_raid_state_current arc ON arc.uid = tr.uid
-          WHERE arc.status = 'A'
-            AND arc.active_from IS NOT NULL
-            AND oc.is_fully_covered = FALSE
-
-          ORDER BY started_at DESC
-        `,
-        [oblastUid],
-      ),
-      this.databaseService.query<OblastEndedHistoryRow>(
-        `
-          WITH target_regions AS (
-            SELECT rc.uid,
-                   rc.region_type,
-                   rc.title_uk AS region_title_uk,
-                   CASE WHEN rc.region_type = 'raion' THEN rc.uid ELSE rc.raion_uid END AS group_raion_uid,
-                   rr.title_uk AS raion_title_uk
-            FROM region_catalog rc
-            LEFT JOIN region_catalog rr ON rr.uid = rc.raion_uid
-            WHERE rc.is_active = TRUE
-              AND (rc.uid = $1 OR rc.oblast_uid = $1)
-              AND rc.region_type IN ('raion', 'hromada', 'city')
-          ),
-          started_events AS (
-            SELECT tr.uid,
-                   tr.region_type,
-                   tr.region_title_uk,
-                 tr.group_raion_uid,
-                   tr.raion_title_uk,
-                   e.occurred_at,
-                   COALESCE(e.alert_type, 'air_raid') AS alert_type
-            FROM target_regions tr
-            JOIN air_raid_events e ON e.uid = tr.uid
-            WHERE e.event_kind = 'started'
-              AND e.new_status = 'A'
-              AND e.occurred_at >= (NOW() - INTERVAL '4 days')
-          )
-          SELECT se.uid,
-                 se.region_type,
-                 se.region_title_uk,
-               se.group_raion_uid,
-                 se.raion_title_uk,
-                 se.occurred_at::text AS started_at,
-                 NULLIF(
-                   (
-                     SELECT e2.occurred_at::text
-                     FROM air_raid_events e2
-                     WHERE e2.uid = se.uid
-                       AND e2.event_kind = 'ended'
-                       AND e2.occurred_at > se.occurred_at
-                     ORDER BY e2.occurred_at ASC
-                     LIMIT 1
-                   ),
-                   ''
-                 ) AS ended_at,
-                 se.alert_type
-          FROM started_events se
-          ORDER BY se.occurred_at DESC
-          LIMIT 300
-        `,
-        [oblastUid],
-      ),
-      this.databaseService.query<RaionLeafCountRow>(
-        `
-          SELECT rr.uid AS raion_uid,
-                 rr.title_uk AS raion_title_uk,
-                 COUNT(rc.uid)::text AS total_leaf_count
-          FROM region_catalog rr
-          LEFT JOIN region_catalog rc
-            ON rc.raion_uid = rr.uid
-           AND rc.is_active = TRUE
-           AND rc.region_type IN ('hromada', 'city')
-          WHERE rr.is_active = TRUE
-            AND rr.oblast_uid = $1
-            AND rr.region_type = 'raion'
-          GROUP BY rr.uid, rr.title_uk
-        `,
-        [oblastUid],
-      ),
+      isSpecialOblast
+        ? this.loadActiveHistorySpecial(oblastUid)
+        : this.loadActiveHistoryRegular(oblastUid),
+      this.loadEndedHistory(oblastUid),
+      this.loadRaionLeafCounts(oblastUid),
     ]);
 
     const formatKyivDate = (value: Date) =>
@@ -1191,6 +922,271 @@ export class SubscriptionsService {
       .map((row) => toHistoryItem(row));
 
     return { active, today, yesterday };
+  }
+
+  private async loadActiveHistorySpecial(oblastUid: number) {
+    // Full grouping logic for Luhansk and AR Crimea
+    try {
+      return await this.databaseService.query<OblastActiveHistoryRow>(
+      `
+        WITH target_hromadas AS (
+          SELECT rc.uid,
+                 rc.region_type,
+                 rc.title_uk AS region_title_uk,
+                 rc.raion_uid,
+                 rr.title_uk AS raion_title_uk
+          FROM region_catalog rc
+          LEFT JOIN region_catalog rr ON rr.uid = rc.raion_uid
+          WHERE rc.is_active = TRUE
+            AND rc.oblast_uid = $1
+            AND rc.region_type IN ('hromada', 'city')
+        ),
+        active_hromadas AS (
+          SELECT th.*,
+                 arc.active_from::text AS started_at,
+                 arc.alert_type
+          FROM target_hromadas th
+          JOIN air_raid_state_current arc ON arc.uid = th.uid
+          WHERE arc.status = 'A'
+            AND arc.active_from IS NOT NULL
+        ),
+        raion_total AS (
+          SELECT raion_uid, COUNT(*) AS total
+          FROM target_hromadas
+          WHERE raion_uid IS NOT NULL
+          GROUP BY raion_uid
+        ),
+        raion_active AS (
+          SELECT raion_uid,
+                 COUNT(*) AS active_count,
+                 MIN(started_at) AS earliest_started_at
+          FROM active_hromadas
+          WHERE raion_uid IS NOT NULL
+          GROUP BY raion_uid
+        ),
+        raion_type_counts AS (
+          SELECT raion_uid, alert_type, COUNT(*) AS cnt
+          FROM active_hromadas WHERE raion_uid IS NOT NULL
+          GROUP BY raion_uid, alert_type
+        ),
+        raion_dominant_type AS (
+          SELECT DISTINCT ON (raion_uid) raion_uid, alert_type AS dominant_alert_type
+          FROM raion_type_counts
+          ORDER BY raion_uid, cnt DESC
+        ),
+        fully_covered_raions AS (
+          SELECT ra.raion_uid,
+                 ra.earliest_started_at,
+                 rdt.dominant_alert_type AS alert_type
+          FROM raion_active ra
+          JOIN raion_total rt ON rt.raion_uid = ra.raion_uid
+          JOIN raion_dominant_type rdt ON rdt.raion_uid = ra.raion_uid
+          WHERE ra.active_count = rt.total
+        ),
+        all_oblast_raions AS (
+          SELECT uid AS raion_uid
+          FROM region_catalog
+          WHERE is_active = TRUE AND oblast_uid = $1 AND region_type = 'raion'
+        ),
+        oblast_coverage AS (
+          SELECT (
+            (SELECT COUNT(*) FROM fully_covered_raions) =
+            (SELECT COUNT(*) FROM all_oblast_raions)
+            AND (SELECT COUNT(*) FROM all_oblast_raions) > 0
+          ) AS is_fully_covered
+        ),
+        oblast_type_counts AS (
+          SELECT alert_type, COUNT(*) AS cnt
+          FROM fully_covered_raions
+          GROUP BY alert_type
+        ),
+        oblast_dominant_type AS (
+          SELECT alert_type FROM oblast_type_counts ORDER BY cnt DESC LIMIT 1
+        ),
+        oblast_info AS (
+          SELECT title_uk FROM region_catalog WHERE uid = $1
+        )
+
+        SELECT 'oblast' AS region_type,
+               oi.title_uk AS region_title_uk,
+               NULL::text AS raion_title_uk,
+               MIN(fcr.earliest_started_at)::text AS started_at,
+               COALESCE(odt.alert_type, 'air_raid') AS alert_type
+        FROM oblast_coverage oc
+        CROSS JOIN oblast_info oi
+        LEFT JOIN oblast_dominant_type odt ON TRUE
+        JOIN fully_covered_raions fcr ON TRUE
+        WHERE oc.is_fully_covered = TRUE
+        GROUP BY oi.title_uk, odt.alert_type
+
+        UNION ALL
+
+        SELECT 'raion' AS region_type,
+               rc.title_uk AS region_title_uk,
+               NULL::text AS raion_title_uk,
+               fcr.earliest_started_at::text AS started_at,
+               fcr.alert_type AS alert_type
+        FROM fully_covered_raions fcr
+        JOIN region_catalog rc ON rc.uid = fcr.raion_uid
+
+        UNION ALL
+
+        SELECT ah.region_type,
+               ah.region_title_uk,
+               ah.raion_title_uk,
+               ah.started_at,
+               ah.alert_type
+        FROM active_hromadas ah
+        WHERE ah.raion_uid IS NULL
+           OR ah.raion_uid NOT IN (SELECT raion_uid FROM fully_covered_raions)
+
+        UNION ALL
+
+        SELECT tr.region_type,
+               tr.title_uk AS region_title_uk,
+               NULL::text AS raion_title_uk,
+               arc.active_from::text AS started_at,
+               arc.alert_type
+        FROM region_catalog tr
+        JOIN air_raid_state_current arc ON arc.uid = tr.uid
+        WHERE tr.is_active = TRUE
+          AND tr.oblast_uid = $1
+          AND tr.region_type = 'raion'
+          AND tr.uid NOT IN (SELECT raion_uid FROM fully_covered_raions)
+          AND arc.status = 'A'
+          AND arc.active_from IS NOT NULL
+
+        ORDER BY started_at DESC
+      `,
+      [oblastUid],
+    );
+    } catch (error: any) {
+      this.logger.error(`[loadActiveHistorySpecial] Error: ${error?.message || error}`);
+      throw error;
+    }
+  }
+
+  private async loadActiveHistoryRegular(oblastUid: number) {
+    // Simple logic for regular oblasts: just all active raions
+    return this.databaseService.query<OblastActiveHistoryRow>(
+      `
+        WITH raion_active AS (
+          SELECT
+            rc.uid AS raion_uid,
+            rc.title_uk AS region_title_uk,
+            MIN(arc.active_from)::text AS earliest_started_at,
+            COUNT(DISTINCT arc.uid) AS active_count,
+            COUNT(DISTINCT CASE WHEN arc.alert_type = 'artillery_shelling' THEN arc.uid END) AS artillery_count,
+            COUNT(DISTINCT CASE WHEN arc.alert_type = 'urban_fights' THEN arc.uid END) AS urban_count
+          FROM region_catalog rc
+          JOIN region_catalog hromada ON hromada.raion_uid = rc.uid
+          JOIN air_raid_state_current arc ON arc.uid = hromada.uid
+          WHERE rc.is_active = TRUE
+            AND rc.oblast_uid = $1
+            AND rc.region_type = 'raion'
+            AND hromada.is_active = TRUE
+            AND hromada.region_type IN ('hromada', 'city')
+            AND arc.status = 'A'
+            AND arc.active_from IS NOT NULL
+          GROUP BY rc.uid, rc.title_uk
+        ),
+        raion_alert_type AS (
+          SELECT
+            raion_uid,
+              CASE
+                WHEN urban_count > 0 THEN 'urban_fights'
+                WHEN artillery_count > 0 THEN 'artillery_shelling'
+                ELSE 'air_raid'
+              END AS alert_type
+          FROM raion_active
+        )
+        SELECT 'raion' AS region_type,
+               ra.region_title_uk,
+               NULL::text AS raion_title_uk,
+               ra.earliest_started_at AS started_at,
+               rat.alert_type
+        FROM raion_active ra
+        JOIN raion_alert_type rat ON rat.raion_uid = ra.raion_uid
+        ORDER BY ra.earliest_started_at DESC
+      `,
+      [oblastUid],
+    );
+  }
+
+  private async loadEndedHistory(oblastUid: number) {
+    return this.databaseService.query<OblastEndedHistoryRow>(
+      `
+        WITH target_regions AS (
+          SELECT rc.uid,
+                 rc.region_type,
+                 rc.title_uk AS region_title_uk,
+                 CASE WHEN rc.region_type = 'raion' THEN rc.uid ELSE rc.raion_uid END AS group_raion_uid,
+                 rr.title_uk AS raion_title_uk
+          FROM region_catalog rc
+          LEFT JOIN region_catalog rr ON rr.uid = rc.raion_uid
+          WHERE rc.is_active = TRUE
+            AND (rc.uid = $1 OR rc.oblast_uid = $1)
+            AND rc.region_type IN ('raion', 'hromada', 'city')
+        ),
+        started_events AS (
+          SELECT tr.uid,
+                 tr.region_type,
+                 tr.region_title_uk,
+               tr.group_raion_uid,
+                 tr.raion_title_uk,
+                 e.occurred_at,
+                 COALESCE(e.alert_type, 'air_raid') AS alert_type
+          FROM target_regions tr
+          JOIN air_raid_events e ON e.uid = tr.uid
+          WHERE e.event_kind = 'started'
+            AND e.new_status = 'A'
+            AND e.occurred_at >= (NOW() - INTERVAL '4 days')
+        )
+        SELECT se.uid,
+               se.region_type,
+               se.region_title_uk,
+             se.group_raion_uid,
+               se.raion_title_uk,
+               se.occurred_at::text AS started_at,
+               NULLIF(
+                 (
+                   SELECT e2.occurred_at::text
+                   FROM air_raid_events e2
+                   WHERE e2.uid = se.uid
+                     AND e2.event_kind = 'ended'
+                     AND e2.occurred_at > se.occurred_at
+                   ORDER BY e2.occurred_at ASC
+                   LIMIT 1
+                 ),
+                 ''
+               ) AS ended_at,
+               se.alert_type
+        FROM started_events se
+        ORDER BY se.occurred_at DESC
+        LIMIT 300
+      `,
+      [oblastUid],
+    );
+  }
+
+  private async loadRaionLeafCounts(oblastUid: number) {
+    return this.databaseService.query<RaionLeafCountRow>(
+      `
+        SELECT rr.uid AS raion_uid,
+               rr.title_uk AS raion_title_uk,
+               COUNT(rc.uid)::text AS total_leaf_count
+        FROM region_catalog rr
+        LEFT JOIN region_catalog rc
+          ON rc.raion_uid = rr.uid
+         AND rc.is_active = TRUE
+         AND rc.region_type IN ('hromada', 'city')
+        WHERE rr.is_active = TRUE
+          AND rr.oblast_uid = $1
+          AND rr.region_type = 'raion'
+        GROUP BY rr.uid, rr.title_uk
+      `,
+      [oblastUid],
+    );
   }
 
   private buildDispatchText(

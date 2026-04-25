@@ -1,0 +1,171 @@
+function buildUrl(path, searchParams) {
+    const url = new URL(apiBaseUrl.replace(/\/$/, '') + path);
+    if (searchParams) {
+        Object.entries(searchParams).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && value !== '') {
+                url.searchParams.set(key, String(value));
+            }
+        });
+    }
+    return url.toString();
+}
+
+async function loadConfig() {
+    setStatus('Завантажуємо мапу…');
+    const response = await fetch(buildUrl('/map/config'), {
+        headers: {
+            'Accept': 'application/json'
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error('Не вдалося відкрити мапу.');
+    }
+
+    const config = await response.json();
+    activeConfig = config;
+    const defaultLayer = config.layers.find((layer) => layer.is_default) || config.layers[0];
+
+    if (!defaultLayer) {
+        throw new Error('Не вдалося підготувати мапу.');
+    }
+
+    if (tileLayer) {
+        map.removeLayer(tileLayer);
+    }
+
+    tileLayer = L.tileLayer(defaultLayer.url_template, {
+        attribution: defaultLayer.attribution_uk,
+        minZoom: defaultLayer.min_zoom,
+        maxZoom: defaultLayer.max_zoom,
+        subdomains: defaultLayer.subdomains,
+        opacity: 0.92,
+    }).addTo(map);
+
+    tileLayer.on('tileerror', function () {
+        setStatus('Мапу відкрито. Якщо фон не видно, все одно можна вибрати місце.');
+    });
+
+    refreshLayout();
+}
+
+function buildMaskFeature(ukraineGeometry) {
+    // Outer ring covers whole world; Ukraine polygon(s) become holes via evenodd fill rule.
+    var worldRing = [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]];
+    var holeRings = [];
+
+    if (ukraineGeometry.type === 'Polygon') {
+        holeRings.push(ukraineGeometry.coordinates[0]);
+    } else if (ukraineGeometry.type === 'MultiPolygon') {
+        ukraineGeometry.coordinates.forEach(function (polyCoords) {
+            holeRings.push(polyCoords[0]);
+        });
+    }
+
+    return {
+        type: 'Feature',
+        geometry: {
+            type: 'Polygon',
+            coordinates: [worldRing].concat(holeRings),
+        },
+    };
+}
+
+async function collectOblastHoleRings() {
+    // Fetch oblast-level regions and extract their outer rings for use as holes in world mask.
+    const response = await fetch(buildUrl('/map/features', { layer: 'oblast' }), {
+        headers: { 'Accept': 'application/json' }
+    });
+    if (!response.ok) { return null; }
+    const data = await response.json();
+    if (!data.features || !data.features.length) { return null; }
+
+    const worldRing = [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]];
+    const holeRings = [];
+    data.features.forEach(function (feature) {
+        var props = feature && feature.properties ? feature.properties : null;
+        // Keep only oblast polygons in fallback mask construction.
+        // The oblast endpoint can also include city polygons (e.g. Kyiv),
+        // and nested holes would produce a grey filled "island" on map.
+        if (!props || props.region_type !== 'oblast') { return; }
+
+        var geom = feature.geometry;
+        if (!geom) { return; }
+        if (geom.type === 'Polygon') {
+            holeRings.push(geom.coordinates[0]);
+        } else if (geom.type === 'MultiPolygon') {
+            geom.coordinates.forEach(function (polyCoords) { holeRings.push(polyCoords[0]); });
+        }
+    });
+    if (!holeRings.length) { return null; }
+    return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [worldRing].concat(holeRings) } };
+}
+
+async function loadUkraineMask() {
+    if (ukraineMaskLayer) {
+        map.removeLayer(ukraineMaskLayer);
+        ukraineMaskLayer = null;
+    }
+
+    try {
+        var maskFeature = null;
+        var hasBorder = false;
+
+        // Prefer optimised union endpoint (available after backend deploy).
+        const boundaryResp = await fetch(buildUrl('/map/ukraine-boundary'), {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (boundaryResp.ok) {
+            const data = await boundaryResp.json();
+            if (data.feature && data.feature.geometry) {
+                ukraineBoundaryGeometry = data.feature.geometry;
+                maskFeature = buildMaskFeature(data.feature.geometry);
+                hasBorder = true;
+            }
+        }
+
+        // Fallback: build mask from individual oblast features (no external dependency).
+        if (!maskFeature) {
+            maskFeature = await collectOblastHoleRings();
+        }
+
+        if (!maskFeature) { return; }
+
+        var isDark = document.body.classList.contains('dark');
+        ukraineMaskLayer = L.geoJSON(maskFeature, {
+            style: {
+                fillColor:   isDark ? '#131e28' : '#e8f0f4',
+                fillOpacity: 1.0,
+                stroke:      hasBorder,
+                color:       isDark ? '#2a4258' : '#91afc0',
+                weight:      1.8,
+            },
+            interactive: false,
+        }).addTo(map);
+    } catch (_e) {
+        // mask is optional — proceed without it
+    }
+}
+
+window.setMapTheme = function (isDark) {
+    document.body.classList.toggle('dark', isDark);
+    if (tileLayer) {
+        tileLayer.setOpacity(isDark ? 0.82 : 0.93);
+    }
+    if (ukraineMaskLayer) {
+        ukraineMaskLayer.setStyle({
+            fillColor:   isDark ? '#131e28' : '#e8f0f4',
+            color:       isDark ? '#2a4258' : '#91afc0',
+        });
+    }
+
+    if (mapReady) {
+        scheduleOverlayRefresh();
+    }
+};
+
+function refreshLayout() {
+    window.requestAnimationFrame(() => {
+        map.invalidateSize(false);
+    });
+}

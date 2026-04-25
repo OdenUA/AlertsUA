@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { CacheService } from '../../common/cache/cache.service';
+import { CACHE_KEYS, CACHE_TTL, CACHE_CHANNELS } from '../../common/cache/cache.constants';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
@@ -272,7 +274,8 @@ export class GeminiThreatParserService {
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly subscriptionsService: SubscriptionsService,
-  ) { }
+    private readonly cacheService: CacheService,
+  ) {}
 
   async processPendingJobs() {
     if (!this.databaseService.isConfigured()) {
@@ -1040,6 +1043,21 @@ export class GeminiThreatParserService {
       }
 
       overlaysCreated += 1;
+    }
+
+    // Invalidate threats cache so next request rebuilds the bundle
+    if (overlaysCreated > 0) {
+      try {
+        const currentBucketTs = Math.floor(Date.now() / 300000) * 300000;
+        await this.cacheService.delete(CACHE_KEYS.THREATS_BUCKET(currentBucketTs));
+        await this.cacheService.publish(CACHE_CHANNELS.THREATS_UPDATED, {
+          overlays_created: overlaysCreated,
+          timestamp: Date.now(),
+        });
+        this.logger.debug(`Threats cache invalidated: ${overlaysCreated} new overlays`);
+      } catch (error) {
+        this.logger.warn(`Failed to invalidate threats cache: ${error}`);
+      }
     }
 
     return {

@@ -11,6 +11,8 @@ async function main() {
     const alertsService = app.get(AlertsService);
     const result = await alertsService.runPollCycle();
     console.log(JSON.stringify(result, null, 2));
+    // Allow Redis to flush pending operations before exit
+    await new Promise(resolve => setTimeout(resolve, 500));
   } finally {
     await app.close();
   }

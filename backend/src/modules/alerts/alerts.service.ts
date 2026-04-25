@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
@@ -6,6 +6,9 @@ import { DatabaseService } from '../../common/database/database.service';
 import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { TimeUtil } from '../../common/utils/time.util';
+import { CacheService } from '../../common/cache/cache.service';
+import { CACHE_KEYS, CACHE_TTL, CACHE_CHANNELS } from '../../common/cache/cache.constants';
+import type { AlertsBundleDto } from '../../common/cache/dto/cache-bundle.dto';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
@@ -52,11 +55,14 @@ const VALID_STATUSES = new Set<AlertStatus>(['A', 'P', 'N', ' ']);
 
 @Injectable()
 export class AlertsService {
+  private readonly logger = new Logger(AlertsService.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly supabaseSyncService: SupabaseSyncService,
+    private readonly cacheService: CacheService,
   ) {}
 
   async getFullStatuses() {
@@ -232,6 +238,17 @@ export class AlertsService {
     const responseBody = await response.text();
 
     if (httpStatus === 304) {
+      // Refresh cache even when API returns 304 to prevent expiration
+      try {
+        await this.databaseService.withTransaction(async (client) => {
+          const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
+          await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
+          this.logger.log(`Alerts cache refreshed (304 response): state_version=${previousMetadata.state_version}`);
+        });
+      } catch (error) {
+        this.logger.error(`Failed to refresh alerts cache on 304: ${error}`);
+      }
+
       const cycleId = await this.insertPollCycle({
         requested_at: requestedAt,
         finished_at: finishedAt,
@@ -292,6 +309,17 @@ export class AlertsService {
     });
 
     if (!sourceChanged) {
+      // Refresh cache even when no changes detected to prevent expiration
+      try {
+        await this.databaseService.withTransaction(async (client) => {
+          const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
+          await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
+          this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousMetadata.state_version}`);
+        });
+      } catch (error) {
+        this.logger.error(`Failed to refresh alerts cache: ${error}`);
+      }
+
       return {
         cycle_id: cycleId,
         http_status: httpStatus,
@@ -447,6 +475,97 @@ export class AlertsService {
     }
   }
 
+  private async buildAlertsBundle(
+    client: PoolClient,
+    stateVersion: number,
+  ): Promise<AlertsBundleDto> {
+    const [activeAlertsResult, oblastAggregatesResult] = await Promise.all([
+      client.query<{
+        uid: number;
+        title_uk: string;
+        region_type: string;
+        alert_type: string;
+        geometry_json: string;
+      }>(
+        `
+          -- Get subscription_leaf regions with alerts (hromadas, cities)
+          SELECT rc.uid, rc.title_uk, rc.region_type, arc.alert_type,
+                 COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
+          FROM air_raid_state_current arc
+          JOIN region_catalog rc ON rc.uid = arc.uid AND rc.is_subscription_leaf = TRUE
+          JOIN region_geometry rg ON rg.uid = rc.uid
+          LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
+          WHERE arc.status = ANY(ARRAY['A'::text, 'P'::text])
+
+          UNION ALL
+
+          -- Get raions that have children with alerts
+          SELECT DISTINCT rc.uid, rc.title_uk, rc.region_type,
+                 COALESCE(par.alert_type, 'air_raid') AS alert_type,
+                 COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
+          FROM air_raid_state_current arc
+          JOIN region_catalog child ON child.uid = arc.uid AND child.is_subscription_leaf = TRUE
+          JOIN region_catalog rc ON rc.uid = child.parent_uid AND rc.region_type = 'raion'
+          JOIN region_geometry rg ON rg.uid = rc.uid
+          LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
+          LEFT JOIN air_raid_state_current par ON par.uid = rc.uid
+          WHERE arc.status = ANY(ARRAY['A'::text, 'P'::text])
+        `,
+      ),
+      client.query<{
+        oblast_uid: number;
+        status: string;
+        active_count: number;
+        total_count: number;
+      }>(
+        `
+          WITH oblast_regions AS (
+            SELECT rc.oblast_uid, arc.status
+            FROM region_catalog rc
+            LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+            WHERE rc.is_active = TRUE AND rc.is_subscription_leaf = TRUE
+          )
+          SELECT oblast_uid,
+                 CASE WHEN COUNT(*) FILTER (WHERE status = ANY(ARRAY['A'::text, 'P'::text])) > 0 THEN 'A'
+                      WHEN COUNT(*) FILTER (WHERE status = 'N') > 0 THEN 'N'
+                      ELSE ' ' END AS status,
+                 COUNT(*) FILTER (WHERE status = ANY(ARRAY['A'::text, 'P'::text]))::int AS active_count,
+                 COUNT(*)::int AS total_count
+          FROM oblast_regions
+          WHERE oblast_uid IS NOT NULL
+          GROUP BY oblast_uid
+        `,
+      ),
+    ]);
+
+    const activeAlerts = activeAlertsResult.rows.map((row) => ({
+      uid: row.uid,
+      title_uk: row.title_uk,
+      region_type: row.region_type,
+      alert_type: row.alert_type,
+      geometry: JSON.parse(row.geometry_json),
+    }));
+
+    const oblastAggregates: Record<number, { status: string; active_count: number; total_count: number }> = {};
+    for (const row of oblastAggregatesResult.rows) {
+      oblastAggregates[row.oblast_uid] = {
+        status: row.status,
+        active_count: row.active_count,
+        total_count: row.total_count,
+      };
+    }
+
+    return {
+      state_version: stateVersion,
+      generated_at: TimeUtil.getNowInKyiv(),
+      active_alerts: {
+        features: activeAlerts,
+        meta: { count: activeAlerts.length },
+      },
+      oblast_aggregates: oblastAggregates,
+    };
+  }
+
   private async applyStatusSnapshot(
     client: PoolClient,
     input: {
@@ -541,6 +660,15 @@ export class AlertsService {
     });
 
     if (!bootstrapMode && changedRows.length === 0) {
+      // Even if no changes, always update the cache to prevent it from expiring
+      try {
+        const bundle = await this.buildAlertsBundle(client, previousStateVersion);
+        await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
+        this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousStateVersion}`);
+      } catch (error) {
+        this.logger.error(`Failed to update alerts cache: ${error}`);
+      }
+
       return {
         state_version: previousStateVersion,
         bootstrap_mode: false,
@@ -644,6 +772,22 @@ export class AlertsService {
       state_version: nextStateVersion,
       occurred_at: input.occurred_at,
     });
+
+    // Invalidate and rebuild alerts cache
+    try {
+      const bundle = await this.buildAlertsBundle(client, nextStateVersion);
+      await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
+      await this.cacheService.publish(CACHE_CHANNELS.ALERTS_UPDATED, {
+        state_version: nextStateVersion,
+        changed_uids: changedRows.map((row) => row.uid),
+      });
+      this.logger.log(`Alerts cache updated: state_version=${nextStateVersion}, count=${bundle.active_alerts.meta.count}`);
+    } catch (error) {
+      this.logger.error(`Failed to update alerts cache: ${error}`);
+      if (error instanceof Error) {
+        this.logger.error(`Cache error stack: ${error.stack}`);
+      }
+    }
 
     return {
       state_version: nextStateVersion,

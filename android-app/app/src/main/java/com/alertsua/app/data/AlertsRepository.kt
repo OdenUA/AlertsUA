@@ -3,6 +3,9 @@ package com.alertsua.app.data
 import android.content.Context
 import android.os.Build
 import com.alertsua.app.BuildConfig
+import com.alertsua.app.map.simplified.LatLng
+import com.alertsua.app.map.simplified.Bounds
+import com.alertsua.app.map.simplified.OblastData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -62,6 +65,14 @@ data class ResolvedPoint(
     val longitude: Double,
     val addressUk: String,
     val resolvedRegion: ResolvedRegion,
+)
+
+data class ActiveAlertGeometry(
+    val uid: Int,
+    val titleUk: String,
+    val regionType: String,
+    val alertType: String,
+    val geometry: List<List<List<Double>>>,
 )
 
 class AlertsRepository(context: Context) {
@@ -406,6 +417,166 @@ class AlertsRepository(context: Context) {
                 )
             }
         }.getOrDefault(emptyList())
+    }
+
+    suspend fun fetchSimplifiedOblastMap(rawApiBaseUrl: String): List<OblastData> = withContext(Dispatchers.IO) {
+        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
+        val connection = (URL("$apiBaseUrl/map/simplified-oblast").openConnection() as HttpURLConnection)
+            .apply {
+                requestMethod = "GET"
+                doInput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Accept", "application/json")
+            }
+
+        try {
+            val code = connection.responseCode
+            val responseText = readResponse(connection)
+
+            android.util.Log.d("SimplifiedMap", "API response code: $code")
+            android.util.Log.d("SimplifiedMap", "Response length: ${responseText.length}")
+
+            if (code !in 200..299) {
+                android.util.Log.e("SimplifiedMap", "HTTP error: $code")
+                throw IllegalStateException("Failed to load map data")
+            }
+
+            val json = JSONObject(responseText)
+            val oblastsArray = json.getJSONArray("oblasts")
+
+            android.util.Log.d("SimplifiedMap", "Oblasts count: ${oblastsArray.length()}")
+
+            (0 until oblastsArray.length()).map { i ->
+                try {
+                    val obj = oblastsArray.getJSONObject(i)
+                    val geometry = obj.getJSONObject("geometry")
+                    val coordinates = geometry.getJSONArray("coordinates")
+
+                    android.util.Log.d("SimplifiedMap", "Processing oblast $i: ${obj.getString("title_uk")}")
+                    android.util.Log.d("SimplifiedMap", "Geometry type: ${geometry.getString("type")}")
+                    android.util.Log.d("SimplifiedMap", "Coordinates length: ${coordinates.length()}")
+
+                    val parsedGeometry = parseGeoJsonCoordinates(coordinates)
+                    android.util.Log.d("SimplifiedMap", "Parsed geometry rings: ${parsedGeometry.size}")
+
+                    OblastData(
+                        uid = obj.getInt("uid"),
+                        titleUk = obj.getString("title_uk"),
+                        status = obj.getString("status"),
+                        alertType = obj.getString("alert_type"),
+                        geometry = parsedGeometry,
+                        center = LatLng(
+                            lat = obj.getJSONObject("center").getDouble("lat"),
+                            lon = obj.getJSONObject("center").getDouble("lon")
+                        ),
+                        bounds = Bounds(
+                            west = obj.getJSONObject("bounds").getDouble("west"),
+                            south = obj.getJSONObject("bounds").getDouble("south"),
+                            east = obj.getJSONObject("bounds").getDouble("east"),
+                            north = obj.getJSONObject("bounds").getDouble("north")
+                        )
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("SimplifiedMap", "Error parsing oblast $i: ${e.message}", e)
+                    throw e
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SimplifiedMap", "Error in fetchSimplifiedOblastMap: ${e.message}", e)
+            throw e
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun parseGeoJsonCoordinates(coordinates: JSONArray): List<List<List<Double>>> {
+        return mutableListOf<List<List<Double>>>().apply {
+            if (coordinates.length() == 0) return@apply
+
+            val firstElement = coordinates.get(0)
+            if (firstElement !is JSONArray) return@apply
+
+            // GeoJSON Polygon:   coordinates = [ ring, ... ]    where ring = [[lon,lat], ...]
+            // GeoJSON MultiPolygon: coordinates = [ polygon, ... ] where polygon = [ring, ...]
+            //
+            // Both firstElement and secondElement are JSONArray.
+            // The key distinction: check what's INSIDE secondElement.
+            //   Polygon:       firstElement[0] = [lon, lat]  → firstElement[0][0] is Double
+            //   MultiPolygon:  firstElement[0] = [[lon,lat],...] → firstElement[0][0] is JSONArray
+
+            val secondElement = firstElement.get(0)
+            if (secondElement !is JSONArray) return@apply
+
+            val thirdElement = secondElement.get(0)
+
+            if (thirdElement is JSONArray) {
+                // MultiPolygon: coordinates = [ polygon, ... ]
+                // polygon = [ ring, ... ], ring = [ [lon,lat], ... ]
+                for (i in 0 until coordinates.length()) {
+                    val polygon = coordinates.getJSONArray(i)
+                    for (j in 0 until polygon.length()) {
+                        val ring = polygon.getJSONArray(j)
+                        add(parseRing(ring))
+                    }
+                }
+            } else {
+                // Polygon: coordinates = [ ring, ... ]
+                // ring = [ [lon,lat], ... ]
+                for (i in 0 until coordinates.length()) {
+                    val ring = coordinates.getJSONArray(i)
+                    add(parseRing(ring))
+                }
+            }
+        }
+    }
+
+    private fun parseRing(ring: JSONArray): List<List<Double>> {
+        val points = mutableListOf<List<Double>>()
+        for (k in 0 until ring.length()) {
+            val point = ring.getJSONArray(k)
+            points.add(listOf(point.getDouble(0), point.getDouble(1)))
+        }
+        return points
+    }
+
+    suspend fun fetchActiveAlertGeometries(rawApiBaseUrl: String): List<ActiveAlertGeometry> = withContext(Dispatchers.IO) {
+        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
+        val connection = (URL("$apiBaseUrl/map/active-alerts").openConnection() as HttpURLConnection)
+            .apply {
+                requestMethod = "GET"
+                doInput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Accept", "application/json")
+            }
+
+        try {
+            val code = connection.responseCode
+            val responseText = readResponse(connection)
+            if (code !in 200..299) return@withContext emptyList()
+
+            val json = JSONObject(responseText)
+            val features = json.optJSONArray("features") ?: return@withContext emptyList()
+
+            (0 until features.length()).mapNotNull { i ->
+                try {
+                    val feature = features.getJSONObject(i)
+                    val props = feature.getJSONObject("properties")
+                    val geometry = feature.getJSONObject("geometry")
+                    val coordinates = geometry.getJSONArray("coordinates")
+                    ActiveAlertGeometry(
+                        uid = props.getInt("uid"),
+                        titleUk = props.getString("title_uk"),
+                        regionType = props.getString("region_type"),
+                        alertType = props.optString("alert_type", "air_raid"),
+                        geometry = parseGeoJsonCoordinates(coordinates),
+                    )
+                } catch (_: Exception) { null }
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private companion object {

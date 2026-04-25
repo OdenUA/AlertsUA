@@ -14,6 +14,7 @@ import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,6 +48,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.map.AlertMapScreen
+import com.alertsua.app.map.simplified.SimplifiedMapScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +63,7 @@ fun AlertsUaApp() {
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showThreats by rememberSaveable { mutableStateOf(true) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
+    var useSimplifiedMap by rememberSaveable { mutableStateOf(false) }
     val toggleDarkMode: () -> Unit = {
         val nextValue = !darkMode
         darkMode = nextValue
@@ -153,6 +156,12 @@ fun AlertsUaApp() {
                                     ),
                                 )
                             }
+                            IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Map,
+                                    contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
+                                )
+                            }
                         },
                     )
                 }
@@ -163,12 +172,19 @@ fun AlertsUaApp() {
                     .fillMaxSize()
                     .padding(innerPadding),
             ) {
-                AlertMapScreen(
-                    modifier = Modifier.fillMaxSize(),
-                    darkMode = darkMode,
-                    refreshTrigger = refreshTrigger,
-                    showThreats = showThreats,
-                )
+                if (useSimplifiedMap) {
+                    SimplifiedMapScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        darkMode = darkMode,
+                    )
+                } else {
+                    AlertMapScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        darkMode = darkMode,
+                        refreshTrigger = refreshTrigger,
+                        showThreats = showThreats,
+                    )
+                }
 
                 if (isLandscape && !isFullscreen) {
                     Column(
@@ -225,6 +241,12 @@ fun AlertsUaApp() {
                                 contentDescription = stringResource(
                                     id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
                                 ),
+                            )
+                        }
+                        IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Map,
+                                contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
                             )
                         }
                     }

@@ -1,0 +1,104 @@
+/* ─── Threat Popup ───────────────────────────────────── */
+.leaflet-popup.threat-custom-popup .leaflet-popup-content-wrapper {
+    padding: 0;
+    overflow: hidden;
+    border-radius: 20px;
+    background: var(--threat-popup-shell-bg);
+    border: 1px solid var(--threat-popup-shell-border);
+    box-shadow: var(--threat-popup-shadow);
+}
+.leaflet-popup.threat-custom-popup .leaflet-popup-content {
+    margin: 0;
+    width: min(286px, calc(100vw - 92px));
+}
+.leaflet-popup.threat-custom-popup .leaflet-popup-tip {
+    background: var(--threat-popup-tip-bg);
+    box-shadow: none;
+}
+.leaflet-popup.threat-custom-popup .leaflet-popup-close-button {
+    color: var(--threat-popup-close);
+    top: 8px;
+    right: 8px;
+    width: 26px;
+    height: 26px;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 24px;
+}
+.threat-popup-card {
+    padding: 12px;
+    background: var(--threat-popup-card-bg);
+    box-sizing: border-box;
+}
+.threat-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 30px 10px 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--threat-popup-divider);
+}
+.threat-popup-avatar {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.65);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
+}
+body.dark .threat-popup-avatar {
+    background: rgba(255,255,255,0.08);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+}
+.threat-popup-avatar svg {
+    width: 26px;
+    height: 26px;
+    display: block;
+}
+.threat-popup-meta {
+    min-width: 0;
+}
+.threat-popup-author {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--threat-popup-title);
+}
+.threat-popup-label {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--threat-popup-subtitle);
+}
+.threat-popup-bubble {
+    padding: 12px 14px 10px;
+    border-radius: 18px 18px 18px 8px;
+    background: var(--threat-popup-bubble-bg);
+    border: 1px solid var(--threat-popup-divider);
+}
+.threat-popup-message {
+    font-size: 14px;
+    line-height: 1.42;
+    color: var(--threat-popup-text);
+    word-break: break-word;
+}
+.threat-popup-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 7px;
+    margin-top: 9px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--threat-popup-time);
+}
+.threat-popup-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.55;
+}

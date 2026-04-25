@@ -11,6 +11,8 @@ async function main() {
     const service = app.get(GeminiThreatParserService);
     const result = await service.processPendingJobs();
     console.log(JSON.stringify(result, null, 2));
+    // Allow Redis to flush pending operations before exit
+    await new Promise(resolve => setTimeout(resolve, 500));
   } finally {
     await app.close();
   }

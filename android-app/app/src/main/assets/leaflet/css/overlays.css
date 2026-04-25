@@ -1,0 +1,7 @@
+/* ─── Map Container ───────────────────────────────────── */
+.leaflet-container {
+    background: var(--map-bg);
+}
+.leaflet-tile-pane {
+    filter: var(--tile-filter);
+}

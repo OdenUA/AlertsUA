@@ -3,6 +3,8 @@ TG Gemini
 TG Gemini/
 llm-worker.env
 secrets.env
+CLAUDE.md
+.claude/
 
 # Secrets and credentials
 alert-ua-app-firebase-adminsdk-fbsvc-48f98daed8.json
