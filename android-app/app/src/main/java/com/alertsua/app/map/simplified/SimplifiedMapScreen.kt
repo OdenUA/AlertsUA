@@ -96,27 +96,23 @@ fun SimplifiedMapScreen(
         mutableStateListOf<SubscriptionPin>().also { it.addAll(repository.loadSubscriptionPins()) }
     }
 
+    // Load both oblasts and active alerts together
     LaunchedEffect(Unit) {
         isLoading = true
         errorMessage = null
         try {
             val apiBaseUrl = repository.loadApiBaseUrl()
+            // Load oblasts first
             val loadedOblasts = repository.fetchSimplifiedOblastMap(apiBaseUrl)
             controller.updateOblasts(loadedOblasts)
+            // Then load active alerts
+            val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
+            controller.updateActiveAlerts(alerts)
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load map data"
         } finally {
             isLoading = false
         }
-    }
-
-    // Fetch active alert geometries (raion/hromada level)
-    LaunchedEffect(Unit) {
-        try {
-            val apiBaseUrl = repository.loadApiBaseUrl()
-            val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
-            controller.updateActiveAlerts(alerts)
-        } catch (_: Exception) { }
     }
 
     // Handle oblast selection → open bottom sheet
