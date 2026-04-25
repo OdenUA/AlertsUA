@@ -9,7 +9,7 @@ const map = L.map('map', {
     scrollWheelZoom: true,
     //-}).setView([49.0, 31.0], 7);
     minZoom: 5,
-    maxZoom: 12,
+    maxZoom: 8,
 }).setView([49.0, 31.0], 5);
 
 map.getContainer().tabIndex = 0;

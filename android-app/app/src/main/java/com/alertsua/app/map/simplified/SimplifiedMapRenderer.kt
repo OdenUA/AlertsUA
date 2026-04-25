@@ -15,22 +15,6 @@ class SimplifiedMapRenderer {
         isAntiAlias = true
     }
 
-    // Partial alert (raion/hromada level only) - subtle fill for dark theme
-    private val partialFillPaintDark = Paint().apply {
-        style = Paint.Style.FILL
-        color = 0xFFB35800.toInt() // orange/brown tint
-        alpha = 60
-        isAntiAlias = true
-    }
-
-    // Partial alert for light theme
-    private val partialFillPaintLight = Paint().apply {
-        style = Paint.Style.FILL
-        color = 0xFFF4A259.toInt() // lighter orange
-        alpha = 80
-        isAntiAlias = true
-    }
-
     // Normal (no threat) - dark theme fill
     private val normalFillPaintDark = Paint().apply {
         style = Paint.Style.FILL
@@ -96,17 +80,15 @@ class SimplifiedMapRenderer {
     ) {
         val borderPaint = if (isDark) borderPaintDark else borderPaintLight
         val normalFillPaint = if (isDark) normalFillPaintDark else normalFillPaintLight
-        val partialFillPaint = if (isDark) partialFillPaintDark else partialFillPaintLight
 
         for (oblast in oblasts) {
             try {
                 val path = createPath(oblast.geometry, projection)
 
-                // 'A' = full alert (red fill), 'P' = partial (subtle fill),
-                // 'N' = normal (theme-based fill)
+                // 'A' = full alert (red fill), 'P'/'N' = normal (theme-based fill)
+                // Partial alerts ('P') show only sub-regions with active alerts via renderActiveAlerts()
                 val paint = when (oblast.status.first()) {
                     'A' -> activeFillPaint
-                    'P' -> partialFillPaint
                     else -> normalFillPaint
                 }
 

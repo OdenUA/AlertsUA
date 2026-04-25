@@ -538,6 +538,7 @@ export class AlertsService {
       ),
     ]);
 
+    this.logger.log(`buildAlertsBundle: Query returned ${activeAlertsResult.rows.length} rows`);
     const activeAlerts = activeAlertsResult.rows.map((row) => ({
       uid: row.uid,
       title_uk: row.title_uk,
@@ -545,6 +546,7 @@ export class AlertsService {
       alert_type: row.alert_type,
       geometry: JSON.parse(row.geometry_json),
     }));
+    this.logger.log(`buildAlertsBundle: activeAlerts contains ${activeAlerts.length} features (raions: ${activeAlerts.filter(a => a.region_type === 'raion').length}, hromadas: ${activeAlerts.filter(a => a.region_type === 'hromada').length})`);
 
     const oblastAggregates: Record<number, { status: string; active_count: number; total_count: number }> = {};
     for (const row of oblastAggregatesResult.rows) {
