@@ -542,7 +542,7 @@ class AlertsRepository(context: Context) {
 
     suspend fun fetchActiveAlertGeometries(rawApiBaseUrl: String): List<ActiveAlertGeometry> = withContext(Dispatchers.IO) {
         val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
-        val connection = (URL("$apiBaseUrl/map/active-alerts").openConnection() as HttpURLConnection)
+        val connection = (URL("$apiBaseUrl/map/active-alerts-simplified").openConnection() as HttpURLConnection)
             .apply {
                 requestMethod = "GET"
                 doInput = true
