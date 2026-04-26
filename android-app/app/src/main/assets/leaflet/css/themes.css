@@ -1,6 +1,7 @@
 /* ─── CSS Variables (Light / Dark) ────────────────────── */
 body {
     --mask-fill:      #e8f0f4;
+    --mask-border:    #91afc0;
     --map-bg:         #e8f0f4;
     --status-bg:      rgba(255,255,255,0.94);
     --status-shadow:  0 4px 16px rgba(30,50,65,0.18);
@@ -25,12 +26,15 @@ body {
 }
 body.dark {
     --mask-fill:      #131e28;
+    --mask-border:    #2a4258;
     --map-bg:         #0f1822;
     --status-bg:      rgba(15,24,34,0.94);
     --status-shadow:  0 4px 16px rgba(0,0,0,0.45);
     --status-color:   #b8cfda;
     --zoom-bg:        rgba(20,32,44,0.94);
     --zoom-color:     #b8cfda;
+    --zoom-hover-bg: rgba(30,45,60,0.94);
+    --zoom-active-bg: rgba(15,20,30,0.94);
     --attr-color:     rgba(100,140,160,0.55);
     --tile-filter:    invert(1) hue-rotate(180deg) brightness(0.92) saturate(0.92) contrast(1.18);
     --tile-opacity:   0.82;

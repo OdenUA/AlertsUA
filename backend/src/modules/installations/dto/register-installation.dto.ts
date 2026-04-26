@@ -25,4 +25,9 @@ export class RegisterInstallationDto {
   @IsOptional()
   @IsBoolean()
   notifications_enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  android_id?: string;
 }

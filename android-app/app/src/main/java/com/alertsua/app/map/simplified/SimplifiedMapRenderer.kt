@@ -72,6 +72,60 @@ class SimplifiedMapRenderer {
         setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
     }
 
+    // Oblast center marker - dark theme (orange/amber for visibility on dark bg)
+    private val centerMarkerPaintDark = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFFFB300.toInt() // amber/orange
+        isAntiAlias = true
+    }
+
+    // Oblast center marker - light theme (dark red for visibility on light bg)
+    private val centerMarkerPaintLight = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFC62828.toInt() // dark red
+        isAntiAlias = true
+    }
+
+    // Oblast center marker border - dark theme
+    private val centerMarkerBorderPaintDark = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        color = 0xFF000000.toInt() // black
+        isAntiAlias = true
+    }
+
+    // Oblast center marker border - light theme
+    private val centerMarkerBorderPaintLight = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        color = 0xFFFFFFFF.toInt() // white
+        isAntiAlias = true
+    }
+
+    // Subscription marker - blue fill
+    private val subscriptionMarkerFillPaint = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFF1976D2.toInt() // blue
+        isAntiAlias = true
+    }
+
+    // Subscription marker - white border
+    private val subscriptionMarkerBorderPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f
+        color = 0xFFFFFFFF.toInt() // white
+        isAntiAlias = true
+    }
+
+    // Subscription marker - inner white dot
+    private val subscriptionMarkerDotPaint = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFFFFFFF.toInt() // white
+        isAntiAlias = true
+    }
+
+    private val markerRadius = 8f
+
     fun renderOblasts(
         canvas: Canvas,
         oblasts: List<OblastData>,
@@ -133,6 +187,47 @@ class SimplifiedMapRenderer {
                 val (x, y) = projection(oblast.center)
                 val label = oblast.titleUk.removeSuffix(" область")
                 canvas.drawText(label, x, y, paint)
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun renderOblastCenters(
+        canvas: Canvas,
+        oblasts: List<OblastData>,
+        projection: (LatLng) -> Pair<Float, Float>,
+        isDark: Boolean
+    ) {
+        val markerPaint = if (isDark) centerMarkerPaintDark else centerMarkerPaintLight
+        val centerMarkerBorderPaint = if (isDark) centerMarkerBorderPaintDark else centerMarkerBorderPaintLight
+
+        for (oblast in oblasts) {
+            try {
+                val (x, y) = projection(oblast.cityCenter)
+                // Draw outer border circle
+                canvas.drawCircle(x, y, markerRadius, centerMarkerBorderPaint)
+                // Draw inner filled circle
+                canvas.drawCircle(x, y, markerRadius - 2.5f, markerPaint)
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun renderSubscriptionMarkers(
+        canvas: Canvas,
+        pins: List<com.alertsua.app.data.SubscriptionPin>,
+        projection: (LatLng) -> Pair<Float, Float>
+    ) {
+        val markerRadius = 20f
+        val innerDotRadius = 8f
+
+        for (pin in pins) {
+            try {
+                val (x, y) = projection(com.alertsua.app.map.simplified.LatLng(pin.lat, pin.lon))
+                // Draw blue circle
+                canvas.drawCircle(x, y, markerRadius, subscriptionMarkerFillPaint)
+                // Draw white border
+                canvas.drawCircle(x, y, markerRadius, subscriptionMarkerBorderPaint)
+                // Draw inner white dot
+                canvas.drawCircle(x, y, innerDotRadius, subscriptionMarkerDotPaint)
             } catch (_: Exception) { }
         }
     }

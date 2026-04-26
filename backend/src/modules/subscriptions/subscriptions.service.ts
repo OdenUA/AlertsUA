@@ -333,6 +333,52 @@ export class SubscriptionsService {
     };
   }
 
+  async listByAndroidId(androidId: string) {
+    this.ensureDatabaseConfigured();
+
+    // Find the installation with this android_id (prefer active installations)
+    const installationResult = await this.databaseService.query<{ installation_id: string; installation_token_hash: string }>(
+      `
+        SELECT di.installation_id, di.installation_token_hash
+        FROM device_installations di
+        WHERE di.android_id = $1
+          AND di.status = 'active'
+        ORDER BY di.created_at DESC
+        LIMIT 1
+      `,
+      [androidId],
+    );
+
+    if (installationResult.rowCount === 0) {
+      return { subscriptions: [] };
+    }
+
+    const installationId = installationResult.rows[0].installation_id;
+    const result = await this.getSubscriptionViewsByInstallation(installationId);
+
+    // Generate a new installation token for the reinstalled app
+    const newToken = randomUUID();
+    const newTokenHash = this.createHash(newToken);
+
+    await this.databaseService.query(
+      `
+        UPDATE device_installations
+        SET installation_token_hash = $2, last_seen_at = $3
+        WHERE installation_id = $1
+      `,
+      [installationId, newTokenHash, TimeUtil.getNowInKyiv()],
+    );
+
+    return {
+      subscriptions: result,
+      installation_token: newToken,
+    };
+  }
+
+  private createHash(token: string): string {
+    return require('crypto').createHash('sha256').update(token).digest('hex');
+  }
+
   async update(token: string, subscriptionId: string, dto: UpdateSubscriptionDto) {
     this.ensureDatabaseConfigured();
     const installation = await this.installationsService.requireByToken(token);

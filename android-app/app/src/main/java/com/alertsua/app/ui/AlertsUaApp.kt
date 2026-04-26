@@ -2,23 +2,34 @@ package com.alertsua.app.ui
 
 import android.app.Activity
 import android.content.res.Configuration
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.Help
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBar
@@ -45,25 +56,39 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
 import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
+import com.alertsua.app.admob.AdMobBanner as AdMobComposableBanner
 import com.alertsua.app.map.AlertMapScreen
 import com.alertsua.app.map.simplified.SimplifiedMapScreen
+import com.alertsua.app.ui.faq.FaqBottomSheet
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlertsUaApp() {
+fun AlertsUaApp(
+    locationPermissionGranted: Boolean = false,
+    requestLocationPermission: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
     val activity = context as? Activity
     val view = LocalView.current
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-
     var darkMode by rememberSaveable { mutableStateOf(repository.loadDarkModeEnabled()) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showThreats by rememberSaveable { mutableStateOf(true) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var useSimplifiedMap by rememberSaveable { mutableStateOf(false) }
+    var orientationChangeTrigger by remember { mutableIntStateOf(0) }
+    var showFaqDialog by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Обновляем триггер при изменении ориентации
+    LaunchedEffect(isLandscape) {
+        orientationChangeTrigger++
+    }
+
     val toggleDarkMode: () -> Unit = {
         val nextValue = !darkMode
         darkMode = nextValue
@@ -98,15 +123,76 @@ fun AlertsUaApp() {
     ) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            topBar = {
+            bottomBar = {
+                Log.d("AdMob", "isLandscape: $isLandscape, isFullscreen: $isFullscreen")
                 if (!isLandscape && !isFullscreen) {
-                    TopAppBar(
-                        modifier = Modifier.fillMaxWidth(),
-                        title = {},
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent,
-                        ),
-                        actions = {
+                    androidx.compose.material3.BottomAppBar(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding(),
+                        containerColor = Color.Transparent,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // All buttons centered horizontally
+                            if (!useSimplifiedMap) {
+                                IconButton(onClick = { showThreats = !showThreats }) {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (showThreats) {
+                                                R.drawable.ic_threat_layers_telegram_active
+                                            } else {
+                                                R.drawable.ic_threat_layers_telegram_inactive
+                                            },
+                                        ),
+                                        contentDescription = stringResource(
+                                            id = if (showThreats) {
+                                                R.string.threat_layers_hide_telegram
+                                            } else {
+                                                R.string.threat_layers_show_telegram
+                                            },
+                                        ),
+                                        tint = Color.Unspecified,
+                                    )
+                                }
+                            }
+
+                            IconButton(onClick = { refreshTrigger++ }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = "Manual Refresh"
+                                )
+                            }
+
+                            IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Map,
+                                    contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
+                                )
+                            }
+
+                            IconButton(onClick = toggleDarkMode) {
+                                Icon(
+                                    imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                                    contentDescription = stringResource(
+                                        id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
+                                    ),
+                                )
+                            }
+
+                            IconButton(onClick = { showFaqDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Help,
+                                    contentDescription = "Help / FAQ",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
                             IconButton(onClick = { isFullscreen = !isFullscreen }) {
                                 Icon(
                                     imageVector = if (isFullscreen) {
@@ -123,6 +209,80 @@ fun AlertsUaApp() {
                                     ),
                                 )
                             }
+                        }
+                    }
+                }
+            },
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+            ) {
+                // Карта с отступами, чтобы не перекрывалась рекламой
+                Box(modifier = Modifier.fillMaxSize()) {
+                    val modifierWithPadding = when {
+                        isLandscape && !isFullscreen -> Modifier.padding(top = 8.dp, end = 56.dp) // 8px сверху под строкой состояния, 56px справа под кнопками
+                        !isLandscape && !isFullscreen -> Modifier.padding(top = 50.dp) // Отступ под высоту баннера
+                        else -> Modifier
+                    }
+
+                    if (useSimplifiedMap) {
+                        SimplifiedMapScreen(
+                            modifier = modifierWithPadding.fillMaxSize(),
+                            darkMode = darkMode,
+                            refreshTrigger = refreshTrigger,
+                        )
+                    } else {
+                        AlertMapScreen(
+                            modifier = modifierWithPadding.fillMaxSize(),
+                            darkMode = darkMode,
+                            refreshTrigger = refreshTrigger,
+                            showThreats = showThreats,
+                            locationPermissionGranted = locationPermissionGranted,
+                            requestLocationPermission = requestLocationPermission,
+                        )
+                    }
+                }
+
+                // AdMob Banner - поверх карты
+                if (!isFullscreen) {
+                    if (isLandscape) {
+                        // Альбомная ориентация: слева сверху
+                        AdMobComposableBanner(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(top = 8.dp, start = 8.dp)
+                                .height(50.dp),
+                            isVisible = true,
+                            refreshTrigger = refreshTrigger + orientationChangeTrigger,
+                            isLandscape = isLandscape
+                        )
+                    } else {
+                        // Портретная ориентация: поверх карты в отступе
+                        AdMobComposableBanner(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+                                .height(50.dp),
+                            isVisible = true,
+                            refreshTrigger = refreshTrigger + orientationChangeTrigger,
+                            isLandscape = isLandscape
+                        )
+                    }
+                }
+
+                if (isLandscape && !isFullscreen) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(end = 8.dp, top = 8.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        // Top: Telegram threats
+                        if (!useSimplifiedMap) {
                             IconButton(onClick = { showThreats = !showThreats }) {
                                 Icon(
                                     painter = painterResource(
@@ -142,58 +302,40 @@ fun AlertsUaApp() {
                                     tint = Color.Unspecified,
                                 )
                             }
-                            IconButton(onClick = { refreshTrigger++ }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Refresh,
-                                    contentDescription = "Manual Refresh"
-                                )
-                            }
-                            IconButton(onClick = toggleDarkMode) {
-                                Icon(
-                                    imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-                                    contentDescription = stringResource(
-                                        id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
-                                    ),
-                                )
-                            }
-                            IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Map,
-                                    contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
-                                )
-                            }
-                        },
-                    )
-                }
-            },
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-            ) {
-                if (useSimplifiedMap) {
-                    SimplifiedMapScreen(
-                        modifier = Modifier.fillMaxSize(),
-                        darkMode = darkMode,
-                    )
-                } else {
-                    AlertMapScreen(
-                        modifier = Modifier.fillMaxSize(),
-                        darkMode = darkMode,
-                        refreshTrigger = refreshTrigger,
-                        showThreats = showThreats,
-                    )
-                }
+                        }
 
-                if (isLandscape && !isFullscreen) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(end = 8.dp, top = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
+                        // Middle: Refresh button
+                        IconButton(onClick = { refreshTrigger++ }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = "Manual Refresh"
+                            )
+                        }
+
+                        // Bottom: Simplified mode, Theme
+                        IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Map,
+                                contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
+                            )
+                        }
+                        IconButton(onClick = toggleDarkMode) {
+                            Icon(
+                                imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                                contentDescription = stringResource(
+                                    id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
+                                ),
+                            )
+                        }
+
+                        IconButton(onClick = { showFaqDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Help,
+                                contentDescription = "Help / FAQ",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+
                         IconButton(onClick = { isFullscreen = !isFullscreen }) {
                             Icon(
                                 imageVector = if (isFullscreen) {
@@ -208,45 +350,6 @@ fun AlertsUaApp() {
                                         R.string.fullscreen_enter
                                     },
                                 ),
-                            )
-                        }
-                        IconButton(onClick = { showThreats = !showThreats }) {
-                            Icon(
-                                painter = painterResource(
-                                    id = if (showThreats) {
-                                        R.drawable.ic_threat_layers_telegram_active
-                                    } else {
-                                        R.drawable.ic_threat_layers_telegram_inactive
-                                    },
-                                ),
-                                contentDescription = stringResource(
-                                    id = if (showThreats) {
-                                        R.string.threat_layers_hide_telegram
-                                    } else {
-                                        R.string.threat_layers_show_telegram
-                                    },
-                                ),
-                                tint = Color.Unspecified,
-                            )
-                        }
-                        IconButton(onClick = { refreshTrigger++ }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Refresh,
-                                contentDescription = "Manual Refresh"
-                            )
-                        }
-                        IconButton(onClick = toggleDarkMode) {
-                            Icon(
-                                imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-                                contentDescription = stringResource(
-                                    id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
-                                ),
-                            )
-                        }
-                        IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Map,
-                                contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
                             )
                         }
                     }
@@ -266,6 +369,11 @@ fun AlertsUaApp() {
                         )
                     }
                 }
+            }
+
+            // FAQ Dialog
+            if (showFaqDialog) {
+                FaqBottomSheet(onDismiss = { showFaqDialog = false })
             }
         }
     }

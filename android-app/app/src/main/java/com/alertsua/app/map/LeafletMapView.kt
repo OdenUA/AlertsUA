@@ -1,6 +1,7 @@
 package com.alertsua.app.map
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -67,6 +68,7 @@ fun LeafletMapView(
 }
 
 private fun configureApiBaseUrl(webView: WebView, apiBaseUrl: String) {
+    Log.d("LeafletMapView", "Configuring API URL: $apiBaseUrl")
     val escapedApiBaseUrl = JSONObject.quote(apiBaseUrl)
     evaluateJavascriptWhenReady(
         webView = webView,

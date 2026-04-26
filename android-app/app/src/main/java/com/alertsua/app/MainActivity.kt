@@ -8,6 +8,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.ui.AlertsUaApp
@@ -22,10 +25,40 @@ class MainActivity : ComponentActivity() {
             Log.i("AlertsUaFirebase", "POST_NOTIFICATIONS granted=$isGranted")
         }
 
+    // Location permission state - will be observed by Composable
+    var locationPermissionGranted by mutableStateOf(false)
+        private set
+
+    // Callback to request location permission from Composable
+    var requestLocationPermissionCallback: (() -> Unit)? = null
+        private set
+
+    private val requestLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+            Log.i("AlertMapScreen", "ACCESS_FINE_LOCATION granted=$isGranted")
+            locationPermissionGranted = isGranted
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Check if we already have location permission
+        locationPermissionGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        // Set up callback for requesting location permission
+        requestLocationPermissionCallback = {
+            Log.i("AlertMapScreen", "Requesting ACCESS_FINE_LOCATION from MainActivity")
+            requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
         setContent {
-            AlertsUaApp()
+            AlertsUaApp(
+                locationPermissionGranted = locationPermissionGranted,
+                requestLocationPermission = requestLocationPermissionCallback
+            )
         }
 
         ensureNotificationsPermission()

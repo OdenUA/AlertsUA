@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,7 +43,15 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -71,6 +82,8 @@ import com.alertsua.app.data.OblastAlertHistoryItem
 import com.alertsua.app.data.ResolvedPoint
 import com.alertsua.app.data.ResolvedRegion
 import com.alertsua.app.data.SubscriptionPin
+import com.alertsua.app.location.getCurrentLocation
+import com.alertsua.app.ui.faq.FaqBottomSheet
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -111,6 +124,8 @@ fun AlertMapScreen(
     darkMode: Boolean = false,
     refreshTrigger: Int = 0,
     showThreats: Boolean = true,
+    locationPermissionGranted: Boolean = false,
+    requestLocationPermission: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
@@ -134,7 +149,9 @@ fun AlertMapScreen(
 
     // ── Subscription pin list (persisted) ────────────────────────────────────
     val subscriptionPins = remember {
-        mutableStateListOf<SubscriptionPin>().also { it.addAll(repository.loadSubscriptionPins()) }
+        val pins = repository.loadSubscriptionPins()
+        android.util.Log.d("AlertMapScreen", "Loaded ${pins.size} subscription pins from repository")
+        mutableStateListOf<SubscriptionPin>().also { it.addAll(pins) }
     }
 
     // ── Map controller ───────────────────────────────────────────────────────
@@ -210,6 +227,138 @@ fun AlertMapScreen(
         }
     }
 
+    // ── Location-based subscription prompt ─────────────────────────────────
+    var showLocationPrompt by remember { mutableStateOf(false) }
+    var resolvedHromada by remember { mutableStateOf<String?>(null) }
+    var isResolvingLocation by remember { mutableStateOf(false) }
+    var subscriptionsLoaded by remember { mutableStateOf(false) }
+
+    // Check if user chose "don't ask again"
+    val dontAskForLocation = rememberSaveable {
+        val prefs = context.getSharedPreferences("location_prefs", Context.MODE_PRIVATE)
+        val value = prefs.getBoolean("dont_ask_location", false)
+        android.util.Log.d("AlertMapScreen", "dont_ask_location from prefs: $value")
+        value
+    }
+
+    suspend fun resolveLocationAndPrompt() {
+        android.util.Log.d("AlertMapScreen", "resolveLocationAndPrompt called")
+        isResolvingLocation = true
+        try {
+            android.util.Log.d("AlertMapScreen", "Getting current location...")
+            val location = getCurrentLocation(context)
+            if (location != null) {
+                android.util.Log.d("AlertMapScreen", "Location acquired: ${location.latitude}, ${location.longitude}")
+                val resolvedPoint = repository.resolvePoint(
+                    rawApiBaseUrl = activeApiBaseUrl,
+                    latitude = location.latitude,
+                    longitude = location.longitude
+                )
+                val region = resolvedPoint.resolvedRegion
+                android.util.Log.d("AlertMapScreen", "Resolved region: hromada=${region.hromadaTitleUk}")
+                if (region.hromadaTitleUk.isNotEmpty()) {
+                    resolvedHromada = region.hromadaTitleUk
+                    showLocationPrompt = true
+                    android.util.Log.d("AlertMapScreen", "Showing location prompt for: $resolvedHromada")
+                }
+            } else {
+                android.util.Log.d("AlertMapScreen", "Location is null")
+                snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AlertMapScreen", "Error resolving location", e)
+            snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
+        } finally {
+            isResolvingLocation = false
+        }
+    }
+
+    fun subscribeToCurrentHromada() {
+        showLocationPrompt = false
+        if (resolvedHromada == null) return
+
+        coroutineScope.launch {
+            try {
+                // Get location again to ensure fresh coordinates
+                val location = getCurrentLocation(context)
+                if (location == null) {
+                    snackbarHostState.showSnackbar(context.getString(R.string.location_error))
+                    return@launch
+                }
+
+                repository.ensureInstallationRegistered(activeApiBaseUrl)
+                val subscriptionId = repository.subscribeToPoint(
+                    rawApiBaseUrl = activeApiBaseUrl,
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    levelLabel = "hromada",
+                )
+                val pin = SubscriptionPin(
+                    subscriptionId = subscriptionId,
+                    lat = location.latitude,
+                    lon = location.longitude,
+                    levelLabel = "hromada",
+                )
+                subscriptionPins.add(pin)
+                repository.saveSubscriptionPins(subscriptionPins)
+                mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
+                snackbarHostState.showSnackbar(context.getString(R.string.subscribe_success))
+            } catch (e: Exception) {
+                val msg = if (e.message == "NO_INSTALLATION_TOKEN") {
+                    context.getString(R.string.subscribe_no_token)
+                } else {
+                    context.getString(R.string.subscribe_error)
+                }
+                snackbarHostState.showSnackbar(msg)
+            }
+        }
+    }
+
+    fun dismissLocationPrompt(shouldSubscribe: Boolean, dontAsk: Boolean) {
+        showLocationPrompt = false
+        if (dontAsk) {
+            context.getSharedPreferences("location_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("dont_ask_location", true)
+                .apply()
+        }
+        if (shouldSubscribe) {
+            subscribeToCurrentHromada()
+        }
+    }
+
+    // Show location prompt on startup if conditions are met
+    // IMPORTANT: This runs AFTER subscriptions are loaded (see subscriptionsLoaded flag)
+    LaunchedEffect(subscriptionsLoaded) {
+        if (!subscriptionsLoaded) return@LaunchedEffect
+
+        coroutineScope.launch {
+            android.util.Log.d("AlertMapScreen", "Location prompt check: pins=${subscriptionPins.size}, dontAsk=$dontAskForLocation")
+            // Only prompt if: no subscriptions, not in "don't ask" mode, and location permission granted
+            if (subscriptionPins.isEmpty() && !dontAskForLocation) {
+                android.util.Log.d("AlertMapScreen", "Conditions met, checking permission...")
+                // Check if we already have location permission
+                val hasLocationPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+
+                android.util.Log.d("AlertMapScreen", "Has location permission: $hasLocationPermission (from param: $locationPermissionGranted)")
+                if (hasLocationPermission) {
+                    resolveLocationAndPrompt()
+                } else {
+                    android.util.Log.d("AlertMapScreen", "Requesting location permission...")
+                    // Add delay to ensure Activity is ready
+                    kotlinx.coroutines.delay(500)
+                    android.util.Log.d("AlertMapScreen", "Launching permission request...")
+                    requestLocationPermission?.invoke()
+                }
+            } else {
+                android.util.Log.d("AlertMapScreen", "Conditions not met: pins empty=${subscriptionPins.isEmpty()}, dontAsk=$dontAskForLocation")
+            }
+        }
+    }
+
     LaunchedEffect(refreshTrigger) {
         if (refreshTrigger > 0) {
             mapController.refreshAlerts()
@@ -218,6 +367,15 @@ fun AlertMapScreen(
 
     LaunchedEffect(showThreats) {
         mapController.setThreatsVisibility(showThreats)
+    }
+
+    // Watch for location permission grant from MainActivity
+    LaunchedEffect(locationPermissionGranted, subscriptionsLoaded) {
+        android.util.Log.d("AlertMapScreen", "Location permission changed: $locationPermissionGranted")
+        if (locationPermissionGranted && subscriptionsLoaded && subscriptionPins.isEmpty() && !dontAskForLocation && resolvedHromada == null) {
+            android.util.Log.d("AlertMapScreen", "Permission granted and subscriptions loaded, resolving location...")
+            resolveLocationAndPrompt()
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -237,18 +395,17 @@ fun AlertMapScreen(
     var mapPageReady by remember { mutableStateOf(false) }
     mapController.onMapPageReady = { mapPageReady = true }
 
-    // Place / replace all markers whenever the pin list or map readiness changes.
-    // addSubscriptionMarker is idempotent (replaces existing marker for same id).
-    LaunchedEffect(subscriptionPins.toList(), mapPageReady) {
-        if (mapPageReady) {
-            subscriptionPins.forEach { pin ->
-                mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
-            }
-        }
-    }
-
     // ── Sync subscriptions from server on startup (with one retry on failure) ─
     LaunchedEffect(activeApiBaseUrl) {
+        android.util.Log.d("AlertMapScreen", "Loading subscriptions from server...")
+        // Ensure installation is registered before fetching subscriptions
+        try {
+            repository.ensureInstallationRegistered(activeApiBaseUrl)
+            android.util.Log.d("AlertMapScreen", "Installation registration checked")
+        } catch (e: Exception) {
+            android.util.Log.w("AlertMapScreen", "Installation registration failed", e)
+        }
+
         var remotePins = runCatching { repository.fetchSubscriptions(activeApiBaseUrl) }.getOrNull()
         if (remotePins == null) {
             // Retry once after a short delay to handle transient network issues
@@ -259,13 +416,27 @@ fun AlertMapScreen(
             subscriptionPins.clear()
             subscriptionPins.addAll(remotePins)
             repository.saveSubscriptionPins(remotePins)
-            // Marker placement is handled reactively by the LaunchedEffect above
+            android.util.Log.d("AlertMapScreen", "Loaded ${remotePins.size} subscriptions from server")
+        } else {
+            android.util.Log.d("AlertMapScreen", "No subscriptions found on server")
+        }
+        subscriptionsLoaded = true
+    }
+
+    // Place / replace all markers whenever the pin list or map readiness changes.
+    // addSubscriptionMarker is idempotent (replaces existing marker for same id).
+    LaunchedEffect(subscriptionPins.size, mapPageReady) {
+        if (mapPageReady && subscriptionPins.isNotEmpty()) {
+            subscriptionPins.forEach { pin ->
+                mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
+            }
         }
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val bridge = remember { LeafletBridge() }
+    var showFaqDialog by remember { mutableStateOf(false) }
 
     bridge.pointSelectedHandler = { latitude, longitude ->
         selectedLat = latitude
@@ -318,6 +489,19 @@ fun AlertMapScreen(
         }
     }
 
+    // ── Location subscription dialog ────────────────────────────────────────────
+    if (showLocationPrompt && resolvedHromada != null) {
+        val hromada = resolvedHromada!!
+        LocationSubscriptionDialog(
+            hromadaName = hromada,
+            onSubscribe = { dismissLocationPrompt(shouldSubscribe = true, dontAsk = false) },
+            onDecline = { dismissLocationPrompt(shouldSubscribe = false, dontAsk = false) },
+            onDontAsk = { dismissLocationPrompt(shouldSubscribe = false, dontAsk = true) },
+            onDismiss = { showLocationPrompt = false },
+        )
+    }
+
+    // ─── Map ───────────────────────────────────────────────────────────────────
     Box(modifier = modifier.fillMaxSize()) {
         LeafletMapView(
             modifier = Modifier.fillMaxSize(),
@@ -907,6 +1091,168 @@ private fun parseBackendInstant(rawTimestamp: String): Instant {
         .replace(Regex("([+-]\\d{2})$"), "$1:00")
         .replace(Regex("([+-]\\d{2})(\\d{2})$"), "$1:$2")
     return java.time.OffsetDateTime.parse(normalized).toInstant()
+}
+
+// ─── Location subscription dialog ────────────────────────────────────────────
+
+@Composable
+private fun LocationSubscriptionDialog(
+    hromadaName: String,
+    onSubscribe: () -> Unit,
+    onDecline: () -> Unit,
+    onDontAsk: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { onDismiss() },
+        modifier = Modifier.fillMaxWidth(0.92f),
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Notifications,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = stringResource(R.string.location_dialog_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    stringResource(
+                        R.string.location_dialog_message,
+                        hromadaName
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    stringResource(R.string.location_dialog_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Кнопки Да/Нет на одной строке
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Отказ кнопка слева
+                    Button(
+                        onClick = onDecline,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp), // Фиксированная высота для выравнивания
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF5F5F5), // Светло-серый фон
+                            contentColor = Color(0xFF1976D2) // Синий текст
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 1.dp,
+                            pressedElevation = 2.dp
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(stringResource(R.string.location_dialog_decline))
+                        }
+                    }
+
+                    // Подписаться кнопка справа
+                    Button(
+                        onClick = onSubscribe,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp), // Фиксированная высота для выравнивания
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 2.dp,
+                            pressedElevation = 4.dp
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(stringResource(R.string.location_dialog_subscribe))
+                        }
+                    }
+                }
+
+                // Не напоминать кнопка внизу
+                Button(
+                    onClick = onDontAsk,
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFF5F5F5), // Светло-серый фон
+                        contentColor = Color(0xFF757575) // Темно-серый текст
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = 1.dp,
+                        pressedElevation = 2.dp
+                    )
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Block,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(stringResource(R.string.location_dialog_never_ask))
+                    }
+                }
+            }
+        },
+        dismissButton = null
+    )
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

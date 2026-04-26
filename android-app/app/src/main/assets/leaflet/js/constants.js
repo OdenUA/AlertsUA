@@ -3,13 +3,14 @@ const statusElement = document.getElementById('status');
 
 // Map initialization
 const map = L.map('map', {
-    zoomControl: true,
+    zoomControl: false, // Убираем автоматический контрол
     preferCanvas: true,
     attributionControl: true,
     scrollWheelZoom: true,
-    //-}).setView([49.0, 31.0], 7);
     minZoom: 5,
     maxZoom: 9,
+    maxBounds: L.latLngBounds([[44.3, 22.1], [52.4, 40.2]]),
+    maxBoundsViscosity: 1.0,
 }).setView([49.0, 31.0], 5);
 
 map.getContainer().tabIndex = 0;
@@ -26,7 +27,7 @@ map.getContainer().addEventListener('wheel', function (event) {
 map.attributionControl.setPrefix(false);
 
 // State variables
-let apiBaseUrl = 'http://10.0.2.2:43100/api/v1';
+let apiBaseUrl = 'http://173.242.53.129/api/v1';
 let tileLayer = null;
 let activeConfig = null;
 let ukraineMaskLayer = null;
@@ -34,6 +35,8 @@ let alertMarkersLayer = null;
 let specialAlertLayer = null;
 let alertLayersGroup = null;
 let threatOverlayLayer = null;
+let oblastBordersLayer = null;
+let interactiveRegionsLayer = null;
 let threatOverlayData = [];
 let hasFittedToData = false;
 let overlayLayers = {

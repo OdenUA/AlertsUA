@@ -12,11 +12,17 @@ function buildUrl(path, searchParams) {
 
 async function loadConfig() {
     setStatus('Завантажуємо мапу…');
-    const response = await fetch(buildUrl('/map/config'), {
-        headers: {
-            'Accept': 'application/json'
-        }
-    });
+    let response;
+    try {
+        response = await fetch(buildUrl('/map/config'), {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+    } catch (error) {
+        console.error('Fetch error:', error);
+        throw new Error('Не вдалося підключитися до сервера. Перевірте з\'єднання.');
+    }
 
     if (!response.ok) {
         throw new Error('Не вдалося відкрити мапу.');
@@ -34,12 +40,40 @@ async function loadConfig() {
         map.removeLayer(tileLayer);
     }
 
-    tileLayer = L.tileLayer(defaultLayer.url_template, {
+    // Create custom Ukraine tile layer to prevent loading tiles outside Ukraine
+    var UkraineTileLayer = L.TileLayer.extend({
+        createTile: function(coords, done) {
+            // Convert tile coordinates to geographic bounds
+            var tileBounds = this._tileCoordsToBounds(coords);
+
+            // Check if tile intersects Ukraine area
+            if (!this._tileIntersectsUkraine(tileBounds)) {
+                // Return empty div instead of loading tile
+                var tile = document.createElement('div');
+                tile.className = 'leaflet-tile-loaded';
+                done(null, tile);
+                return tile;
+            }
+
+            // Standard tile loading
+            return L.TileLayer.prototype.createTile.call(this, coords, done);
+        },
+
+        _tileIntersectsUkraine: function(tileBounds) {
+            // Strict bounding box check - only within this exact rectangle
+            var ukraineBounds = L.latLngBounds([[44.3, 22.1], [52.4, 40.2]]);
+            return tileBounds.intersects(ukraineBounds);
+        }
+    });
+
+    // Use custom Ukraine tile layer
+    tileLayer = new UkraineTileLayer(defaultLayer.url_template, {
         attribution: defaultLayer.attribution_uk,
         minZoom: defaultLayer.min_zoom,
         maxZoom: defaultLayer.max_zoom,
         subdomains: defaultLayer.subdomains,
         opacity: 0.92,
+        noWrap: true  // Prevent loading wrapped world tiles
     }).addTo(map);
 
     tileLayer.on('tileerror', function () {
@@ -131,13 +165,17 @@ async function loadUkraineMask() {
 
         if (!maskFeature) { return; }
 
-        var isDark = document.body.classList.contains('dark');
+        // Используем CSS переменные для цвета заливки
+        const computedStyle = getComputedStyle(document.body);
+        const fillColor = computedStyle.getPropertyValue('--mask-fill').trim();
+        const borderColor = computedStyle.getPropertyValue('--mask-border') || computedStyle.getPropertyValue('--mask-fill').trim();
+
         ukraineMaskLayer = L.geoJSON(maskFeature, {
             style: {
-                fillColor:   isDark ? '#131e28' : '#e8f0f4',
+                fillColor:   fillColor,
                 fillOpacity: 1.0,
                 stroke:      hasBorder,
-                color:       isDark ? '#2a4258' : '#91afc0',
+                color:       borderColor,
                 weight:      1.8,
             },
             interactive: false,
@@ -148,19 +186,61 @@ async function loadUkraineMask() {
 }
 
 window.setMapTheme = function (isDark) {
+    console.log('setMapTheme called with isDark:', isDark);
     document.body.classList.toggle('dark', isDark);
     if (tileLayer) {
         tileLayer.setOpacity(isDark ? 0.82 : 0.93);
     }
     if (ukraineMaskLayer) {
+        // Используем CSS переменные для цвета заливки и границы
+        const computedStyle = getComputedStyle(document.body);
+        const fillColor = computedStyle.getPropertyValue('--mask-fill').trim();
+        const borderColor = computedStyle.getPropertyValue('--mask-border').trim();
+
         ukraineMaskLayer.setStyle({
-            fillColor:   isDark ? '#131e28' : '#e8f0f4',
-            color:       isDark ? '#2a4258' : '#91afc0',
+            fillColor:   fillColor,
+            color:       borderColor,
+        });
+    }
+    if (oblastBordersLayer) {
+        oblastBordersLayer.setStyle({
+            color: '#5a7d8e',
         });
     }
 
+    // Принудительное обновление стилей кнопок зума
+    const zoomControls = document.querySelectorAll('.leaflet-control-zoom a');
+    console.log('Found zoom controls:', zoomControls.length);
+
+    const computedStyle = getComputedStyle(document.body);
+    const zoomBg = computedStyle.getPropertyValue('--zoom-bg').trim();
+    const zoomColor = computedStyle.getPropertyValue('--zoom-color').trim();
+    console.log('CSS variables - zoom-bg:', zoomBg, 'zoom-color:', zoomColor);
+
+    zoomControls.forEach((control, index) => {
+        console.log(`Control ${index}:`, control);
+        // Прямое применение стилей
+        control.style.backgroundColor = zoomBg;
+        control.style.color = zoomColor;
+
+        // Сбрасываем инлайновые стили Leaflet
+        const originalBg = control.style.backgroundColor;
+        const originalColor = control.style.color;
+
+        // Даем браузеру время перерисоваться
+        setTimeout(() => {
+            control.style.backgroundColor = originalBg;
+            control.style.color = originalColor;
+        }, 50);
+    });
+
     if (mapReady) {
         scheduleOverlayRefresh();
+    }
+
+    // Обновляем тему кастомных кнопок зума
+    if (typeof updateCustomZoomTheme === 'function') {
+        updateCustomZoomTheme();
     }
 };
 

@@ -79,10 +79,11 @@ export class InstallationsService {
             app_build,
             device_model,
             notifications_enabled,
+            android_id,
             status,
             created_at,
             last_seen_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $9)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $10)
         `,
         [
           installationId,
@@ -93,6 +94,7 @@ export class InstallationsService {
           dto.app_build,
           dto.device_model,
           dto.notifications_enabled ?? true,
+          dto.android_id ?? null,
           now,
         ],
       );
@@ -330,23 +332,48 @@ export class InstallationsService {
     const oldInstallationId = existingTokenResult.rows[0].installation_id;
     if (oldInstallationId !== installationId) {
       // The FCM token is being reclaimed by a new installation (e.g. app reinstall).
-      // Delete subscriptions of the old installation so stale pins don't linger in the DB.
-      const deletedSubs = await client.query<{ subscription_id: string }>(
-        `
-          DELETE FROM subscriptions
-          WHERE installation_id = $1
-          RETURNING subscription_id
-        `,
+      // Check if the old installation has the same android_id - if so, migrate subscriptions instead of deleting.
+      const oldInstallationResult = await client.query<{ android_id: string | null }>(
+        `SELECT android_id FROM device_installations WHERE installation_id = $1`,
         [oldInstallationId],
       );
 
-      for (const row of deletedSubs.rows) {
-        await this.supabaseSyncService.enqueueEntity(client, {
-          entity_type: 'subscriptions',
-          entity_id: row.subscription_id,
-          operation: 'delete',
-          payload: { subscription_id: row.subscription_id },
-        });
+      const oldAndroidId = oldInstallationResult.rows[0]?.android_id;
+      const newInstallationResult = await client.query<{ android_id: string | null }>(
+        `SELECT android_id FROM device_installations WHERE installation_id = $1`,
+        [installationId],
+      );
+      const newAndroidId = newInstallationResult.rows[0]?.android_id;
+
+      // If android_id matches (both exist and are equal), migrate subscriptions to new installation
+      if (oldAndroidId && newAndroidId && oldAndroidId === newAndroidId) {
+        await client.query(
+          `
+            UPDATE subscriptions
+            SET installation_id = $1
+            WHERE installation_id = $2
+          `,
+          [installationId, oldInstallationId],
+        );
+      } else {
+        // Different device or no android_id - delete old subscriptions as before
+        const deletedSubs = await client.query<{ subscription_id: string }>(
+          `
+            DELETE FROM subscriptions
+            WHERE installation_id = $1
+            RETURNING subscription_id
+          `,
+          [oldInstallationId],
+        );
+
+        for (const row of deletedSubs.rows) {
+          await this.supabaseSyncService.enqueueEntity(client, {
+            entity_type: 'subscriptions',
+            entity_id: row.subscription_id,
+            operation: 'delete',
+            payload: { subscription_id: row.subscription_id },
+          });
+        }
       }
 
       await client.query(

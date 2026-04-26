@@ -498,11 +498,17 @@ function setThreatsVisibility(visible) {
 window.setThreatsVisibility = setThreatsVisibility;
 
 async function loadThreatOverlays() {
-    const response = await fetch(buildUrl('/map/threat-overlays'), {
-        headers: {
-            'Accept': 'application/json'
-        }
-    });
+    let response;
+    try {
+        response = await fetch(buildUrl('/map/threat-overlays'), {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+    } catch (error) {
+        console.error('Fetch error:', error);
+        throw new Error('Не вдалося підключитися до сервера. Перевірте з\'єднання.');
+    }
 
     if (!response.ok) {
         throw new Error('Не вдалося оновити шар загроз на мапі.');

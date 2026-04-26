@@ -32,8 +32,8 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.0"
+        versionCode = 7
+        versionName = "0.2.0"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -90,9 +90,17 @@ android {
 
 tasks.whenTaskAdded {
     if (name == "bundleRelease" && !hasReleaseSigning) {
-        throw GradleException(
-            "Release signing is not configured. Set RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.",
-        )
+        enabled = false
+        logger.warn("Release signing is not configured. Bundle release task is disabled.")
+    }
+    if (name == "bundleRelease" && hasReleaseSigning) {
+        doFirst {
+            if (!hasReleaseSigning) {
+                throw GradleException(
+                    "Release signing is not configured. Set RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.",
+                )
+            }
+        }
     }
 }
 
@@ -106,6 +114,8 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-ads:23.4.0")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)

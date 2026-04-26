@@ -31,6 +31,18 @@
     border-radius: 12px !important;
     overflow: hidden;
     box-shadow: 0 2px 10px rgba(0,0,0,0.18) !important;
+    transition: box-shadow 0.2s ease;
+}
+.leaflet-control-zoom:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+}
+
+/* Темная тема: улучшенная тень */
+body.dark .leaflet-control-zoom {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4) !important;
+}
+body.dark .leaflet-control-zoom:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6) !important;
 }
 .leaflet-control-zoom a {
     background: var(--zoom-bg) !important;
@@ -40,9 +52,44 @@
     width: 34px !important;
     height: 34px !important;
     line-height: 34px !important;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .leaflet-control-zoom a:hover {
-    filter: brightness(0.92);
+    background: var(--zoom-hover-bg) !important;
+    transform: scale(1.05);
+}
+.leaflet-control-zoom a:active {
+    background: var(--zoom-active-bg) !important;
+    transform: scale(0.95);
+}
+
+/* Темная тема: переопределяем цвета с еще большей специфичностью */
+body.dark .leaflet-control-zoom a {
+    background: var(--zoom-bg) !important;
+    color: var(--zoom-color) !important;
+}
+body.dark .leaflet-control-zoom a:hover {
+    background: var(--zoom-hover-bg) !important;
+}
+body.dark .leaflet-control-zoom a:active {
+    background: var(--zoom-active-bg) !important;
+}
+
+/* Медиа-запрос для темной темы */
+@media (prefers-color-scheme: dark) {
+    body:not(.dark) .leaflet-control-zoom a {
+        background: rgba(255,255,255,0.92) !important;
+        color: #1c3040 !important;
+    }
+}
+
+/* Фallback для темной темы */
+body.dark .leaflet-control-zoom a {
+    background: rgba(20,32,44,0.94) !important;
+    color: #b8cfda !important;
 }
 
 /* ─── Attribution ─────────────────────────────────────── */
@@ -50,4 +97,23 @@
     font-size: 9px;
     background: transparent !important;
     color: var(--attr-color) !important;
+}
+
+/* ─── Custom Zoom Controls ─────────────────────────────── */
+.custom-zoom-control button {
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.custom-zoom-control button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.custom-zoom-control button:active {
+    transform: scale(0.95);
+}
+
+body.dark .custom-zoom-control button:hover {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }

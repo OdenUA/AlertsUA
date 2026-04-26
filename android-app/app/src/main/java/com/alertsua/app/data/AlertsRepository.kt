@@ -79,12 +79,44 @@ class AlertsRepository(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
+    // Hardcoded coordinates of oblast centers (regional capital cities)
+    private fun getOblastCenter(titleUk: String): LatLng {
+        return when (titleUk) {
+            "Київська область" -> LatLng(50.45, 30.5238888889)
+            "Вінницька область" -> LatLng(49.2333333333, 28.4666666667)
+            "Дніпропетровська область" -> LatLng(48.4666666667, 35.0166666667)
+            "Донецька область" -> LatLng(48.0, 37.8)
+            "Житомирська область" -> LatLng(50.25, 28.65)
+            "Запорізька область" -> LatLng(47.8333333333, 35.1333333333)
+            "Івано-Франківська область" -> LatLng(48.9166666667, 24.7)
+            "Кіровоградська область" -> LatLng(48.5, 32.2666666667)
+            "Луганська область" -> LatLng(48.5666666667, 39.3)
+            "Волинська область" -> LatLng(50.7333333333, 25.3166666667)
+            "Львівська область" -> LatLng(49.8333333333, 24.0166666667)
+            "Миколаївська область" -> LatLng(46.9666666667, 31.9833333333)
+            "Одеська область" -> LatLng(46.4833333333, 30.7333333333)
+            "Полтавська область" -> LatLng(49.5833333333, 34.55)
+            "Рівненська область" -> LatLng(50.6166666667, 26.25)
+            "Автономна Республіка Крим" -> LatLng(44.95, 34.1)
+            "Сумська область" -> LatLng(50.9, 34.8)
+            "Тернопільська область" -> LatLng(49.55, 25.5833333333)
+            "Закарпатська область" -> LatLng(48.6166666667, 22.3)
+            "Харківська область" -> LatLng(49.9833333333, 36.2166666667)
+            "Херсонська область" -> LatLng(46.6333333333, 32.6)
+            "Хмельницька область" -> LatLng(49.4166666667, 27.0)
+            "Черкаська область" -> LatLng(49.4333333333, 32.0666666667)
+            "Чернівецька область" -> LatLng(48.2833333333, 25.9333333333)
+            "Чернігівська область" -> LatLng(51.5, 31.3)
+            else -> LatLng(0.0, 0.0)
+        }
+    }
+
     fun loadApiBaseUrl(): String {
-        val storedValue = preferences.getString(KEY_API_BASE_URL, BuildConfig.DEFAULT_API_BASE_URL).orEmpty()
+        val storedValue = preferences.getString(KEY_API_BASE_URL, "http://173.242.53.129/api/v1").orEmpty()
         val normalizedValue = normalizeApiBaseUrl(storedValue)
         if (normalizedValue == LEGACY_EMULATOR_API_BASE_URL) {
-            saveApiBaseUrl(BuildConfig.DEFAULT_API_BASE_URL)
-            return BuildConfig.DEFAULT_API_BASE_URL
+            saveApiBaseUrl("http://173.242.53.129/api/v1")
+            return "http://173.242.53.129/api/v1"
         }
 
         return normalizedValue
@@ -103,7 +135,7 @@ class AlertsRepository(context: Context) {
     fun normalizeApiBaseUrl(rawValue: String): String {
         val trimmed = rawValue.trim().removeSuffix("/")
         if (trimmed.isBlank()) {
-            return BuildConfig.DEFAULT_API_BASE_URL
+            return "http://173.242.53.129/api/v1"
         }
 
         return when {
@@ -236,6 +268,23 @@ class AlertsRepository(context: Context) {
 
     fun loadInstallationToken(): String? = preferences.getString(KEY_INSTALLATION_TOKEN, null)
 
+    fun getAndroidId(): String {
+        if (cachedAndroidId != null) return cachedAndroidId!!
+
+        val androidId = try {
+            android.provider.Settings.Secure.getString(
+                appContext.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID
+            )
+        } catch (e: Exception) {
+            ""
+        }
+        cachedAndroidId = androidId
+        return androidId
+    }
+
+    private var cachedAndroidId: String? = null
+
     /**
      * Registers this device installation with the backend and stores the returned
      * installation_token. Safe to call multiple times – skips if already registered.
@@ -244,6 +293,7 @@ class AlertsRepository(context: Context) {
         if (loadInstallationToken() != null) return@withContext
 
         val fcmToken = loadFcmToken() ?: return@withContext  // wait until FCM token is available
+        val androidId = getAndroidId()
 
         val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
         val connection = (URL("$apiBaseUrl/installations").openConnection() as HttpURLConnection)
@@ -260,13 +310,20 @@ class AlertsRepository(context: Context) {
             val body = JSONObject()
                 .put("platform", "android")
                 .put("locale", "uk-UA")
-                .put("app_version", BuildConfig.VERSION_NAME)
-                .put("app_build", BuildConfig.VERSION_CODE.toString())
+                .put("app_version", "0.2.0")
+                .put("app_build", "7")
                 .put("device_model", "${Build.MANUFACTURER} ${Build.MODEL}".take(128))
                 .put("fcm_token", fcmToken)
                 .put("notifications_enabled", true)
+                .apply {
+                    if (androidId.isNotBlank()) {
+                        put("android_id", androidId)
+                    }
+                }
                 .toString()
-            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
+            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(body)
+                }
             val code = connection.responseCode
             val text = readResponse(connection)
             if (code in 200..299) {
@@ -313,7 +370,9 @@ class AlertsRepository(context: Context) {
                 .put("label_user", levelLabel)
                 .toString()
 
-            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body) }
+            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(body)
+                }
 
             val code = connection.responseCode
             val responseText = readResponse(connection)
@@ -328,9 +387,37 @@ class AlertsRepository(context: Context) {
 
     suspend fun fetchSubscriptions(rawApiBaseUrl: String): List<SubscriptionPin> = withContext(Dispatchers.IO) {
         val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
-        val installToken = loadInstallationToken() ?: return@withContext emptyList()
+        val androidId = getAndroidId()
 
-        val connection = (URL("$apiBaseUrl/subscriptions").openConnection() as HttpURLConnection)
+        // First try: fetch with installation token
+        val installToken = loadInstallationToken()
+        if (installToken != null) {
+            val pins = fetchSubscriptionsWithToken(apiBaseUrl, installToken, androidId)
+            if (pins.isNotEmpty()) {
+                return@withContext pins
+            }
+        }
+
+        // Fallback: try to fetch by android_id (for reinstalled apps)
+        if (androidId.isNotBlank()) {
+            android.util.Log.d("AlertsRepository", "No installation token or no subscriptions, trying android_id: $androidId")
+            return@withContext fetchSubscriptionsByAndroidId(apiBaseUrl, androidId)
+        }
+
+        emptyList()
+    }
+
+    private suspend fun fetchSubscriptionsWithToken(apiBaseUrl: String, installToken: String, androidId: String?): List<SubscriptionPin> {
+        val urlBuilder = StringBuilder("$apiBaseUrl/subscriptions")
+        val params = mutableListOf<String>()
+        if (!androidId.isNullOrBlank()) {
+            params.add("android_id=$androidId")
+        }
+        if (params.isNotEmpty()) {
+            urlBuilder.append("?").append(params.joinToString("&"))
+        }
+
+        val connection = (URL(urlBuilder.toString()).openConnection() as HttpURLConnection)
             .apply {
                 requestMethod = "GET"
                 doInput = true
@@ -343,9 +430,57 @@ class AlertsRepository(context: Context) {
         try {
             val code = connection.responseCode
             val responseText = readResponse(connection)
-            if (code !in 200..299) return@withContext emptyList()
-            val arr = JSONObject(responseText).getJSONArray("subscriptions")
-            (0 until arr.length()).map { i ->
+            if (code !in 200..299) return emptyList()
+
+            val response = JSONObject(responseText)
+
+            // If android_id was used and server returned a new installation token, save it
+            val newInstallToken = response.optString("installation_token", "")
+            if (!androidId.isNullOrBlank() && newInstallToken.isNotBlank()) {
+                saveInstallationToken(newInstallToken)
+                android.util.Log.d("AlertsRepository", "Saved new installation token from android_id lookup")
+            }
+
+            val arr = response.getJSONArray("subscriptions")
+            return (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                SubscriptionPin(
+                    subscriptionId = obj.getString("subscription_id"),
+                    lat = obj.getDouble("latitude"),
+                    lon = obj.getDouble("longitude"),
+                    levelLabel = if (obj.isNull("label_user")) null else obj.optString("label_user").ifBlank { null },
+                )
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun fetchSubscriptionsByAndroidId(apiBaseUrl: String, androidId: String): List<SubscriptionPin> {
+        val connection = (URL("$apiBaseUrl/subscriptions?android_id=$androidId").openConnection() as HttpURLConnection)
+            .apply {
+                requestMethod = "GET"
+                doInput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Accept", "application/json")
+            }
+
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) return emptyList()
+            val responseText = readResponse(connection)
+            val response = JSONObject(responseText)
+
+            // Save installation token if provided
+            val newInstallToken = response.optString("installation_token", "")
+            if (newInstallToken.isNotBlank()) {
+                saveInstallationToken(newInstallToken)
+                android.util.Log.d("AlertsRepository", "Saved installation token from android_id lookup")
+            }
+
+            val arr = response.getJSONArray("subscriptions")
+            return (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 SubscriptionPin(
                     subscriptionId = obj.getString("subscription_id"),
@@ -460,22 +595,30 @@ class AlertsRepository(context: Context) {
                     val parsedGeometry = parseGeoJsonCoordinates(coordinates)
                     android.util.Log.d("SimplifiedMap", "Parsed geometry rings: ${parsedGeometry.size}")
 
+                    val titleUk = obj.getString("title_uk")
+                    val geoCenter = LatLng(
+                        lat = obj.getJSONObject("center").getDouble("lat"),
+                        lon = obj.getJSONObject("center").getDouble("lon")
+                    )
+
+                    val bounds = Bounds(
+                        west = obj.getJSONObject("bounds").getDouble("west"),
+                        south = obj.getJSONObject("bounds").getDouble("south"),
+                        east = obj.getJSONObject("bounds").getDouble("east"),
+                        north = obj.getJSONObject("bounds").getDouble("north")
+                    )
+
+                    android.util.Log.d("SimplifiedMap", "Loaded: $titleUk, bounds=$bounds")
+
                     OblastData(
                         uid = obj.getInt("uid"),
-                        titleUk = obj.getString("title_uk"),
+                        titleUk = titleUk,
                         status = obj.getString("status"),
                         alertType = obj.getString("alert_type"),
                         geometry = parsedGeometry,
-                        center = LatLng(
-                            lat = obj.getJSONObject("center").getDouble("lat"),
-                            lon = obj.getJSONObject("center").getDouble("lon")
-                        ),
-                        bounds = Bounds(
-                            west = obj.getJSONObject("bounds").getDouble("west"),
-                            south = obj.getJSONObject("bounds").getDouble("south"),
-                            east = obj.getJSONObject("bounds").getDouble("east"),
-                            north = obj.getJSONObject("bounds").getDouble("north")
-                        )
+                        center = geoCenter,
+                        cityCenter = getOblastCenter(titleUk),
+                        bounds = bounds
                     )
                 } catch (e: Exception) {
                     android.util.Log.e("SimplifiedMap", "Error parsing oblast $i: ${e.message}", e)

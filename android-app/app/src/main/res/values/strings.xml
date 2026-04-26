@@ -37,4 +37,17 @@
     <string name="unsubscribe_success">Підписку скасовано</string>
     <string name="unsubscribe_error">Не вдалося відписатися. Спробуйте ще раз.</string>
     <string name="cancel">Скасувати</string>
+    <string name="location_permission_title">Дозвіл на геолокацію</string>
+    <string name="location_permission_message">Для визначення вашого місцезнаходження та пропозиції підписки на сповіщення потрібен дозвіл на геолокацію.</string>
+    <string name="location_dialog_title">Підписатися на сповіщення?</string>
+    <string name="location_dialog_message">Ви знаходитесь в: %1$s\n\nБажаєте підписатися на сповіщення про початок і кінець повітряної тривоги в цій громаді?</string>
+    <string name="location_dialog_note">Ви можете підписатися в будь-який момент, натиснувши на потрібне місце на карті.</string>
+    <string name="location_dialog_subscribe">Так, підписатися</string>
+    <string name="location_dialog_decline">Ні, дякую</string>
+    <string name="location_dialog_never_ask">Більше не питати</string>
+    <!-- AdMob -->
+    <string name="admob_banner_loading">Завантаження реклами...</string>
+    <string name="location_resolving">Визначаємо місцезнаходження…</string>
+    <string name="location_error">Не вдалося визначити місцезнаходження</string>
+    <string name="location_loading_failed">Не вдалося отримати ваше місцезнаходження. Спробуйте пізніше або підпишіться через карту.</string>
 </resources>

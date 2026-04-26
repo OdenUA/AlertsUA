@@ -15,6 +15,9 @@ class SimplifiedMapController {
     private val _selectedOblast = MutableStateFlow<OblastData?>(null)
     val selectedOblast: StateFlow<OblastData?> = _selectedOblast
 
+    private val _tapTrigger = MutableStateFlow(0)
+    val tapTrigger: StateFlow<Int> = _tapTrigger
+
     var centerLon = 31.0
         private set
     var centerLat = 48.5
@@ -101,11 +104,21 @@ class SimplifiedMapController {
         val tapLon = xToLon(tapWx, wp)
         val tapLat = yToLat(tapWy, wp)
 
+        android.util.Log.d("SimplifiedMap", "Tap: lat=$tapLat, lon=$tapLon")
+
         val tapped = _oblasts.value.find { oblast ->
-            tapLat >= oblast.bounds.south && tapLat <= oblast.bounds.north &&
-            tapLon >= oblast.bounds.west && tapLon <= oblast.bounds.east
+            val within = tapLat >= oblast.bounds.south && tapLat <= oblast.bounds.north &&
+                tapLon >= oblast.bounds.west && tapLon <= oblast.bounds.east
+            if (within) {
+                android.util.Log.d("SimplifiedMap", "Matched: ${oblast.titleUk}, bounds=${oblast.bounds}")
+            }
+            within
         }
+        android.util.Log.d("SimplifiedMap", "Selected: ${tapped?.titleUk ?: "none"}")
         _selectedOblast.value = tapped
+        if (tapped != null) {
+            _tapTrigger.value++
+        }
     }
 
     fun geoToScreen(lat: Double, lon: Double, viewWidth: Float, viewHeight: Float): Pair<Float, Float> {

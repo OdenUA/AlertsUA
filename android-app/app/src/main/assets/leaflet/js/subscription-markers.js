@@ -6,8 +6,8 @@ window.addSubscriptionMarker = function(lat, lon, markerId) {
         var icon = L.divIcon({
             className: '',
             html: '<div class="sub-marker"></div>',
-            iconSize: [28, 36],
-            iconAnchor: [14, 36],
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
         });
         var id = markerId;
         var marker = L.marker([lat, lon], { icon: icon, zIndexOffset: 600 }).addTo(map);

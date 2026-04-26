@@ -52,6 +52,14 @@ function refreshAlertMarkers() {
 }
 
 function bringAlertLayersToFront() {
+    // Oblast borders should be at the back (under alert fills)
+    if (oblastBordersLayer) {
+        oblastBordersLayer.bringToBack();
+    }
+    // Interactive regions layer (transparent, for clicks on non-alert areas)
+    if (interactiveRegionsLayer) {
+        interactiveRegionsLayer.bringToFront();
+    }
     // Bring the precomputed alert layer to front
     if (alertLayersGroup) {
         alertLayersGroup.bringToFront();
@@ -330,11 +338,17 @@ async function loadSpecialAlertLayer() {
 }
 
 async function loadAlertsLayer() {
-    const response = await fetch(buildUrl('/map/alerts-layer'), {
-        headers: {
-            'Accept': 'application/json'
-        }
-    });
+    let response;
+    try {
+        response = await fetch(buildUrl('/map/alerts-layer'), {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+    } catch (error) {
+        console.error('Fetch error:', error);
+        throw new Error('Не вдалося підключитися до сервера. Перевірте з\'єднання.');
+    }
 
     if (!response.ok) {
         throw new Error('Не вдалося оновити шар тривог.');
@@ -365,6 +379,131 @@ async function loadAlertsLayer() {
     }).addTo(map);
 }
 
+async function loadInteractiveRegionsLayer() {
+    const packVersions = activeConfig && activeConfig.overlay_config
+        ? activeConfig.overlay_config.geometry_pack_versions || {}
+        : {};
+
+    // Load visible layers based on current zoom (excluding oblast - handled by loadOblastBorders)
+    const visibleLayers = getVisibleLayers().filter(layerId => layerId !== 'oblast');
+    const allFeatures = [];
+
+    for (const layerId of visibleLayers) {
+        try {
+            const response = await fetch(buildUrl('/map/features', {
+                layer: layerId,
+                zoom: map.getZoom(),
+                pack_version: packVersions[layerId],
+            }), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const data = await response.json();
+            const features = data.features || [];
+            allFeatures.push(...features);
+        } catch (error) {
+            console.warn('[InteractiveLayer] Failed to load', layerId, ':', error);
+        }
+    }
+
+    if (allFeatures.length === 0) {
+        return;
+    }
+
+    // Remove old interactive layer if exists
+    if (interactiveRegionsLayer) {
+        map.removeLayer(interactiveRegionsLayer);
+    }
+
+    // Create invisible but interactive layer for clicks
+    interactiveRegionsLayer = L.geoJSON(allFeatures, {
+        style: {
+            stroke: false,
+            fillOpacity: 0,
+            interactive: true,
+        },
+        onEachFeature: bindFeatureTooltip,
+    }).addTo(map);
+
+    console.log('[InteractiveLayer] Loaded', allFeatures.length, 'regions for click handling');
+}
+
+async function loadOblastBorders() {
+    console.log('[OblastBorders] Starting to load oblast borders...');
+    let response;
+    try {
+        response = await fetch(buildUrl('/map/simplified-oblast'), {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+    } catch (error) {
+        console.error('[OblastBorders] Fetch error:', error);
+        throw new Error('Не вдалося підключитися до сервера. Перевірте з\'єднання.');
+    }
+
+    if (!response.ok) {
+        // Borders layer is optional, proceed without it
+        console.warn('[OblastBorders] Failed to load:', response.status, response.statusText);
+        return;
+    }
+
+    const data = await response.json();
+    const oblasts = data.oblasts || [];
+
+    if (!oblasts.length) {
+        console.warn('[OblastBorders] No oblasts data received');
+        return;
+    }
+
+    const features = oblasts.map(function(oblast) {
+        return {
+            type: 'Feature',
+            properties: {
+                uid: oblast.uid,
+                title_uk: oblast.title_uk,
+                status: oblast.status,
+                alert_type: oblast.alert_type,
+            },
+            geometry: oblast.geometry || null,
+        };
+    }).filter(function(f) { return f.geometry !== null; });
+
+    console.log('[OblastBorders] Loaded', features.length, 'oblast borders');
+
+    // Remove old borders layer if exists
+    if (oblastBordersLayer) {
+        console.log('[OblastBorders] Removing old borders layer');
+        map.removeLayer(oblastBordersLayer);
+    }
+
+    var isDark = document.body.classList.contains('dark');
+    console.log('[OblastBorders] Dark mode:', isDark);
+
+    // Create new borders layer (stroke only, no fill, but interactive for clicks)
+    oblastBordersLayer = L.geoJSON(features, {
+        style: function(feature) {
+            return {
+                stroke: true,
+                color: isDark ? '#5a7d8e' : '#5a7d8e',
+                weight: 2.5,
+                fillColor: isDark ? '#5a7d8e' : '#5a7d8e',
+                fillOpacity: 0,
+                interactive: true,
+            };
+        },
+        onEachFeature: bindFeatureTooltip,
+    }).addTo(map);
+
+    console.log('[OblastBorders] Layer added to map, total layers:', map._layers);
+}
+
 async function refreshOverlays() {
     if (!activeConfig) {
         return;
@@ -374,6 +513,9 @@ async function refreshOverlays() {
 
     // Load single precomputed alert layer (replaces 3 separate layer requests)
     await loadAlertsLayer();
+    await loadOblastBorders();
+    // Load interactive layer for all regions to enable clicks on non-alert areas
+    await loadInteractiveRegionsLayer();
     await loadThreatOverlays();
 
     fitToVisibleData();
@@ -381,6 +523,7 @@ async function refreshOverlays() {
     bringAlertLayersToFront();
     setStatus(null);
 }
+window.refreshOverlays = refreshOverlays;
 
 function scheduleOverlayRefresh() {
     if (refreshTimerId) {

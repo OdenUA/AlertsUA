@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import com.alertsua.app.map.simplified.ZoomControlButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,6 +62,7 @@ private enum class SheetActionMode { SUBSCRIBE, UNSUBSCRIBE }
 fun SimplifiedMapScreen(
     modifier: Modifier = Modifier,
     darkMode: Boolean = false,
+    refreshTrigger: Int = 0,
 ) {
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
@@ -74,6 +76,7 @@ fun SimplifiedMapScreen(
     val oblasts by controller.oblasts.collectAsState()
     val activeAlerts by controller.activeAlerts.collectAsState()
     val selectedOblast by controller.selectedOblast.collectAsState()
+    val tapTrigger by controller.tapTrigger.collectAsState()
     val renderVersion by controller.renderVersion.collectAsState()
 
     var isLoading by remember { mutableStateOf(true) }
@@ -96,7 +99,26 @@ fun SimplifiedMapScreen(
         mutableStateListOf<SubscriptionPin>().also { it.addAll(repository.loadSubscriptionPins()) }
     }
 
-    // Load both oblasts and active alerts together
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    // Refresh function
+    suspend fun refreshData() {
+        isRefreshing = true
+        android.widget.Toast.makeText(context, "Оновлення...", android.widget.Toast.LENGTH_SHORT).show()
+        try {
+            val apiBaseUrl = repository.loadApiBaseUrl()
+            // Load active alerts (oblasts geometry doesn't change)
+            val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
+            controller.updateActiveAlerts(alerts)
+        } catch (e: Exception) {
+            android.util.Log.e("SimplifiedMap", "Refresh failed: ${e.message}", e)
+            android.widget.Toast.makeText(context, "Помилка оновлення", android.widget.Toast.LENGTH_SHORT).show()
+        } finally {
+            isRefreshing = false
+        }
+    }
+
+    // Load both oblasts and active alerts together on init
     LaunchedEffect(Unit) {
         isLoading = true
         errorMessage = null
@@ -115,9 +137,26 @@ fun SimplifiedMapScreen(
         }
     }
 
+    // Auto-refresh every 30 seconds
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30000L)
+            refreshData()
+        }
+    }
+
+    // Manual refresh via button
+    LaunchedEffect(refreshTrigger) {
+        if (refreshTrigger > 0) {
+            refreshData()
+        }
+    }
+
     // Handle oblast selection → open bottom sheet
-    LaunchedEffect(selectedOblast) {
+    LaunchedEffect(tapTrigger) {
+        android.util.Log.d("SimplifiedMap", "LaunchedEffect triggered: tapTrigger=$tapTrigger, oblast=${selectedOblast?.titleUk ?: "null"}")
         selectedOblast?.let { oblast ->
+            android.util.Log.d("SimplifiedMap", "Opening bottom sheet for: ${oblast.titleUk}")
             selectedLat = oblast.center.lat
             selectedLon = oblast.center.lon
             actionMode = SheetActionMode.SUBSCRIBE
@@ -129,8 +168,11 @@ fun SimplifiedMapScreen(
             coroutineScope.launch {
                 isResolvingPoint = true
                 try {
+                    android.util.Log.d("SimplifiedMap", "Resolving point: ${oblast.center.lat}, ${oblast.center.lon}")
                     resolvedPoint = repository.resolvePoint(activeApiBaseUrl, oblast.center.lat, oblast.center.lon)
+                    android.util.Log.d("SimplifiedMap", "Resolved: ${resolvedPoint?.resolvedRegion?.hromadaTitleUk}")
                 } catch (error: Exception) {
+                    android.util.Log.e("SimplifiedMap", "Error resolving point: ${error.message}", error)
                     resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
                 } finally {
                     isResolvingPoint = false
@@ -227,7 +269,7 @@ fun SimplifiedMapScreen(
                             change.consume()
                             controller.panByPixels(
                                 dragAmount.x, dragAmount.y,
-                                size.width.toFloat(), size.height.toFloat()
+                                canvasWidthPx, canvasHeightPx
                             )
                         }
                     }
@@ -235,7 +277,7 @@ fun SimplifiedMapScreen(
                         detectTapGestures { offset ->
                             controller.handleTap(
                                 offset.x, offset.y,
-                                size.width.toFloat(), size.height.toFloat()
+                                canvasWidthPx, canvasHeightPx
                             )
                         }
                     }
@@ -244,56 +286,34 @@ fun SimplifiedMapScreen(
                 renderVersion
 
                 val projection: (LatLng) -> Pair<Float, Float> = { latLng ->
-                    controller.geoToScreen(latLng.lat, latLng.lon, size.width.toFloat(), size.height.toFloat())
+                    controller.geoToScreen(latLng.lat, latLng.lon, canvasWidthPx, canvasHeightPx)
                 }
 
                 with(drawContext.canvas.nativeCanvas) {
                     renderer.renderOblasts(this, oblasts, projection, darkMode)
                     renderer.renderActiveAlerts(this, activeAlerts, projection)
+                    renderer.renderSubscriptionMarkers(this, subscriptionPins, projection)
                     renderer.renderOblastNames(this, oblasts, projection, darkMode)
+                    renderer.renderOblastCenters(this, oblasts, projection, darkMode)
                 }
             }
 
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp),
+                    .align(Alignment.BottomStart)
+                    .padding(bottom = 20.dp, start = 15.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                IconButton(
-                    onClick = {
-                        controller.zoomIn(canvasWidthPx, canvasHeightPx)
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Zoom in",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        controller.zoomOut(canvasWidthPx, canvasHeightPx)
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Remove,
-                        contentDescription = "Zoom out",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
-                }
+                ZoomControlButton(
+                    onClick = { controller.zoomIn(canvasWidthPx, canvasHeightPx) },
+                    icon = Icons.Default.Add,
+                    darkMode = darkMode
+                )
+                ZoomControlButton(
+                    onClick = { controller.zoomOut(canvasWidthPx, canvasHeightPx) },
+                    icon = Icons.Default.Remove,
+                    darkMode = darkMode
+                )
             }
 
             if (isLoading) {
@@ -343,27 +363,10 @@ fun SimplifiedMapScreen(
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
-            val isSubscribeMode = actionMode == SheetActionMode.SUBSCRIBE
             SimplifiedBottomSheetContent(
                 resolvedPoint = resolvedPoint,
                 isResolvingPoint = isResolvingPoint,
                 resolveError = resolveError,
-                selectedLevel = selectedLevel,
-                onLevelSelected = { selectedLevel = it },
-                isLevelSelectionEnabled = isSubscribeMode,
-                actionLabelRes = if (isSubscribeMode) R.string.subscribe_confirm else R.string.unsubscribe_confirm,
-                isActionInProgress = isActionInProgress,
-                isActionDestructive = !isSubscribeMode,
-                onPrimaryAction = {
-                    if (isSubscribeMode && !context.hasNotificationPermission()) {
-                        retrySubscribeAfterPermissionGrant = true
-                        requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        coroutineScope.launch {
-                            if (isSubscribeMode) runSubscribeAction() else runUnsubscribeAction()
-                        }
-                    }
-                },
             )
         }
     }
@@ -381,13 +384,6 @@ private fun SimplifiedBottomSheetContent(
     resolvedPoint: ResolvedPoint?,
     isResolvingPoint: Boolean,
     resolveError: String?,
-    selectedLevel: SubscriptionLevel,
-    onLevelSelected: (SubscriptionLevel) -> Unit,
-    isLevelSelectionEnabled: Boolean,
-    actionLabelRes: Int,
-    isActionInProgress: Boolean,
-    isActionDestructive: Boolean,
-    onPrimaryAction: () -> Unit,
 ) {
     val scrollState = rememberScrollState()
 
@@ -434,81 +430,14 @@ private fun SimplifiedBottomSheetContent(
 
         val region = resolvedPoint.resolvedRegion
 
-        RegionHierarchySection(region = region)
-
-        if (region.activeFrom != null) {
-            AlertDurationRow(activeFrom = region.activeFrom)
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-        Text(
-            text = stringResource(R.string.subscribe_title),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Column(Modifier.selectableGroup()) {
-            SubscriptionLevel.entries.forEach { level ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = (selectedLevel == level),
-                            onClick = { onLevelSelected(level) },
-                            enabled = isLevelSelectionEnabled,
-                            role = Role.RadioButton,
-                        )
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = (selectedLevel == level),
-                        onClick = null,
-                        enabled = isLevelSelectionEnabled,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(level.labelRes),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isLevelSelectionEnabled) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
-        }
-
-        Button(
-            onClick = onPrimaryAction,
-            enabled = !isActionInProgress,
-            modifier = Modifier.fillMaxWidth(),
-            colors = if (isActionDestructive) {
-                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            } else {
-                ButtonDefaults.buttonColors()
-            },
-        ) {
-            if (isActionInProgress) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = if (isActionDestructive) {
-                        MaterialTheme.colorScheme.onError
-                    } else {
-                        MaterialTheme.colorScheme.onPrimary
-                    },
-                )
-            } else {
-                Text(text = stringResource(actionLabelRes))
-            }
-        }
-
         if (region.oblastUid != null) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             OblastHistorySection(history = region.oblastHistory)
+        } else {
+            Text(
+                text = "История тревог недоступна",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
