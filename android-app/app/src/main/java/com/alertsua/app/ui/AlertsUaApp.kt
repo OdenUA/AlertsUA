@@ -74,14 +74,40 @@ fun AlertsUaApp(
     val repository = remember(context) { AlertsRepository(context) }
     val activity = context as? Activity
     val view = LocalView.current
-    var darkMode by rememberSaveable { mutableStateOf(repository.loadDarkModeEnabled()) }
+    val applicationContext = LocalContext.current.applicationContext
+
+    // Определяем системную тему более надежным способом
+    val isSystemDark = when (applicationContext.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) {
+        Configuration.UI_MODE_NIGHT_YES -> true
+        Configuration.UI_MODE_NIGHT_NO -> false
+        else -> false
+    }
+    val configuration = LocalConfiguration.current
+
+    // Загружаем тему: если первый запуск - используем системную, иначе используем сохраненную
+    val isFirstLaunch = repository.loadDarkModeEnabled() == null
+
+    // Для отладки
+    android.util.Log.d("ThemeDebug", "isFirstLaunch: $isFirstLaunch, isSystemDark: $isSystemDark")
+
+    var darkMode by rememberSaveable {
+        if (isFirstLaunch) {
+            // Первый запуск - сохраняем системную тему
+            android.util.Log.d("ThemeDebug", "Saving system theme: $isSystemDark")
+            repository.saveDarkModeEnabled(isSystemDark)
+            mutableStateOf(isSystemDark)
+        } else {
+            val savedTheme = repository.loadDarkModeEnabled()
+            android.util.Log.d("ThemeDebug", "Loading saved theme: $savedTheme")
+            mutableStateOf(savedTheme)
+        }
+    }
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var showThreats by rememberSaveable { mutableStateOf(true) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
-    var useSimplifiedMap by rememberSaveable { mutableStateOf(false) }
+    var useSimplifiedMap by rememberSaveable { mutableStateOf(repository.loadSimplifiedMapEnabled()) }
     var orientationChangeTrigger by remember { mutableIntStateOf(0) }
     var showFaqDialog by remember { mutableStateOf(false) }
-    val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // Обновляем триггер при изменении ориентации
@@ -93,6 +119,12 @@ fun AlertsUaApp(
         val nextValue = !darkMode
         darkMode = nextValue
         repository.saveDarkModeEnabled(nextValue)
+    }
+
+    val toggleSimplifiedMap: () -> Unit = {
+        val nextValue = !useSimplifiedMap
+        useSimplifiedMap = nextValue
+        repository.saveSimplifiedMapEnabled(nextValue)
     }
 
     DisposableEffect(activity, view, isFullscreen) {
@@ -169,10 +201,10 @@ fun AlertsUaApp(
                                 )
                             }
 
-                            IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                            IconButton(onClick = toggleSimplifiedMap) {
                                 Icon(
                                     imageVector = Icons.Outlined.Map,
-                                    contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
+                                    contentDescription = if (useSimplifiedMap) "Стандартна карта" else "Спрощена карта",
                                 )
                             }
 
@@ -188,7 +220,7 @@ fun AlertsUaApp(
                             IconButton(onClick = { showFaqDialog = true }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Help,
-                                    contentDescription = "Help / FAQ",
+                                    contentDescription = "Довідка / FAQ",
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
@@ -313,10 +345,10 @@ fun AlertsUaApp(
                         }
 
                         // Bottom: Simplified mode, Theme
-                        IconButton(onClick = { useSimplifiedMap = !useSimplifiedMap }) {
+                        IconButton(onClick = toggleSimplifiedMap) {
                             Icon(
                                 imageVector = Icons.Outlined.Map,
-                                contentDescription = if (useSimplifiedMap) "Detailed map" else "Simplified map",
+                                contentDescription = if (useSimplifiedMap) "Стандартна карта" else "Спрощена карта",
                             )
                         }
                         IconButton(onClick = toggleDarkMode) {

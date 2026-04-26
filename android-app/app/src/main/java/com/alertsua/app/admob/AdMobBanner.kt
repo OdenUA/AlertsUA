@@ -19,7 +19,6 @@ fun AdMobBanner(
     refreshTrigger: Int = 0,
     isLandscape: Boolean = false
 ) {
-    val context = LocalContext.current
     val adUnitId = remember(isLandscape) {
         // В обеих ориентациях используем стандартный баннер
         "ca-app-pub-7267693224424927/6615114075"

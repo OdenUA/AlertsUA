@@ -249,12 +249,12 @@ fun AlertMapScreen(
             val location = getCurrentLocation(context)
             if (location != null) {
                 android.util.Log.d("AlertMapScreen", "Location acquired: ${location.latitude}, ${location.longitude}")
-                val resolvedPoint = repository.resolvePoint(
+                val resolvedLocation = repository.resolvePoint(
                     rawApiBaseUrl = activeApiBaseUrl,
                     latitude = location.latitude,
                     longitude = location.longitude
                 )
-                val region = resolvedPoint.resolvedRegion
+                val region = resolvedLocation.resolvedRegion
                 android.util.Log.d("AlertMapScreen", "Resolved region: hromada=${region.hromadaTitleUk}")
                 if (region.hromadaTitleUk.isNotEmpty()) {
                     resolvedHromada = region.hromadaTitleUk
@@ -436,7 +436,6 @@ fun AlertMapScreen(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val bridge = remember { LeafletBridge() }
-    var showFaqDialog by remember { mutableStateOf(false) }
 
     bridge.pointSelectedHandler = { latitude, longitude ->
         selectedLat = latitude

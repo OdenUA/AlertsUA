@@ -20,7 +20,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import com.alertsua.app.map.simplified.ZoomControlButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +63,37 @@ fun SimplifiedMapScreen(
     darkMode: Boolean = false,
     refreshTrigger: Int = 0,
 ) {
+    @Composable
+    private fun ZoomControlButton(
+        onClick: () -> Unit,
+        icon: ImageVector,
+        darkMode: Boolean
+    ) {
+        val isPressed = remember { mutableStateOf(false) }
+
+        IconButton(
+            onClick = {
+                isPressed.value = false
+                onClick()
+            },
+            modifier = Modifier
+                .size(36.dp)
+                .background(
+                    color = if (darkMode)
+                        Color(if (isPressed.value) 0x1E4C6B else 0x144C6B)
+                    else
+                        Color(if (isPressed.value) 0xFFFFFFFF else 0xE6FFFFFF),
+                    shape = RoundedCornerShape(8.dp)
+                )
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = if (icon == Icons.Default.Add) "Zoom in" else "Zoom out",
+                tint = if (darkMode) Color(0xFFB8CFDA) else Color(0xFF1C3040)
+            )
+        }
+    }
+
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
     val controller = remember { SimplifiedMapController() }
@@ -233,7 +263,19 @@ fun SimplifiedMapScreen(
         }
     }
 
-    // TODO: Реализовать запрос разрешения на уведомления при необходимости
+    val requestNotificationPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { isGranted ->
+        val shouldRetrySubscribe = retrySubscribeAfterPermissionGrant
+        retrySubscribeAfterPermissionGrant = false
+        if (isGranted && shouldRetrySubscribe) {
+            coroutineScope.launch { runSubscribeAction() }
+        } else if (!isGranted) {
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar(context.getString(R.string.subscribe_permission_required))
+            }
+        }
+    }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -257,7 +299,7 @@ fun SimplifiedMapScreen(
                             change.consume()
                             controller.panByPixels(
                                 dragAmount.x, dragAmount.y,
-                                canvasWidthPx, canvasHeightPx
+                                size.width.toFloat(), size.height.toFloat()
                             )
                         }
                     }
@@ -265,7 +307,7 @@ fun SimplifiedMapScreen(
                         detectTapGestures { offset ->
                             controller.handleTap(
                                 offset.x, offset.y,
-                                canvasWidthPx, canvasHeightPx
+                                size.width.toFloat(), size.height.toFloat()
                             )
                         }
                     }
@@ -274,7 +316,7 @@ fun SimplifiedMapScreen(
                 renderVersion
 
                 val projection: (LatLng) -> Pair<Float, Float> = { latLng ->
-                    controller.geoToScreen(latLng.lat, latLng.lon, canvasWidthPx, canvasHeightPx)
+                    controller.geoToScreen(latLng.lat, latLng.lon, size.width.toFloat(), size.height.toFloat())
                 }
 
                 with(drawContext.canvas.nativeCanvas) {
@@ -290,7 +332,7 @@ fun SimplifiedMapScreen(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(bottom = 20.dp, start = 15.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 ZoomControlButton(
                     onClick = { controller.zoomIn(canvasWidthPx, canvasHeightPx) },
@@ -361,7 +403,7 @@ fun SimplifiedMapScreen(
 }
 
 private fun Context.hasNotificationPermission(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+    if (Build.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
     return ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 }
 
@@ -574,9 +616,9 @@ private fun alertTypeCardColor(alertType: String?, isActive: Boolean): Color = w
     else -> Color(0xFF762B2D)
 }
 
-private fun alertTypeBadgeColor(alertType: String?): Color = when (alertType) {
-    "artillery_shelling" -> Color(0xFF7A3A00)
-    "urban_fights" -> Color(0xFF2A1F6A)
+private fun alertTypeBadgeColor(alertType: String?): Color = when {
+    alertType == "artillery_shelling" -> Color(0xFF7A3A00)
+    alertType == "urban_fights" -> Color(0xFF2A1F6A)
     else -> Color(0xFF5A1F21)
 }
 
