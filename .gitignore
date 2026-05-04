@@ -5,6 +5,13 @@ llm-worker.env
 secrets.env
 CLAUDE.md
 .claude/
+build-debug.bat
+build-release.bat
+
+# IDE settings (personal, should not be committed)
+.idea/
+*.iml
+
 
 # Secrets and credentials
 alert-ua-app-firebase-adminsdk-fbsvc-48f98daed8.json

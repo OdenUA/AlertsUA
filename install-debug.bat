@@ -11,7 +11,7 @@ for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
     if not "!_ln:~0,1!"=="#" if not "!_ln!"=="" set "%%A=%%B"
 )
 
-set "ADB=%ANDROID_HOME%\platform-tools\adb.exe"
+set "ADB=E:\Dev\Android\SDK\platform-tools\adb.exe"
 set "APK=%~dp0android-app\app\build\outputs\apk\debug\app-debug.apk"
 set "PACKAGE=com.alertsua.app"
 set "EMULATOR=emulator-5554"

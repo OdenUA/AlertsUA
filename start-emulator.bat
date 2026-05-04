@@ -11,11 +11,11 @@ for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
     if not "!_ln:~0,1!"=="#" if not "!_ln!"=="" set "%%A=%%B"
 )
 
-set "EMULATOR_EXE=%ANDROID_HOME%\emulator\emulator.exe"
-set "ADB=%ANDROID_HOME%\platform-tools\adb.exe"
+set "EMULATOR_EXE=E:\Dev\Android\SDK\emulator\emulator.exe"
+set "ADB=E:\Dev\Android\SDK\platform-tools\adb.exe"
 
 rem Change AVD_NAME to Medium_Phone_API_36.1 if you prefer a different device.
-set "AVD_NAME=Pixel_9"
+set "AVD_NAME=Pixel_6"
 
 echo [*] Starting emulator: %AVD_NAME%
 rem Размер userdata-раздела берется из AVD config.ini (disk.dataPartition.size)

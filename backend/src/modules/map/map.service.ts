@@ -767,4 +767,23 @@ export class MapService {
     };
   }
 
+  async archiveOldThreats(): Promise<number> {
+    if (!this.databaseService.isConfigured()) {
+      this.logger.warn('Database not configured, skipping archive operation');
+      return 0;
+    }
+
+    const result = await this.databaseService.query<{ archive_old_threat_overlays: number }>(
+      `SELECT archive_old_threat_overlays() as archived_count;`
+    );
+
+    const archivedCount = result.rows[0]?.archived_count || 0;
+
+    if (archivedCount > 0) {
+      this.logger.log(`Archived ${archivedCount} old threat overlays`);
+    }
+
+    return archivedCount;
+  }
+
 }

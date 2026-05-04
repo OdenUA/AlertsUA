@@ -355,7 +355,7 @@ function resolveThreatMarkerEntries(overlays) {
         return entries;
     }
 
-    var maxIterations = 12;
+    var maxIterations = 3; // Optimized: reduced from 12 to 3 for better performance
     var maxOffsetPx = minSeparationPx * 2.8;
 
     for (var iteration = 0; iteration < maxIterations; iteration += 1) {
@@ -437,12 +437,14 @@ function buildThreatOverlayLayer(overlays) {
         }).addTo(layerGroup);
     });
 
-    resolveThreatMarkerEntries(overlays).forEach(function (entry) {
+    var markerEntries = resolveThreatMarkerEntries(overlays);
+
+    // First pass: render markers and areas immediately (fast)
+    markerEntries.forEach(function (entry) {
         try {
             var overlay = entry.overlay;
             var markerLatLng = map.unproject(entry.point, map.getZoom());
             var hasPopup = Boolean(overlay.message_text && overlay.message_date);
-            addThreatDirectionIndicator(layerGroup, entry, markerLatLng);
             var icon = makeThreatIcon(overlay.threat_kind || overlay.icon_type || 'unknown', resolveThreatBearing(overlay), overlay);
             var mk = L.marker([markerLatLng.lat, markerLatLng.lng], {
                 icon: icon,
@@ -466,6 +468,18 @@ function buildThreatOverlayLayer(overlays) {
             console.error('Error drawing overlay marker:', err, entry.overlay);
         }
     });
+
+    // Second pass: lazy render direction indicators after initial paint
+    setTimeout(function() {
+        markerEntries.forEach(function (entry) {
+            try {
+                var markerLatLng = map.unproject(entry.point, map.getZoom());
+                addThreatDirectionIndicator(layerGroup, entry, markerLatLng);
+            } catch (err) {
+                console.error('Error drawing direction indicator:', err, entry.overlay);
+            }
+        });
+    }, 50); // Small delay to let main thread finish marker rendering
 
     return layerGroup;
 }

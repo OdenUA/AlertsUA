@@ -511,12 +511,18 @@ async function refreshOverlays() {
 
     setStatus('Оновлюємо мапу…');
 
-    // Load single precomputed alert layer (replaces 3 separate layer requests)
-    await loadAlertsLayer();
-    await loadOblastBorders();
-    // Load interactive layer for all regions to enable clicks on non-alert areas
-    await loadInteractiveRegionsLayer();
-    await loadThreatOverlays();
+    // Load layers in parallel for better performance
+    // Critical layers: alerts layer + oblast borders
+    await Promise.all([
+        loadAlertsLayer(),
+        loadOblastBorders(),
+    ]);
+
+    // Load interactive and threat layers in parallel
+    await Promise.all([
+        loadInteractiveRegionsLayer(),
+        loadThreatOverlays(),
+    ]);
 
     fitToVisibleData();
     refreshLayout();

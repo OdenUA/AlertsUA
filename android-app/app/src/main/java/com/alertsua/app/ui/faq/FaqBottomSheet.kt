@@ -2,13 +2,13 @@ package com.alertsua.app.ui.faq
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowRight
+import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -92,21 +92,14 @@ fun FaqBottomSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "Питання - Відповіді",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowRight,
-                            contentDescription = "Закрити",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                 }
 
                 // Список вопросов и ответов
@@ -157,13 +150,6 @@ private fun FAQItemView(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                if (item.question == "Написати нам") {
-                    onEmailClick()
-                } else {
-                    onToggle()
-                }
-            }
             .background(
                 color = if (isExpanded && item.question != "Написати нам")
                     MaterialTheme.colorScheme.primaryContainer
@@ -175,13 +161,29 @@ private fun FAQItemView(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    if (item.question == "Написати нам") {
+                        onEmailClick()
+                    } else {
+                        onToggle()
+                    }
+                }
+                .background(
+                    if (item.question == "Написати нам")
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    else
+                        Color.Transparent
+                )
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = item.question,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = if (item.question == "Написати нам")
                     MaterialTheme.colorScheme.primary
                 else if (isExpanded)
@@ -197,16 +199,8 @@ private fun FAQItemView(
                     contentDescription = "Написати лист",
                     tint = MaterialTheme.colorScheme.primary
                 )
-            } else {
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.Default.ArrowRight,
-                    contentDescription = if (isExpanded) "Згорнути" else "Розгорнути",
-                    tint = if (isExpanded)
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    else
-                        MaterialTheme.colorScheme.onSurface
-                )
             }
+            // Прибираємо кнопку розгортання
         }
 
         if (isExpanded && item.question != "Написати нам") {
@@ -237,9 +231,9 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Активує режим спостереження за рухом об'єктів.",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
+                                        lineHeight = 26.sp
                                     )
                                 }
                             }
@@ -257,9 +251,9 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Примусове оновлення даних",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
+                                        lineHeight = 26.sp
                                     )
                                 }
                             }
@@ -277,9 +271,9 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Перехід на спрощену мапу",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
+                                        lineHeight = 26.sp
                                     )
                                 }
                             }
@@ -297,9 +291,9 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Зміна теми додатку: Світла/Темна",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
+                                        lineHeight = 26.sp
                                     )
                                 }
                             }
@@ -317,18 +311,18 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Повноекранний режим",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        lineHeight = 20.sp
+                                        lineHeight = 26.sp
                                     )
                                 }
                             }
                             else -> {
                                 Text(
                                     text = line,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    lineHeight = 20.sp,
+                                    lineHeight = 22.sp,
                                     modifier = Modifier.padding(start = 36.dp)
                                 )
                             }
@@ -343,12 +337,26 @@ private fun FAQItemView(
 
 // Helper function to open email intent
 private fun sendEmail(context: android.content.Context) {
-    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-        data = android.net.Uri.parse("mailto:alertuaapp@gmail.com")
-        putExtra(android.content.Intent.EXTRA_SUBJECT, "Питання щодо додатку Тривога UA")
-    }
-    if (intent.resolveActivity(context.packageManager) != null) {
-        context.startActivity(intent)
+    try {
+        val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+            data = android.net.Uri.parse("mailto:alertuaapp@gmail.com")
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Питання щодо додатку Тривога UA")
+        }
+        if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+        } else {
+            android.widget.Toast.makeText(
+                context,
+                "Не знайдено програму для відправки пошти",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(
+            context,
+            "Помилка відкриття поштової програми",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
     }
 }
 
