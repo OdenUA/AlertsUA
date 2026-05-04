@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Alerts UA</string>
+    <string name="app_name">Тривога UA</string>
     <string name="theme_toggle_dark">Темна тема</string>
     <string name="theme_toggle_light">Світла тема</string>
     <string name="fullscreen_enter">Увімкнути повноекранний режим</string>

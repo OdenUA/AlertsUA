@@ -2,7 +2,7 @@
   "name": "alerts-ua-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "NestJS backend for Alerts UA",
+  "description": "NestJS backend for Тривога UA",
   "license": "UNLICENSED",
   "scripts": {
     "start": "node dist/main.js",
