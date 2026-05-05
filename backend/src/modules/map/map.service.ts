@@ -774,10 +774,10 @@ export class MapService {
     }
 
     const result = await this.databaseService.query<{ archive_old_threat_overlays: number }>(
-      `SELECT archive_old_threat_overlays() as archived_count;`
+      `SELECT archive_old_threat_overlays() as archive_old_threat_overlays;`
     );
 
-    const archivedCount = result.rows[0]?.archived_count || 0;
+    const archivedCount = result.rows[0]?.archive_old_threat_overlays || 0;
 
     if (archivedCount > 0) {
       this.logger.log(`Archived ${archivedCount} old threat overlays`);

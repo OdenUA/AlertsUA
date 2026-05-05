@@ -7,7 +7,7 @@ APP_USER="${APP_USER:-alerts-ua}"
 APP_GROUP="${APP_GROUP:-alerts-ua}"
 CURRENT_LINK="${CURRENT_LINK:-/srv/alerts-ua/app/current}"
 RELEASES_DIR="${RELEASES_DIR:-/srv/alerts-ua/app/releases}"
-RUNTIME_NPM="${RUNTIME_NPM:-/srv/alerts-ua/runtime/node/bin/npm}"
+RUNTIME_NPM="${RUNTIME_NPM:-/usr/bin/npm}"
 API_SERVICE="${API_SERVICE:-alerts-ua-api.service}"
 DTEK_SERVICE="${DTEK_SERVICE:-dtek-api.service}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3100/api/v1/system/health}"
@@ -22,7 +22,7 @@ Environment overrides:
   APP_GROUP          default: alerts-ua
   CURRENT_LINK       default: /srv/alerts-ua/app/current
   RELEASES_DIR       default: /srv/alerts-ua/app/releases
-  RUNTIME_NPM        default: /srv/alerts-ua/runtime/node/bin/npm
+  RUNTIME_NPM        default: /usr/bin/npm
   API_SERVICE        default: alerts-ua-api.service
   DTEK_SERVICE       default: dtek-api.service
   HEALTH_URL         default: http://127.0.0.1:3100/api/v1/system/health
