@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -266,6 +267,31 @@ fun SimplifiedMapScreen(
                             controller.handleTap(
                                 offset.x, offset.y,
                                 canvasWidthPx, canvasHeightPx
+                            )
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            // zoom: scale factor (1.0 = no change, >1 = zoom in, <1 = zoom out)
+                            // Convert zoom scale to zoom delta for controller
+                            // zoom=2.0 means double size -> significant zoom in
+                            // zoom=0.5 means half size -> significant zoom out
+                            val zoomChange = if (zoom > 1) {
+                                // Zooming in - scale up to reasonable delta
+                                ((zoom - 1.0) * 2.0).toFloat().coerceAtMost(1.0f)
+                            } else {
+                                // Zooming out - scale down to reasonable delta
+                                ((zoom - 1.0) * 2.0).toFloat().coerceAtLeast(-1.0f)
+                            }
+
+                            // Use gesture centroid as pivot point
+                            // For simplicity, use center of screen as pivot
+                            controller.zoomBy(
+                                zoomChange,
+                                canvasWidthPx / 2f,
+                                canvasHeightPx / 2f,
+                                canvasWidthPx,
+                                canvasHeightPx
                             )
                         }
                     }

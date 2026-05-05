@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ad-services-config>
+    <!-- AdMob configuration for Android 13+ -->
+    <attribution />
+    <ad-id />
+    <topics />
+</ad-services-config>
