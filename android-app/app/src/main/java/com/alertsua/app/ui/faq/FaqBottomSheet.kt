@@ -338,23 +338,16 @@ private fun FAQItemView(
 // Helper function to open email intent
 private fun sendEmail(context: android.content.Context) {
     try {
-        val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-            data = android.net.Uri.parse("mailto:alertuaapp@gmail.com")
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "message/rfc822"
+            putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf("alertuaapp@gmail.com"))
             putExtra(android.content.Intent.EXTRA_SUBJECT, "Питання щодо додатку Тривога UA")
         }
-        if (intent.resolveActivity(context.packageManager) != null) {
-            context.startActivity(intent)
-        } else {
-            android.widget.Toast.makeText(
-                context,
-                "Не знайдено програму для відправки пошти",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
-        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Відправити email"))
     } catch (e: Exception) {
         android.widget.Toast.makeText(
             context,
-            "Помилка відкриття поштової програми",
+            "Не вдалося відкрити поштову програму",
             android.widget.Toast.LENGTH_SHORT
         ).show()
     }

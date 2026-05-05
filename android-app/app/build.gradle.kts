@@ -32,7 +32,7 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
+        versionCode = 16
         versionName = "0.3.1"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
