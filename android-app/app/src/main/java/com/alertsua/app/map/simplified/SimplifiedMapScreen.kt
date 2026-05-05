@@ -9,7 +9,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -254,15 +253,6 @@ fun SimplifiedMapScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            controller.panByPixels(
-                                dragAmount.x, dragAmount.y,
-                                canvasWidthPx, canvasHeightPx
-                            )
-                        }
-                    }
-                    .pointerInput(Unit) {
                         detectTapGestures { offset ->
                             controller.handleTap(
                                 offset.x, offset.y,
@@ -271,28 +261,39 @@ fun SimplifiedMapScreen(
                         }
                     }
                     .pointerInput(Unit) {
-                        detectTransformGestures { _, _, zoom, _ ->
-                            // zoom: scale factor (1.0 = no change, >1 = zoom in, <1 = zoom out)
-                            // Convert zoom scale to zoom delta for controller
-                            // zoom=2.0 means double size -> significant zoom in
-                            // zoom=0.5 means half size -> significant zoom out
-                            val zoomChange = if (zoom > 1) {
-                                // Zooming in - scale up to reasonable delta
-                                ((zoom - 1.0) * 2.0).toFloat().coerceAtMost(1.0f)
-                            } else {
-                                // Zooming out - scale down to reasonable delta
-                                ((zoom - 1.0) * 2.0).toFloat().coerceAtLeast(-1.0f)
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            // Handle pan (drag with one or two fingers)
+                            if (pan != androidx.compose.ui.geometry.Offset.Zero) {
+                                controller.panByPixels(
+                                    pan.x,
+                                    pan.y,
+                                    canvasWidthPx,
+                                    canvasHeightPx
+                                )
                             }
 
-                            // Use gesture centroid as pivot point
-                            // For simplicity, use center of screen as pivot
-                            controller.zoomBy(
-                                zoomChange,
-                                canvasWidthPx / 2f,
-                                canvasHeightPx / 2f,
-                                canvasWidthPx,
-                                canvasHeightPx
-                            )
+                            // Handle pinch-to-zoom
+                            if (zoom != 1.0f) {
+                                // Convert zoom scale to zoom delta for controller
+                                // zoom=2.0 means double size -> significant zoom in
+                                // zoom=0.5 means half size -> significant zoom out
+                                val zoomChange = if (zoom > 1) {
+                                    // Zooming in - scale up to reasonable delta
+                                    ((zoom - 1.0) * 2.0).toFloat().coerceAtMost(1.0f)
+                                } else {
+                                    // Zooming out - scale down to reasonable delta
+                                    ((zoom - 1.0) * 2.0).toFloat().coerceAtLeast(-1.0f)
+                                }
+
+                                // Use gesture centroid as pivot point for natural zoom
+                                controller.zoomBy(
+                                    zoomChange,
+                                    centroid.x,
+                                    centroid.y,
+                                    canvasWidthPx,
+                                    canvasHeightPx
+                                )
+                            }
                         }
                     }
             ) {
