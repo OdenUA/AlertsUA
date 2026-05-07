@@ -19,6 +19,13 @@ fun AdMobBanner(
     refreshTrigger: Int = 0,
     isLandscape: Boolean = false
 ) {
+    val context = LocalContext.current
+
+    // Проверяем, отключена ли реклама
+    if (AdManager.areAdsDisabled(context)) {
+        Log.d("AdMob", "Ads are disabled via Easter egg")
+        return
+    }
     val adUnitId = remember(isLandscape) {
         // В обеих ориентациях используем стандартный баннер
         "ca-app-pub-7267693224424927/6615114075"

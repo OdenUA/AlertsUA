@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.alertsua.app.R
+import com.alertsua.app.admob.AdManager
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +73,20 @@ fun FaqBottomSheet(
 
     var expandedIndex by remember { mutableIntStateOf(-1) }
 
+    // Пасхалка: подсчет нажатий на букву "П"
+    var tapCount by remember { mutableIntStateOf(0) }
+    var lastTapTime by remember { mutableLongStateOf(0L) }
+
+    // Сброс счетчика если прошло 2 секунды с последнего нажатия
+    LaunchedEffect(lastTapTime) {
+        if (lastTapTime > 0) {
+            delay(2000)
+            if (System.currentTimeMillis() - lastTapTime >= 2000) {
+                tapCount = 0
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -87,7 +103,7 @@ fun FaqBottomSheet(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Заголовок
+                // Заголовок с пасхалкой на букве "П"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -95,8 +111,38 @@ fun FaqBottomSheet(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Клиабельная буква "П"
                     Text(
-                        text = "Питання - Відповіді",
+                        text = "П",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastTapTime < 2000) {
+                                tapCount++
+                            } else {
+                                tapCount = 1
+                            }
+                            lastTapTime = currentTime
+
+                            if (tapCount == 8) {
+                                val newState = AdManager.toggleAds(context)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (newState) "🎉 Реклама отключена!" else "📺 Реклама включена",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                tapCount = 0
+                            }
+                        }
+                    )
+
+                    // Остальная часть заголовка
+                    Text(
+                        text = "итання - Відповіді",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
