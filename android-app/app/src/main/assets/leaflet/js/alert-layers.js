@@ -56,6 +56,10 @@ function bringAlertLayersToFront() {
     if (oblastBordersLayer) {
         oblastBordersLayer.bringToBack();
     }
+    // Oblast features layer (with Kyiv) should be above borders
+    if (overlayLayers['oblast']) {
+        overlayLayers['oblast'].bringToFront();
+    }
     // Interactive regions layer (transparent, for clicks on non-alert areas)
     if (interactiveRegionsLayer) {
         interactiveRegionsLayer.bringToFront();
@@ -178,6 +182,7 @@ function featureStyle(feature, layerId) {
                 stroke: false,
                 fillColor: effectivePalette.fill,
                 fillOpacity: effectivePalette.fillOpacity,
+                interactive: true,
             };
         }
 
@@ -185,6 +190,7 @@ function featureStyle(feature, layerId) {
             stroke: false,
             fillColor: '#000000',
             fillOpacity: 0.001,
+            interactive: true,  // Ensure Kyiv city is always clickable
         };
     }
 
@@ -211,6 +217,7 @@ function featureStyle(feature, layerId) {
         weight:      weight,
         fillColor:   palette.fill,
         fillOpacity: isActive ? palette.fillOpacity : 0,  // P = no fill; sub-regions show fill instead
+        interactive: true,  // Ensure all features are clickable
     };
 }
 
@@ -220,11 +227,34 @@ function selectPoint(latlng) {
     }
 }
 
+// Exact bounds for Kyiv city (for fallback click handling)
+// From API /map/features?layer=oblast for "м. Київ"
+var KYIV_CITY_BOUNDS = {
+    west: 30.23,
+    south: 50.21,
+    east: 30.83,
+    north: 50.59
+};
+
+function isInsideKyivCityBounds(latlng) {
+    if (!latlng) return false;
+    return latlng.lat >= KYIV_CITY_BOUNDS.south &&
+           latlng.lat <= KYIV_CITY_BOUNDS.north &&
+           latlng.lng >= KYIV_CITY_BOUNDS.west &&
+           latlng.lng <= KYIV_CITY_BOUNDS.east;
+}
+
 function bindFeatureTooltip(feature, layer) {
     layer.on('click', function (event) {
         if (event && event.latlng) {
             L.DomEvent.stopPropagation(event);
-            selectPoint(event.latlng);
+            // If click is within Kyiv city bounds, pass city center coordinates
+            // This ensures the API resolves to "м. Київ" instead of a rural hromada
+            var latlng = event.latlng;
+            if (isInsideKyivCityBounds(latlng)) {
+                latlng = L.latLng(50.45, 30.523);  // Kyiv city center
+            }
+            selectPoint(latlng);
         }
     });
 }
@@ -266,6 +296,7 @@ function fitToVisibleData() {
 }
 
 async function loadLayer(layerId) {
+    console.log('[loadLayer] Loading layer:', layerId);
     const packVersions = activeConfig && activeConfig.overlay_config
         ? activeConfig.overlay_config.geometry_pack_versions || {}
         : {};
@@ -285,8 +316,12 @@ async function loadLayer(layerId) {
 
     const data = await response.json();
     const features = data.features || [];
+    console.log('[loadLayer] Features loaded for ' + layerId + ':', features.length);
+
     if (layerId === 'oblast') {
         applyKyivCityInheritedOblastState(features);
+        const kyivFeature = features.find(isKyivCityFeature);
+        console.log('[loadLayer] Kyiv city feature found:', !!kyivFeature);
     }
 
     const geoJsonLayer = L.geoJSON(features, {
@@ -299,6 +334,7 @@ async function loadLayer(layerId) {
     }
 
     overlayLayers[layerId] = geoJsonLayer.addTo(map);
+    console.log('[loadLayer] Layer ' + layerId + ' added to map');
 }
 
 async function loadSpecialAlertLayer() {
@@ -512,10 +548,11 @@ async function refreshOverlays() {
     setStatus('Оновлюємо мапу…');
 
     // Load layers in parallel for better performance
-    // Critical layers: alerts layer + oblast borders
+    // Critical layers: alerts layer + oblast borders + oblast features (for Kyiv)
     await Promise.all([
         loadAlertsLayer(),
         loadOblastBorders(),
+        loadLayer('oblast'),  // Load oblast features to include Kyiv city
     ]);
 
     // Load interactive and threat layers in parallel

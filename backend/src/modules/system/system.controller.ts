@@ -13,7 +13,7 @@ export class SystemController {
     return {
       status: 'ok',
       service: 'alerts-ua-backend',
-      version: '0.1.0',
+      version: '0.2.0-TEST',
       timestamp: TimeUtil.getNowInKyiv(),
       database,
     };

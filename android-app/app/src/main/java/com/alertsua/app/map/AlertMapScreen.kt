@@ -449,8 +449,13 @@ fun AlertMapScreen(
         coroutineScope.launch {
             isResolvingPoint = true
             try {
+                android.util.Log.d("AlertMap", "Resolving point: lat=$latitude, lon=$longitude")
                 resolvedPoint = repository.resolvePoint(activeApiBaseUrl, latitude, longitude)
+                val region = resolvedPoint?.resolvedRegion
+                android.util.Log.d("AlertMap", "Resolved: hromada=${region?.hromadaTitleUk}, oblastUid=${region?.oblastUid}")
+                android.util.Log.d("AlertMap", "History: active=${region?.oblastHistory?.active?.size}, today=${region?.oblastHistory?.today?.size}")
             } catch (error: Exception) {
+                android.util.Log.e("AlertMap", "Error: ${error.message}", error)
                 resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
             } finally {
                 isResolvingPoint = false

@@ -206,7 +206,7 @@ export class SubscriptionsService {
         raion_status:   raionStatus,
         // Oblast level
         oblast_uid:      point.oblast_uid,
-        oblast_title_uk: ancestorTitles.oblastTitle,
+        oblast_title_uk: ancestorTitles.oblastTitle || '',
         oblast_status:   oblastStatus,
         // Active alert start time (earliest A status)
         active_from: activeFrom,
@@ -764,7 +764,7 @@ export class SubscriptionsService {
 
     const isSpecialOblast = oblastTitle === 'Луганська область' || oblastTitle === 'Автономна Республіка Крим';
 
-    this.logger.log(`[loadOblastHistory] oblastTitle=${oblastTitle}, isSpecial=${isSpecialOblast}`);
+    this.logger.log(`[loadOblastHistory] ${new Date().toISOString()} oblastTitle=${oblastTitle}, isSpecial=${isSpecialOblast}`);
 
     const [activeResult, endedResult, raionLeafCountResult] = await Promise.all([
       isSpecialOblast
@@ -966,6 +966,74 @@ export class SubscriptionsService {
     const yesterday = endedRows
       .filter((row) => formatKyivDate(new Date(row.started_at)) === yesterdayIso)
       .map((row) => toHistoryItem(row));
+
+    // Special handling for Kyiv oblast: add Kyiv city to history
+    console.log(`[loadOblastHistory] oblastUid=${oblastUid}, type=${typeof oblastUid}, active=${active.length}, today=${today.length}, yesterday=${yesterday.length}`);
+    if (oblastUid === 14) {
+
+      // For active alerts: find earliest and add Kyiv city
+      if (active.length > 0) {
+        const earliestAlert = active.reduce((earliest, current) => {
+          if (!earliest || new Date(current.started_at) < new Date(earliest.started_at)) {
+            return current;
+          }
+          return earliest;
+        }, null as typeof active[0] | null);
+
+        if (earliestAlert) {
+          console.log(`[loadOblastHistory] Adding Kyiv city to active, started_at=${earliestAlert.started_at}`);
+          active.unshift({
+            region_title_uk: 'м. Київ',
+            raion_title_uk: null,
+            started_at: earliestAlert.started_at,
+            ended_at: null,
+            alert_type: earliestAlert.alert_type,
+          });
+        }
+      }
+
+      // For today: find earliest and add Kyiv city
+      if (today.length > 0) {
+        const earliestToday = today.reduce((earliest, current) => {
+          if (!earliest || new Date(current.started_at) < new Date(earliest.started_at)) {
+            return current;
+          }
+          return earliest;
+        }, null as typeof today[0] | null);
+
+        if (earliestToday) {
+          console.log(`[loadOblastHistory] Adding Kyiv city to today, started_at=${earliestToday.started_at}`);
+          today.unshift({
+            region_title_uk: 'м. Київ',
+            raion_title_uk: null,
+            started_at: earliestToday.started_at,
+            ended_at: earliestToday.ended_at,
+            alert_type: earliestToday.alert_type,
+          });
+        }
+      }
+
+      // For yesterday: find earliest and add Kyiv city
+      if (yesterday.length > 0) {
+        const earliestYesterday = yesterday.reduce((earliest, current) => {
+          if (!earliest || new Date(current.started_at) < new Date(earliest.started_at)) {
+            return current;
+          }
+          return earliest;
+        }, null as typeof yesterday[0] | null);
+
+        if (earliestYesterday) {
+          console.log(`[loadOblastHistory] Adding Kyiv city to yesterday, started_at=${earliestYesterday.started_at}`);
+          yesterday.unshift({
+            region_title_uk: 'м. Київ',
+            raion_title_uk: null,
+            started_at: earliestYesterday.started_at,
+            ended_at: earliestYesterday.ended_at,
+            alert_type: earliestYesterday.alert_type,
+          });
+        }
+      }
+    }
 
     return { active, today, yesterday };
   }

@@ -157,8 +157,17 @@ fun SimplifiedMapScreen(
         android.util.Log.d("SimplifiedMap", "LaunchedEffect triggered: tapTrigger=$tapTrigger, oblast=${selectedOblast?.titleUk ?: "null"}")
         selectedOblast?.let { oblast ->
             android.util.Log.d("SimplifiedMap", "Opening bottom sheet for: ${oblast.titleUk}")
-            selectedLat = oblast.center.lat
-            selectedLon = oblast.center.lon
+
+            // Special handling for Kyiv oblast: use Kyiv city center coordinates
+            // to correctly resolve to "м. Київ" instead of a rural hromada
+            val (lat, lon) = if (oblast.titleUk == "Київська область") {
+                Pair(50.45, 30.523)  // Kyiv city center
+            } else {
+                Pair(oblast.center.lat, oblast.center.lon)
+            }
+
+            selectedLat = lat
+            selectedLon = lon
             actionMode = SheetActionMode.SUBSCRIBE
             activeSubscriptionId = null
             resolvedPoint = null
@@ -168,9 +177,11 @@ fun SimplifiedMapScreen(
             coroutineScope.launch {
                 isResolvingPoint = true
                 try {
-                    android.util.Log.d("SimplifiedMap", "Resolving point: ${oblast.center.lat}, ${oblast.center.lon}")
-                    resolvedPoint = repository.resolvePoint(activeApiBaseUrl, oblast.center.lat, oblast.center.lon)
-                    android.util.Log.d("SimplifiedMap", "Resolved: ${resolvedPoint?.resolvedRegion?.hromadaTitleUk}")
+                    android.util.Log.d("SimplifiedMap", "Resolving point: $lat, $lon")
+                    resolvedPoint = repository.resolvePoint(activeApiBaseUrl, lat, lon)
+                    val region = resolvedPoint?.resolvedRegion
+                    android.util.Log.d("SimplifiedMap", "Resolved: hromada=${region?.hromadaTitleUk}, oblastUid=${region?.oblastUid}")
+                    android.util.Log.d("SimplifiedMap", "History: active=${region?.oblastHistory?.active?.size}, today=${region?.oblastHistory?.today?.size}")
                 } catch (error: Exception) {
                     android.util.Log.e("SimplifiedMap", "Error resolving point: ${error.message}", error)
                     resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
@@ -445,11 +456,21 @@ private fun SimplifiedBottomSheetContent(
 
         val region = resolvedPoint.resolvedRegion
 
+        android.util.Log.d("SimplifiedMap", "Region: leafType=${region.leafType}, hromada=${region.hromadaTitleUk}, oblastUid=${region.oblastUid}")
+        android.util.Log.d("SimplifiedMap", "History: active=${region.oblastHistory.active.size}, today=${region.oblastHistory.today.size}, yesterday=${region.oblastHistory.yesterday.size}")
+
+        // Show region info
+        RegionHierarchySection(region = region)
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        android.util.Log.d("SimplifiedMap", "About to check oblastUid: ${region.oblastUid}, null? ${region.oblastUid == null}")
         if (region.oblastUid != null) {
+            android.util.Log.d("SimplifiedMap", "Calling OblastHistorySection...")
             OblastHistorySection(history = region.oblastHistory)
         } else {
             Text(
-                text = "История тревог недоступна",
+                text = "Історія тривог недоступна",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -550,7 +571,11 @@ private fun formatAlertTiming(isoTimestamp: String): String {
 
 @Composable
 private fun OblastHistorySection(history: OblastAlertHistory) {
-    if (history.active.isEmpty() && history.today.isEmpty() && history.yesterday.isEmpty()) return
+    android.util.Log.d("SimplifiedMap", "OblastHistorySection: active=${history.active.size}, today=${history.today.size}, yesterday=${history.yesterday.size}")
+    if (history.active.isEmpty() && history.today.isEmpty() && history.yesterday.isEmpty()) {
+        android.util.Log.d("SimplifiedMap", "OblastHistorySection: all empty, returning early")
+        return
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(

@@ -162,7 +162,10 @@ if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
     $ReleaseName = 'deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 }
 
-$archiveName = "backend-release-$ReleaseName.zip"
+# Determine archive format based on available tools
+$tarAvailable = Get-Command tar.exe -ErrorAction SilentlyContinue
+$archiveExtension = if ($tarAvailable) { '.tar.gz' } else { '.zip' }
+$archiveName = "backend-release-$ReleaseName$archiveExtension"
 $localArchivePath = Join-Path ([System.IO.Path]::GetTempPath()) $archiveName
 $remoteArchivePath = "/tmp/$archiveName"
 $remoteScriptPath = '/tmp/deploy_backend_release.sh'
@@ -298,7 +301,6 @@ try {
     # Try to use tar if available (preferred for .tgz), fallback to Compress-Archive (.zip)
     Write-Host "  - Creating archive with $($bundleEntries.Count) entries" -ForegroundColor Gray
 
-    $tarAvailable = Get-Command tar.exe -ErrorAction SilentlyContinue
     if ($tarAvailable) {
         # Create tar.gz archive using relative paths
         Push-Location $backendDir
@@ -350,34 +352,25 @@ try {
     # Step 6: Execute deployment
     Write-Step "Step 6/6: Executing remote deployment..."
 
-    $forceInstallFlag = if ($ForceInstallDependencies) { 'FORCE_NPM_INSTALL=1' } else { 'FORCE_NPM_INSTALL=0' }
-    $remoteCommand = @(
-        'chmod',
-        '755',
-        $remoteScriptPath,
-        '&&',
-        $forceInstallFlag,
-        $remoteScriptPath,
-        '--archive',
-        $remoteArchivePath,
-        '--release-name',
-        $ReleaseName
-    ) -join ' '
+    $forceInstallFlag = if ($ForceInstallDependencies) { '1' } else { '0' }
+    $remoteCommand = "FORCE_NPM_INSTALL=$forceInstallFlag bash $remoteScriptPath --archive $remoteArchivePath --release-name $ReleaseName"
 
     # Execute deployment (ignore npm warnings in stderr)
     $deploymentOutput = ""
 
     try {
-        # Redirect stderr to suppress PowerShell exceptions
-        $deploymentOutput = & $sshExe @sshExecArgs $sshUser $remoteCommand 2>&1 |
-                           Where-Object { $_ -notmatch '^npm warn' } |
-                           Out-String
+        # Redirect stderr to suppress PowerShell exceptions - NO FILTER for debugging
+        $deploymentOutput = & $sshExe @sshExecArgs $sshUser $remoteCommand 2>&1 | Out-String
         $deploymentExitCode = $LASTEXITCODE
     }
     catch {
         $deploymentOutput = $_.Exception.Message
         $deploymentExitCode = 1
     }
+
+    # Always show deployment output for debugging
+    Write-Host "Deployment output:" -ForegroundColor Gray
+    Write-Host $deploymentOutput
 
     # Show output if detailed
     if ($DetailedOutput) {
