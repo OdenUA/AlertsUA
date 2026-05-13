@@ -64,7 +64,22 @@ async function initializeMap() {
 
 map.on('click', function (event) {
     if (!isInsideUkraine(event.latlng)) { return; }
-    selectPoint(event.latlng);
+
+    // Check if click is within Kyiv city bounds (which is not in oblastBordersLayer)
+    // Exact bounds from API: west=30.23, south=50.21, east=30.83, north=50.59
+    var isInsideKyivCity = event.latlng &&
+        event.latlng.lat >= 50.21 && event.latlng.lat <= 50.59 &&
+        event.latlng.lng >= 30.23 && event.latlng.lng <= 30.83;
+
+    console.log('[Click] lat=' + event.latlng.lat + ', lng=' + event.latlng.lng + ', inKyivCity=' + isInsideKyivCity);
+
+    if (isInsideKyivCity) {
+        // Use Kyiv oblast center point for selection
+        console.log('[Click] Using Kyiv oblast center');
+        selectPoint({ lat: 50.45, lng: 30.523 });
+    } else {
+        selectPoint(event.latlng);
+    }
 });
 
 map.on('zoomend', function () {

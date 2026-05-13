@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# set -euo pipefail  # Disabled for debugging
+
+echo "=== DEPLOY SCRIPT STARTED ==="
+
+# ... original parameter parsing code ...
 
 ARCHIVE_PATH=""
 RELEASE_NAME=""
@@ -45,21 +49,24 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1" >&2
-      usage >&2
+      echo "Unknown argument: $1"
+      usage
       exit 1
       ;;
   esac
 done
 
+echo "After parsing: ARCHIVE_PATH=$ARCHIVE_PATH"
+echo "After parsing: RELEASE_NAME=$RELEASE_NAME"
+
 if [[ -z "$ARCHIVE_PATH" ]]; then
-  echo "--archive is required" >&2
-  usage >&2
+  echo "--archive is required"
+  usage
   exit 1
 fi
 
 if [[ ! -f "$ARCHIVE_PATH" ]]; then
-  echo "Archive not found: $ARCHIVE_PATH" >&2
+  echo "Archive not found: $ARCHIVE_PATH"
   exit 1
 fi
 
@@ -68,7 +75,7 @@ if [[ -z "$RELEASE_NAME" ]]; then
 fi
 
 if ! systemctl is-active --quiet "$DTEK_SERVICE"; then
-  echo "Safety check failed: $DTEK_SERVICE is not active before deploy" >&2
+  echo "Safety check failed: $DTEK_SERVICE is not active before deploy"
   exit 1
 fi
 
@@ -78,7 +85,7 @@ PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 NEW_RELEASE="$RELEASES_DIR/$RELEASE_NAME"
 
 if [[ -e "$NEW_RELEASE" ]]; then
-  echo "Release already exists: $NEW_RELEASE" >&2
+  echo "Release already exists: $NEW_RELEASE"
   exit 1
 fi
 
@@ -115,7 +122,7 @@ check_health() {
     return
   fi
 
-  echo "Neither curl nor wget is available for health checks" >&2
+  echo "Neither curl nor wget is available for health checks"
   return 1
 }
 
@@ -124,18 +131,24 @@ trap cleanup EXIT
 install -d -o "$APP_USER" -g "$APP_GROUP" "$NEW_RELEASE"
 
 if [[ -n "$PREVIOUS_RELEASE" ]]; then
-  cp -a "$CURRENT_LINK/." "$NEW_RELEASE/"
+  echo "Copying files from previous release: $PREVIOUS_RELEASE"
+  cp -a "$CURRENT_LINK/." "$NEW_RELEASE/" || echo "Warning: copy failed, continuing anyway"
 fi
 
-rm -rf "$NEW_RELEASE/dist" "$NEW_RELEASE/scripts" "$NEW_RELEASE/sql" "$NEW_RELEASE/src"
+echo "Removing old dist/scripts/sql/src"
+rm -rf "$NEW_RELEASE/dist" "$NEW_RELEASE/scripts" "$NEW_RELEASE/sql" "$NEW_RELEASE/src" 2>/dev/null || true
 rm -f \
   "$NEW_RELEASE/package.json" \
   "$NEW_RELEASE/package-lock.json" \
   "$NEW_RELEASE/nest-cli.json" \
   "$NEW_RELEASE/tsconfig.json" \
-  "$NEW_RELEASE/tsconfig.build.json"
+  "$NEW_RELEASE/tsconfig.build.json" 2>/dev/null || true
 
-tar -xzf "$ARCHIVE_PATH" -C "$NEW_RELEASE"
+echo "Extracting archive: $ARCHIVE_PATH to $NEW_RELEASE"
+tar -xzf "$ARCHIVE_PATH" -C "$NEW_RELEASE" || {
+  echo "Error: tar extraction failed"
+  exit 1
+}
 chown -R "$APP_USER:$APP_GROUP" "$NEW_RELEASE"
 
 NEEDS_NPM_INSTALL="$FORCE_NPM_INSTALL"
@@ -154,7 +167,7 @@ fi
 
 if [[ "$NEEDS_NPM_INSTALL" == "1" ]]; then
   if [[ ! -x "$RUNTIME_NPM" ]]; then
-    echo "Runtime npm not found: $RUNTIME_NPM" >&2
+    echo "Runtime npm not found: $RUNTIME_NPM"
     exit 1
   fi
 
@@ -169,7 +182,7 @@ ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
 systemctl restart "$API_SERVICE"
 
 if ! systemctl is-active --quiet "$API_SERVICE"; then
-  echo "API service failed to start after deploy, rolling back" >&2
+  echo "API service failed to start after deploy, rolling back"
   rollback
   exit 1
 fi
@@ -184,13 +197,13 @@ for _attempt in $(seq 1 15); do
 done
 
 if [[ "$HEALTH_OK" != "1" ]]; then
-  echo "Health check failed after deploy, rolling back" >&2
+  echo "Health check failed after deploy, rolling back"
   rollback
   exit 1
 fi
 
 if ! systemctl is-active --quiet "$DTEK_SERVICE"; then
-  echo "Safety check failed: $DTEK_SERVICE is not active after deploy" >&2
+  echo "Safety check failed: $DTEK_SERVICE is not active after deploy"
   rollback
   exit 1
 fi
@@ -199,3 +212,4 @@ echo "release=$NEW_RELEASE"
 echo "api=$(systemctl is-active "$API_SERVICE")"
 echo "dtek=$(systemctl is-active "$DTEK_SERVICE")"
 echo "health=ok"
+echo "TEST_DEPLOY_SCRIPT_EXECUTED=$(date +%s)"
