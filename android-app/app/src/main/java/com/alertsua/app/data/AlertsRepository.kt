@@ -292,6 +292,47 @@ class AlertsRepository(context: Context) {
     private var cachedAndroidId: String? = null
 
     /**
+     * Updates the FCM token on the server. Should be called when the app starts
+     * or when Firebase provides a new token to ensure push notifications work.
+     */
+    suspend fun updateFcmToken(rawApiBaseUrl: String): Unit = withContext(Dispatchers.IO) {
+        val fcmToken = loadFcmToken() ?: return@withContext
+        val installToken = loadInstallationToken() ?: return@withContext
+
+        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
+        val connection = (URL("$apiBaseUrl/installations/me/push-token").openConnection() as HttpURLConnection)
+            .apply {
+                requestMethod = "PUT"
+                doInput = true
+                doOutput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Authorization", "Bearer $installToken")
+            }
+
+        try {
+            val body = JSONObject()
+                .put("fcm_token", fcmToken)
+                .toString()
+
+            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
+                writer.write(body)
+            }
+
+            val code = connection.responseCode
+            if (code in 200..299) {
+                android.util.Log.i("AlertsRepository", "FCM token updated successfully")
+            } else {
+                android.util.Log.w("AlertsRepository", "FCM token update failed: $code ${readResponse(connection)}")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
      * Registers this device installation with the backend and stores the returned
      * installation_token. Safe to call multiple times – skips if already registered.
      */

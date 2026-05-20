@@ -69,10 +69,13 @@ class MainActivity : ComponentActivity() {
                 Log.i("AlertsUaFirebase", "FCM token: $token")
                 val repo = AlertsRepository(applicationContext)
                 repo.saveFcmToken(token)
-                // Register installation with the backend (no-op if already done)
+                // Register installation with the backend and update FCM token
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        repo.ensureInstallationRegistered(repo.loadApiBaseUrl())
+                        val apiBaseUrl = repo.loadApiBaseUrl()
+                        repo.ensureInstallationRegistered(apiBaseUrl)
+                        // Always update FCM token to ensure push notifications work
+                        repo.updateFcmToken(apiBaseUrl)
                     } catch (e: Exception) {
                         Log.w("AlertsUaFirebase", "Installation registration failed", e)
                     }
