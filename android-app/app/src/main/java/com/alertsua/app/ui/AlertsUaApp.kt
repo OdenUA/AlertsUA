@@ -1,7 +1,9 @@
 package com.alertsua.app.ui
 
 import android.app.Activity
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.outlined.Help
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,13 +65,17 @@ import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.admob.AdMobBanner as AdMobComposableBanner
 import com.alertsua.app.map.AlertMapScreen
 import com.alertsua.app.map.simplified.SimplifiedMapScreen
+import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.faq.FaqBottomSheet
+import com.alertsua.app.ui.rateprompt.RatePromptCard
+import com.alertsua.app.ui.settings.SettingsScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertsUaApp(
     locationPermissionGranted: Boolean = false,
-    requestLocationPermission: (() -> Unit)? = null
+    requestLocationPermission: (() -> Unit)? = null,
+    forceShowRatePrompt: Boolean = false
 ) {
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
@@ -108,7 +115,18 @@ fun AlertsUaApp(
     var useSimplifiedMap by rememberSaveable { mutableStateOf(repository.loadSimplifiedMapEnabled()) }
     var orientationChangeTrigger by remember { mutableIntStateOf(0) }
     var showFaqDialog by remember { mutableStateOf(false) }
+    var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Rate prompt
+    val ratePromptManager = remember(context) { RatePromptManager(context) }
+    var showRatePrompt by remember { mutableStateOf(false) }
+
+    // Обновляем showRatePrompt при изменении forceShowRatePrompt
+    LaunchedEffect(forceShowRatePrompt) {
+        showRatePrompt = ratePromptManager.shouldShowPrompt() || forceShowRatePrompt
+        Log.d("RatePromptUI", "showRatePrompt=$showRatePrompt (forceShow=$forceShowRatePrompt)")
+    }
 
     // Обновляем триггер при изменении ориентации
     LaunchedEffect(isLandscape) {
@@ -150,9 +168,34 @@ fun AlertsUaApp(
         }
     }
 
+    fun openPlayStore() {
+        val intent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("market://details?id=com.alertsua.app")
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (intent.resolveActivity(context.packageManager) == null) {
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://play.google.com/store/apps/details?id=com.alertsua.app")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(this)
+            }
+        } else {
+            context.startActivity(intent)
+        }
+    }
+
     MaterialTheme(
         colorScheme = if (darkMode) darkColorScheme() else lightColorScheme(),
     ) {
+        if (showSettingsScreen) {
+            SettingsScreen(
+                onBack = { showSettingsScreen = false }
+            )
+        } else {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
@@ -222,6 +265,13 @@ fun AlertsUaApp(
                                     imageVector = Icons.Outlined.Help,
                                     contentDescription = "Довідка / FAQ",
                                     tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
+                            IconButton(onClick = { showSettingsScreen = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Settings,
+                                    contentDescription = "Налаштування",
                                 )
                             }
 
@@ -368,6 +418,13 @@ fun AlertsUaApp(
                             )
                         }
 
+                        IconButton(onClick = { showSettingsScreen = true }) {
+                            Icon(
+                                imageVector = Icons.Outlined.Settings,
+                                contentDescription = "Налаштування",
+                            )
+                        }
+
                         IconButton(onClick = { isFullscreen = !isFullscreen }) {
                             Icon(
                                 imageVector = if (isFullscreen) {
@@ -401,12 +458,36 @@ fun AlertsUaApp(
                         )
                     }
                 }
+
+                // Rate Prompt Card - показываем внизу над bottom bar
+                if (showRatePrompt && !isFullscreen) {
+                    RatePromptCard(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 80.dp)
+                            .navigationBarsPadding(),
+                        onRate = {
+                            ratePromptManager.onRated()
+                            openPlayStore()
+                            showRatePrompt = false
+                        },
+                        onLater = {
+                            ratePromptManager.onLaterClicked()
+                            showRatePrompt = false
+                        },
+                        onNever = {
+                            ratePromptManager.onNeverClicked()
+                            showRatePrompt = false
+                        }
+                    )
+                }
             }
+        }
 
             // FAQ Dialog
             if (showFaqDialog) {
                 FaqBottomSheet(onDismiss = { showFaqDialog = false })
             }
-        }
     }
+}
 }

@@ -5,11 +5,19 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.alertsua.app.notifications.NotificationSettingsManager
 import com.google.android.gms.ads.MobileAds
 
 class AlertApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+
+        // Initialize notification channel and clean up old channels
+        try {
+            NotificationSettingsManager(this).ensureNotificationChannel()
+        } catch (e: Exception) {
+            Log.e("AlertApplication", "Failed to initialize notification channel", e)
+        }
 
         // Initialize AdMob asynchronously to avoid blocking the main thread
         CoroutineScope(Dispatchers.IO).launch {

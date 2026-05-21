@@ -30,6 +30,7 @@
     <string name="subscribe_no_token">Увімкніть сповіщення у налаштуваннях телефону</string>
     <string name="subscribe_loading">Підписуємо…</string>
     <string name="push_channel_name">Сповіщення про тривоги</string>
+    <string name="push_channel_id">alerts_ua_notifications</string>
     <string name="push_title_start">Повітряна тривога</string>
     <string name="push_body_start">У вибраній точці розпочалася тривога.</string>
     <string name="unsubscribe_title">Скасувати підписку?</string>
@@ -50,4 +51,29 @@
     <string name="location_resolving">Визначаємо місцезнаходження…</string>
     <string name="location_error">Не вдалося визначити місцезнаходження</string>
     <string name="location_loading_failed">Не вдалося отримати ваше місцезнаходження. Спробуйте пізніше або підпишіться через карту.</string>
+    <!-- Settings -->
+    <string name="settings_title">Налаштування</string>
+    <string name="settings_back">Повернутися</string>
+    <!-- Notification Sound -->
+    <string name="notification_sound_settings">Звук сповіщень</string>
+    <string name="notification_sound_emerging">Повітряна тривога</string>
+    <string name="notification_sound_system">Системний</string>
+    <string name="notification_sound_silent">Без звуку</string>
+    <string name="notification_sound_custom">Власний файл</string>
+    <string name="notification_sound_preview">Послухати</string>
+    <string name="notification_sound_silent_toast">Звук вимкнено</string>
+    <string name="notification_sound_saved">Звук збережено</string>
+    <string name="notification_sound_error">Помилка відтворення звуку</string>
+    <string name="notification_sound_select_file">Оберіть аудіофайл</string>
+    <string name="custom_sound_display">Власний: %s</string>
+    <!-- Vibration -->
+    <string name="vibration_settings">Вібрація</string>
+    <string name="vibration_enabled">Вібрація увімкнена</string>
+    <string name="vibration_disabled">Вібрація вимкнена</string>
+    <!-- Rate Prompt -->
+    <string name="rate_prompt_title">Підтримайте проект</string>
+    <string name="rate_prompt_message">Дякуємо, що користуєтесь Тривога UA! Якщо вам подобається наш додаток, оцініть його — це допоможе нам стати кращими.</string>
+    <string name="rate_prompt_rate">Оцінити</string>
+    <string name="rate_prompt_later">Пізніше</string>
+    <string name="rate_prompt_never">Ні, дякую</string>
 </resources>

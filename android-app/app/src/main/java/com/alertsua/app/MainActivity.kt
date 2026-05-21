@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.alertsua.app.data.AlertsRepository
+import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.AlertsUaApp
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,11 @@ class MainActivity : ComponentActivity() {
     var locationPermissionGranted by mutableStateOf(false)
         private set
 
+    // Rate prompt manager
+    private lateinit var ratePromptManager: RatePromptManager
+    var forceShowRatePrompt by mutableStateOf(false)
+        private set
+
     // Callback to request location permission from Composable
     var requestLocationPermissionCallback: (() -> Unit)? = null
         private set
@@ -41,6 +47,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize rate prompt manager
+        ratePromptManager = RatePromptManager(applicationContext)
+        ratePromptManager.recordAppOpen()
+        forceShowRatePrompt = intent.getStringExtra(RatePromptManager.EXTRA_FORCE_SHOW) == "true"
 
         // Check if we already have location permission
         locationPermissionGranted = ContextCompat.checkSelfPermission(
@@ -57,7 +68,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             AlertsUaApp(
                 locationPermissionGranted = locationPermissionGranted,
-                requestLocationPermission = requestLocationPermissionCallback
+                requestLocationPermission = requestLocationPermissionCallback,
+                forceShowRatePrompt = forceShowRatePrompt
             )
         }
 
@@ -101,5 +113,10 @@ class MainActivity : ComponentActivity() {
         }
 
         requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        forceShowRatePrompt = intent.getStringExtra(RatePromptManager.EXTRA_FORCE_SHOW) == "true"
     }
 }

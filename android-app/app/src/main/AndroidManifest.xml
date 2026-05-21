@@ -54,6 +54,10 @@
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification_small" />
 
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/push_channel_id" />
+
         <!-- Fix conflict between Firebase Analytics and AdMob -->
         <property
             android:name="android.adservices.AD_SERVICES_CONFIG"
