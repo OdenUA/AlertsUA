@@ -23,10 +23,12 @@ class NotificationSettingsManager(context: Context) {
         private const val KEY_CUSTOM_NOTIFICATION_SOUND_NAME = "custom_notification_sound_name"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_CHANNEL_CLEANUP_VERSION = "notification_channel_cleanup_version"
-        private const val CHANNEL_CLEANUP_VERSION = 2  // Увеличить при необходимости очистки
-        private const val CHANNEL_ID = "alerts_ua_notifications"
+        private const val CHANNEL_CLEANUP_VERSION = 3
+        private const val CHANNEL_BASE_ID = "alerts_ua_channel"
         private const val LEGACY_CHANNEL_ID = "app_notification_channel"
-        private const val CHANNEL_PREFIX = "app_notification_channel_"
+        private const val LEGACY_CHANNEL_PREFIX = "app_notification_channel_"
+        private const val VIB_ENABLED_SUFFIX = "_v1"
+        private const val VIB_DISABLED_SUFFIX = "_v0"
 
         const val SOUND_EMERGING_1 = "emerging_1"
         const val SOUND_SYSTEM = "system"
@@ -66,7 +68,8 @@ class NotificationSettingsManager(context: Context) {
         preferences.edit()
             .putString(KEY_NOTIFICATION_SOUND, soundKey)
             .apply()
-        refreshNotificationChannel()
+        // Не обновляем канал здесь - канал будет создан с правильным ID при следующем уведомлении
+        cleanUpOldChannels()
     }
 
     fun setCustomSound(uri: Uri, displayName: String) {
@@ -75,7 +78,7 @@ class NotificationSettingsManager(context: Context) {
             .putString(KEY_CUSTOM_NOTIFICATION_SOUND_URI, uri.toString())
             .putString(KEY_CUSTOM_NOTIFICATION_SOUND_NAME, displayName)
             .apply()
-        refreshNotificationChannel()
+        cleanUpOldChannels()
     }
 
     fun getActiveSoundUri(): Uri? {
@@ -117,7 +120,7 @@ class NotificationSettingsManager(context: Context) {
         preferences.edit()
             .putBoolean(KEY_VIBRATION_ENABLED, enabled)
             .apply()
-        refreshNotificationChannel()
+        cleanUpOldChannels()
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,31 +128,47 @@ class NotificationSettingsManager(context: Context) {
     // ═══════════════════════════════════════════════════════════════════════════════
 
     fun getNotificationChannelId(): String {
-        return CHANNEL_ID
+        val soundKey = getSelectedSoundKey()
+        val vibrationEnabled = isVibrationEnabled()
+        val vibSuffix = if (vibrationEnabled) VIB_ENABLED_SUFFIX else VIB_DISABLED_SUFFIX
+
+        return if (soundKey == SOUND_CUSTOM) {
+            val customUri = preferences.getString(KEY_CUSTOM_NOTIFICATION_SOUND_URI, null)
+            if (customUri != null) {
+                val hash = customUri.hashCode().toUInt().toString(16)
+                "${CHANNEL_BASE_ID}_${SOUND_CUSTOM}_${hash}$vibSuffix"
+            } else {
+                "${CHANNEL_BASE_ID}_${SOUND_EMERGING_1}$vibSuffix"
+            }
+        } else {
+            "${CHANNEL_BASE_ID}_${soundKey}$vibSuffix"
+        }
     }
 
     fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 
         val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val cleanupVersion = preferences.getInt(KEY_CHANNEL_CLEANUP_VERSION, 0)
+        val channelId = getNotificationChannelId()
 
-        // Очищаем старые каналы при обновлении версии
-        if (cleanupVersion < CHANNEL_CLEANUP_VERSION) {
-            cleanUpOldChannels(manager)
-            preferences.edit().putInt(KEY_CHANNEL_CLEANUP_VERSION, CHANNEL_CLEANUP_VERSION).apply()
-        }
-
-        val existingChannel = manager.getNotificationChannel(CHANNEL_ID)
+        // Проверяем, существует ли канал
+        val existingChannel = manager.getNotificationChannel(channelId)
         if (existingChannel != null) {
             return
+        }
+
+        // Очищаем старые каналы при необходимости
+        val cleanupVersion = preferences.getInt(KEY_CHANNEL_CLEANUP_VERSION, 0)
+        if (cleanupVersion < CHANNEL_CLEANUP_VERSION) {
+            cleanUpAllOldChannels(manager)
+            preferences.edit().putInt(KEY_CHANNEL_CLEANUP_VERSION, CHANNEL_CLEANUP_VERSION).apply()
         }
 
         val soundKey = getSelectedSoundKey()
         val vibrationEnabled = isVibrationEnabled()
 
         val channel = NotificationChannel(
-            CHANNEL_ID,
+            channelId,
             appContext.getString(R.string.push_channel_name),
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
@@ -170,45 +189,6 @@ class NotificationSettingsManager(context: Context) {
         }
 
         manager.createNotificationChannel(channel)
-    }
-
-    fun refreshNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
-        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            cleanUpOldChannels(manager)
-
-            val soundKey = getSelectedSoundKey()
-            val vibrationEnabled = isVibrationEnabled()
-
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                appContext.getString(R.string.push_channel_name),
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = appContext.getString(R.string.push_channel_name)
-                enableLights(true)
-                enableVibration(vibrationEnabled)
-
-                val soundUri = getSoundUri(soundKey)
-                if (soundUri != null) {
-                    setSound(soundUri, buildAudioAttributes())
-                } else {
-                    setSound(null, null)
-                }
-
-                if (vibrationEnabled) {
-                    vibrationPattern = longArrayOf(0, 300, 200, 300)
-                }
-            }
-
-            manager.createNotificationChannel(channel)
-        } else {
-            manager.deleteNotificationChannel(CHANNEL_ID)
-            ensureNotificationChannel()
-        }
     }
 
     fun applyToBuilder(builder: NotificationCompat.Builder) {
@@ -243,14 +223,41 @@ class NotificationSettingsManager(context: Context) {
             .build()
     }
 
-    private fun cleanUpOldChannels(manager: NotificationManager) {
+    private fun cleanUpOldChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val currentChannelId = getNotificationChannelId()
 
         val channels = manager.notificationChannels
         val channelsToDelete = channels.filter { channel ->
-            channel.id != CHANNEL_ID && (
+            channel.id != currentChannelId && (
                 channel.id == LEGACY_CHANNEL_ID ||
-                channel.id.startsWith(CHANNEL_PREFIX)
+                channel.id.startsWith(LEGACY_CHANNEL_PREFIX) ||
+                (channel.id.startsWith(CHANNEL_BASE_ID) && channel.id != currentChannelId)
+            )
+        }
+
+        channelsToDelete.forEach { channel ->
+            try {
+                manager.deleteNotificationChannel(channel.id)
+            } catch (e: Exception) {
+                // Ignore errors when deleting channels
+            }
+        }
+    }
+
+    private fun cleanUpAllOldChannels(manager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        val currentChannelId = getNotificationChannelId()
+
+        val channels = manager.notificationChannels
+        val channelsToDelete = channels.filter { channel ->
+            channel.id != currentChannelId && (
+                channel.id == LEGACY_CHANNEL_ID ||
+                channel.id.startsWith(LEGACY_CHANNEL_PREFIX) ||
+                channel.id.startsWith(CHANNEL_BASE_ID)
             )
         }
 

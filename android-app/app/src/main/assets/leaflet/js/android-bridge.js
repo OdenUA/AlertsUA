@@ -62,7 +62,75 @@ async function initializeMap() {
     }
 }
 
+// Track popup state to prevent bottom sheet from opening when popup is open
+// Use window.isThreatPopupOpen so it's accessible from other modules
+window.isThreatPopupOpen = false;
+
+map.on('popupopen', function(event) {
+    var popup = event.popup;
+    var className = popup && popup.options ? popup.options.className : 'none';
+    console.log('[Popup] popupopen - className=' + className);
+
+    if (popup && popup.options && popup.options.className &&
+        popup.options.className.indexOf('threat-custom-popup') !== -1) {
+        window.isThreatPopupOpen = true;
+        console.log('[Popup] Threat popup opened, isThreatPopupOpen=' + window.isThreatPopupOpen);
+    }
+});
+
+map.on('popupclose', function(event) {
+    var popup = event.popup;
+    var className = popup && popup.options ? popup.options.className : 'none';
+    console.log('[Popup] popupclose - className=' + className);
+
+    if (popup && popup.options && popup.options.className &&
+        popup.options.className.indexOf('threat-custom-popup') !== -1) {
+        window.isThreatPopupOpen = false;
+        console.log('[Popup] Threat popup closed, isThreatPopupOpen=' + window.isThreatPopupOpen);
+    }
+});
+
+// Track if we should suppress the next click event (used when closing popup)
+window.suppressNextClick = false;
+
+// Intercept mousedown to check popup state BEFORE Leaflet processes it
+map.on('mousedown', function(event) {
+    var popup = map._popup;
+    var isPopupOpen = popup && popup._map === map;
+
+    if (isPopupOpen) {
+        console.log('[MouseDown] Popup is open, setting suppressNextClick=true');
+        window.suppressNextClick = true;
+        map.closePopup();
+
+        // Stop the mousedown from propagating to prevent click
+        L.DomEvent.stopPropagation(event);
+        L.DomEvent.preventDefault(event);
+        return false;
+    }
+});
+
 map.on('click', function (event) {
+    // If click originated from a popup element, don't open bottom sheet
+    var target = event.originalEvent && event.originalEvent.target;
+    if (target) {
+        var popupElement = target.closest('.leaflet-popup');
+        var popupContent = target.closest('.threat-popup-card');
+        if (popupElement || popupContent) {
+            console.log('[Click] Click was on popup element, ignoring');
+            return;
+        }
+    }
+
+    // If we're suppressing this click (because we closed a popup on mousedown)
+    if (window.suppressNextClick) {
+        console.log('[Click] Suppressing click because popup was just closed');
+        window.suppressNextClick = false;
+        L.DomEvent.stopPropagation(event);
+        L.DomEvent.preventDefault(event);
+        return;
+    }
+
     if (!isInsideUkraine(event.latlng)) { return; }
 
     // Check if click is within Kyiv city bounds (which is not in oblastBordersLayer)
@@ -165,6 +233,9 @@ function addCustomZoomControls() {
 
             container.appendChild(zoomInButton);
             container.appendChild(zoomOutButton);
+
+            // Prevent click events from zoom buttons from propagating to map
+            L.DomEvent.disableClickPropagation(container);
 
             return container;
         }

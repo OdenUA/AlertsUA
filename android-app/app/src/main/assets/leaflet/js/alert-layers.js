@@ -222,7 +222,29 @@ function featureStyle(feature, layerId) {
 }
 
 function selectPoint(latlng) {
+    console.log('[selectPoint] Called! isThreatPopupOpen=' + window.isThreatPopupOpen);
+
+    // Check if a popup was just closed (suppressNextClick flag from mousedown)
+    if (window.suppressNextClick) {
+        console.log('[selectPoint] suppressNextClick is TRUE, NOT opening bottom sheet');
+        window.suppressNextClick = false;
+        return;
+    }
+
+    // Also check popup state directly as a fallback
+    var popup = map && map._popup;
+    var isPopupOpen = popup && popup._map === map;
+
+    if (isPopupOpen) {
+        console.log('[selectPoint] Popup is still open, closing it only');
+        if (map && map.closePopup) {
+            map.closePopup();
+        }
+        return;
+    }
+
     if (window.AndroidBridge && window.AndroidBridge.onPointSelected) {
+        console.log('[selectPoint] Calling AndroidBridge.onPointSelected');
         window.AndroidBridge.onPointSelected(latlng.lat, latlng.lng);
     }
 }
@@ -247,6 +269,17 @@ function isInsideKyivCityBounds(latlng) {
 function bindFeatureTooltip(feature, layer) {
     layer.on('click', function (event) {
         if (event && event.latlng) {
+            // Don't open bottom sheet if a threat popup is open
+            if (window.isThreatPopupOpen) {
+                console.log('[FeatureClick] Threat popup is open, closing popup only');
+                window.isThreatPopupOpen = false;
+                if (map && map.closePopup) {
+                    map.closePopup();
+                }
+                L.DomEvent.stopPropagation(event);
+                return;
+            }
+
             L.DomEvent.stopPropagation(event);
             // If click is within Kyiv city bounds, pass city center coordinates
             // This ensures the API resolves to "м. Київ" instead of a rural hromada

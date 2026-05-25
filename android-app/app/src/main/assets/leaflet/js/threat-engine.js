@@ -459,7 +459,17 @@ function buildThreatOverlayLayer(overlays) {
                     interactive: true,
                     zIndexOffset: 750,
                 });
-                hitMarker.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
+                var popup = hitMarker.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
+
+                // Prevent click events inside popup from bubbling to map
+                hitMarker.on('popupopen', function() {
+                    var popupElement = popup.getElement();
+                    if (popupElement) {
+                        L.DomEvent.disableClickPropagation(popupElement);
+                        console.log('[Threat] Click propagation disabled for popup');
+                    }
+                });
+
                 hitMarker.addTo(layerGroup);
             }
 
