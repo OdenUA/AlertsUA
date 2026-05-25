@@ -33,8 +33,7 @@ fun LeafletMapView(
                 )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                settings.cacheMode = WebSettings.LOAD_NO_CACHE
-                clearCache(true)
+                settings.cacheMode = WebSettings.LOAD_DEFAULT
                 settings.allowFileAccess = true
                 settings.allowContentAccess = true
                 settings.allowFileAccessFromFileURLs = true
