@@ -56,7 +56,11 @@ function bringAlertLayersToFront() {
     if (oblastBordersLayer) {
         oblastBordersLayer.bringToBack();
     }
-    // Oblast features layer (with Kyiv) should be above borders
+    // Occupied territories should be above borders but below alerts
+    if (occupiedTerritoriesLayer) {
+        occupiedTerritoriesLayer.bringToFront();
+    }
+    // Oblast features layer (with Kyiv) should be above occupied territories
     if (overlayLayers['oblast']) {
         overlayLayers['oblast'].bringToFront();
     }
@@ -581,11 +585,12 @@ async function refreshOverlays() {
     setStatus('Оновлюємо мапу…');
 
     // Load layers in parallel for better performance
-    // Critical layers: alerts layer + oblast borders + oblast features (for Kyiv)
+    // Critical layers: alerts layer + oblast borders + oblast features (for Kyiv) + occupied territories
     await Promise.all([
         loadAlertsLayer(),
         loadOblastBorders(),
         loadLayer('oblast'),  // Load oblast features to include Kyiv city
+        loadOccupiedTerritories(),  // Load occupied territories layer
     ]);
 
     // Load interactive and threat layers in parallel

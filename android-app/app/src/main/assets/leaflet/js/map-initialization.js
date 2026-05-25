@@ -208,6 +208,11 @@ window.setMapTheme = function (isDark) {
         });
     }
 
+    // Обновляем тему оккупированных территорий
+    if (typeof updateOccupiedTerritoriesTheme === 'function') {
+        updateOccupiedTerritoriesTheme();
+    }
+
     // Принудительное обновление стилей кнопок зума
     const zoomControls = document.querySelectorAll('.leaflet-control-zoom a');
     console.log('Found zoom controls:', zoomControls.length);

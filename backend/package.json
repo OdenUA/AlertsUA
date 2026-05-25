@@ -12,7 +12,8 @@
     "inspect:xlsx": "tsx src/modules/imports/inspect-workbook.ts",
     "apply:supabase-schema": "node scripts/apply-supabase-schema.mjs",
     "telegram:gen-session": "node scripts/create-telegram-session.mjs",
-    "send-notification": "tsx scripts/send-notification.ts"
+    "send-notification": "tsx scripts/send-notification.ts",
+    "fetch:occupied": "tsx scripts/fetch-occupied-territories.ts"
   },
   "dependencies": {
     "@nestjs/axios": "^3.1.3",

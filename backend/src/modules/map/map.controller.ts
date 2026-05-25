@@ -1,10 +1,15 @@
 import { Controller, Get, Header, ParseIntPipe, Query } from '@nestjs/common';
 import { MapService } from './map.service';
+import { OccupiedTerritoriesService } from './occupied-territories.service';
+import { OccupiedTerritoriesGeoJSON } from './occupied-territories.service';
 import { GEOMETRY_CHECK_PAGE_CSP, GEOMETRY_CHECK_PAGE_HTML } from './map.geometry-check.page';
 
 @Controller('map')
 export class MapController {
-  constructor(private readonly mapService: MapService) {}
+  constructor(
+    private readonly mapService: MapService,
+    private readonly occupiedTerritoriesService: OccupiedTerritoriesService,
+  ) {}
 
   @Get('geometry-check')
   @Header('Content-Type', 'text/html; charset=utf-8')
@@ -66,5 +71,15 @@ export class MapController {
   @Get('simplified-oblast')
   getSimplifiedOblastMap() {
     return this.mapService.getSimplifiedOblastMap();
+  }
+
+  @Get('occupied-territories')
+  getOccupiedTerrories() {
+    return this.occupiedTerritoriesService.getOccupiedTerrories();
+  }
+
+  @Get('occupied-territories-layer')
+  getOccupiedTerroriesLayer() {
+    return this.occupiedTerritoriesService.getOccupiedTerroriesLayer();
   }
 }

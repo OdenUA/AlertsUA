@@ -1,0 +1,20 @@
+[Unit]
+Description=Fetch Occupied Territories Data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/srv/alerts-ua
+ExecStart=/srv/alerts-ua/infra/scripts/fetch-occupied-territories.sh
+StandardOutput=append:/var/log/alerts-ua/fetch-occupied-output.log
+StandardError=append:/var/log/alerts-ua/fetch-occupied-error.log
+
+# Safety measures
+PrivateTmp=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/alerts-ua/app/current/data /var/log/alerts-ua

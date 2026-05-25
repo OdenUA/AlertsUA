@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Fetch of Occupied Territories Data
+Requires=alerts-ua-fetch-occupied.service
+
+[Timer]
+# Запуск каждый день в 05:00 по Киевскому времени (EEST = UTC+3)
+# 05:00 EEST = 02:00 UTC
+OnCalendar=02:00 UTC
+Persistent=true
+
+# Если компьютер был выключен, запустить при загрузке если прошло время
+# (аналог anacron)
+
+[Install]
+WantedBy=timers.target
