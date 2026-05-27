@@ -4,6 +4,7 @@ TG Gemini/
 llm-worker.env
 secrets.env
 CLAUDE.md
+GEMINI.md
 .claude/
 build-debug.bat
 build-release.bat

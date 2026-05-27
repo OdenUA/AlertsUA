@@ -74,120 +74,173 @@ const DIRECTIONAL_STOP_WORDS = new Set([
 ]);
 
 export function buildGeminiThreatPrompt(messageText: string, contextText?: string) {
-  return [
-    'Extract threats from Ukrainian military alert posts.',
-    '',
-    'CRITICAL: Distinguish between ORIGIN (where threat comes FROM) and TARGET (where threat is GOING TO).',
-    '',
-    'LINGUISTIC PATTERNS (Ukrainian):',
-    '',
-    'ORIGIN INDICATORS (source/launch point):',
-    '- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)',
-    '- "від [місце]" = from [place]',
-    '- "із [місце]" = from [place]',
-    '- "з-під [місце]" = from under [place]',
-    '- "з-за [місце]" = from behind [place]',
-    '',
-    'TARGET INDICATORS (destination):',
-    '- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)',
-    '- "в [місце]" = to/in [place]',
-    '- "у [місце]" = to/in [place]',
-    '- "в напрямку [місце]" = towards [place]',
-    '- "курсом на [місце]" = course towards [place]',
-    '',
-    'CURRENT LOCATION (where threat is NOW):',
-    '- "БпЛА на [місто]" = UAV heading TO [city] (not currently there)',
-    '- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city]',
-    '- "БпЛА над [місто]" = UAV currently OVER [city]',
-    '- "БпЛА на [область]" = UAV heading TO [region]',
-    '',
-    'GEOGRAPHIC RULES:',
-    '',
-    'Black Sea (Чорне море):',
-    '- Coordinates: WATER, latitude < 46°N, approximately 45.0°N, 31.0°E',
-    '- If message says "з Чорного моря" → origin_lat/lng MUST be in WATER (~45.0°N, 31.0°E)',
-    '- If message says "з акваторії Чорного моря" → origin_lat/lng MUST be in WATER',
-    '',
-    'Odesa (Одеса):',
-    '- Coordinates: LAND, latitude ~46.5°N, longitude ~30.7°E',
-    '- If message says "на Одесу" or "в напрямку Одеси" → target_lat/lng MUST be on LAND',
-    '',
-    'CRITICAL EXAMPLES (study these carefully):',
-    '',
-    'Example 1: "🛵 Нові групи ворожих БпЛА у напрямку Одеси з Чорного моря."',
-    '- ORIGIN: "з Чорного моря" → Black Sea (WATER, ~45.0°N, 31.0°E)',
-    '- TARGET: "у напрямку Одеси" → Odesa (LAND, ~46.5°N, 30.7°E)',
-    '- Bearing: ~320° (from Black Sea to Odesa)',
-    '',
-    'Example 2: "🛵 Одещина - БпЛА на Одесу/Чорноморське з акваторїї Чорного моря."',
-    '- ORIGIN: "з акваторії Чорного моря" → Black Sea aquatory (WATER, ~45.0°N, 31.0°E)',
-    '- TARGET: "на Одесу/Чорноморське" → Odesa/Chornomorsk (LAND, ~46.5°N, 30.7°E for Odesa)',
-    '',
-    'Example 3: "🛵 БпЛА з Черкащини курсом на Кіровоградщину."',
-    '- ORIGIN: "з Черкащини" → Cherkasy region (~49.5°N, 32.0°E)',
-    '- TARGET: "курсом на Кіровоградщину" → Kirovohrad region (~48.5°N, 32.0°E)',
-    '- Bearing: ~180° (south)',
-    '',
-    'Example 4: "🛵 БпЛА на Дніпро з південного заходу."',
-    '- ORIGIN: "з південного заходу" → southwest (~48.0°N, 34.0°E)',
-    '- TARGET: "на Дніпро" → Dnipro city (~48.5°N, 35.0°E)',
-    '- Bearing: ~45° (northeast)',
-    '',
-    'Example 5: "🛵 Група БпЛА на півночі Київщини- курс на Житомирщину."',
-    '- ORIGIN: "на півночі Київщини" → north of Kyiv region (~50.5°N, 30.5°E)',
-    '- TARGET: "на Житомирщину" → Zhytomyr region (~50.3°N, 28.7°E)',
-    '- Bearing: ~270° (west)',
-    '',
-    'Example 6: "🛵 БпЛА курсом на м.Харків з півночі."',
-    '- ORIGIN: "з півночі" → north (~50.0°N, 36.0°E)',
-    '- TARGET: "курсом на м.Харків" → Kharkiv city (~49.9°N, 36.2°E)',
-    '- Bearing: ~180° (south)',
-    '',
-    'Example 7: "🛵 БпЛА з Херсонщини курсом на Миколаївщину"',
-    '- ORIGIN: "з Херсонщини" → Kherson region (~46.6°N, 33.0°E)',
-    '- TARGET: "курсом на Миколаївщину" → Mykolaiv region (~47.0°N, 32.0°E)',
-    '- Bearing: ~315° (northwest)',
-    '',
-    'Example 8: "🛵 БпЛА в районі м. Запоріжжя"',
-    '- CURRENT LOCATION: "в районі м. Запоріжжя" = in area of Zaporizhzhia city',
-    '- No clear movement direction → origin and target may both be Zaporizhzhia',
-    '',
-    'Example 9: "🛵 Запоріжжя - БпЛА в напрямку міста з півдня."',
-    '- ORIGIN: "з півдня" → south (~47.0°N, 35.0°E)',
-    '- TARGET: "в напрямку міста" (referring to Zaporizhzhia) → Zaporizhzhia city (~47.8°N, 35.1°E)',
-    '- Bearing: ~0° (north)',
-    '',
-    'Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."',
-    '- ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)',
-    '- TARGET: "курсом на Одесу" → Odesa (LAND, ~46.5°N, 30.7°E)',
-    '- Bearing: ~320°',
-    '',
-    'COORDINATE REQUIREMENTS:',
-    '- You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng',
-    '- DO NOT rely on server-side hints or fallbacks',
-    '- If both origin and target are specified, they MUST be different coordinates (>1km apart)',
-    '- If exact coordinates are unknown, provide approximate center coordinates of the region/city',
-    '- Coordinates: latitude (-90 to 90), longitude (-180 to 180)',
-    '- NEVER use 0.0, 0.0 as fallback - use null instead',
-    '',
-    'BEARING CALCULATION:',
-    '- movement_bearing_deg = direction FROM origin TO target (0-360 degrees)',
-    '- Formula: calculate bearing from (origin_lat, origin_lng) to (target_lat, target_lng)',
-    '- Directions: North=0, North-East=45, East=90, South-East=135, South=180, South-West=225, West=270, North-West=315',
-    '- Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°',
-    '',
-    'OTHER RULES:',
-    '- Combine context from multiple lines if they describe the same event',
-    '- If one post describes several simultaneous threats, return one threat object per independently trackable threat',
-    '- "Швидкісна ціль" (high-speed target) = missile threat',
-    '- Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)',
-    '- All hints (region_hint, origin_hint, target_hint, direction_text) must be in Ukrainian only',
-    '',
-    'Return strict JSON only with this schema:',
-    '{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null}]}',
-    'No markdown, no comments, no extra keys.',
-    contextText ? `Recent context messages (for reference only, do not extract threats from these unless they are updated in the target message):\n${contextText}\n\nTarget message to parse:\n${messageText}` : `Text: ${messageText}`,
-  ].join('\n');
+  const promptText = `Extract threats from Ukrainian military alert posts.
+
+CRITICAL: Distinguish between ORIGIN (where threat comes FROM) and TARGET (where threat is GOING TO).
+
+LINGUISTIC PATTERNS (Ukrainian):
+
+ORIGIN INDICATORS (source/launch point):
+- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)
+- "від [місце]" = from [place]
+- "із [місце]" = from [place]
+- "з-під [місце]" = from under [place]
+- "з-за [місце]" = from behind [place]
+
+TARGET INDICATORS (destination):
+- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)
+- "в [місце]" = to/in [place]
+- "у [місце]" = to/in [place]
+- "в напрямку [місце]" = towards [place]
+- "курсом на [місце]" = course towards [place]
+
+CURRENT LOCATION (where threat is NOW):
+- "БпЛА на [місто]" = UAV heading TO [city] (not currently there)
+- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city]
+- "БпЛА над [місто]" = UAV currently OVER [city]
+- "БпЛА на [область]" = UAV heading TO [region]
+
+GEOGRAPHIC RULES:
+
+Black Sea (Чорне море):
+- Coordinates: WATER, latitude < 46°N, approximately 45.0°N, 31.0°E
+- If message says "з Чорного моря" → origin_lat/lng MUST be in WATER (~45.0°N, 31.0°E)
+- If message says "з акваторії Чорного моря" → origin_lat/lng MUST be in WATER
+
+Odesa (Одеса):
+- Coordinates: LAND, latitude ~46.5°N, longitude ~30.7°E
+- If message says "на Одесу" or "в напрямку Одеси" → target_lat/lng MUST be on LAND
+
+CRITICAL EXAMPLES (study these carefully):
+
+Example 1: "🛵 Нові групи ворожих БпЛА у напрямку Одеси з Чорного моря."
+- ORIGIN: "з Чорного моря" → Black Sea (WATER, ~45.0°N, 31.0°E)
+- TARGET: "у напрямку Одеси" → Odesa (LAND, ~46.5°N, 30.7°E)
+- Bearing: ~320° (from Black Sea to Odesa)
+
+Example 2: "🛵 Одещина - БпЛА на Одесу/Чорноморське з акваторїї Чорного моря."
+- ORIGIN: "з акваторії Чорного моря" → Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
+- TARGET: "на Одесу/Чорноморське" → Odesa/Chornomorsk (LAND, ~46.5°N, 30.7°E for Odesa)
+
+Example 3: "🛵 БпЛА з Черкащини курсом на Кіровоградщину."
+- ORIGIN: "з Черкащини" → Cherkasy region (~49.5°N, 32.0°E)
+- TARGET: "курсом на Кіровоградщину" → Kirovohrad region (~48.5°N, 32.0°E)
+- Bearing: ~180° (south)
+
+Example 4: "🛵 БпЛА на Дніпро з південного заходу."
+- ORIGIN: "з південного заходу" → southwest (~48.0°N, 34.0°E)
+- TARGET: "на Дніпро" → Dnipro city (~48.5°N, 35.0°E)
+- Bearing: ~45° (northeast)
+
+Example 5: "🛵 Група БпЛА на півночі Київщини- курс на Житомирщину."
+- ORIGIN: "на півночі Київщини" → north of Kyiv region (~50.5°N, 30.5°E)
+- TARGET: "на Житомирщину" → Zhytomyr region (~50.3°N, 28.7°E)
+- Bearing: ~270° (west)
+
+Example 6: "🛵 БпЛА курсом на м.Харків з півночі."
+- ORIGIN: "з півночі" → north (~50.0°N, 36.0°E)
+- TARGET: "курсом на м.Харків" → Kharkiv city (~49.9°N, 36.2°E)
+- Bearing: ~180° (south)
+
+Example 7: "🛵 БпЛА з Херсонщини курсом на Миколаївщину"
+- ORIGIN: "з Херсонщини" → Kherson region (~46.6°N, 33.0°E)
+- TARGET: "курсом на Миколаївщину" → Mykolaiv region (~47.0°N, 32.0°E)
+- Bearing: ~315° (northwest)
+
+Example 8: "🛵 БпЛА в районі м. Запоріжжя"
+- CURRENT LOCATION: "в районі м. Запоріжжя" = in area of Zaporizhzhia city
+- No clear movement direction → origin and target may both be Zaporizhzhia
+
+Example 9: "🛵 Запоріжжя - БпЛА в напрямку міста з півдня."
+- ORIGIN: "з півдня" → south (~47.0°N, 35.0°E)
+- TARGET: "в напрямку міста" (referring to Zaporizhzhia) → Zaporizhzhia city (~47.8°N, 35.1°E)
+- Bearing: ~0° (north)
+
+Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."
+- ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
+- TARGET: "курсом на Одесу" → Odesa (LAND, ~46.5°N, 30.7°E)
+- Bearing: ~320°
+
+Example 11: "Пуски КАБ на Дніпропетровщину." (direction not stated, inferred from east)
+- ORIGIN: "окупована Донецька область" (implied/inferred, ~48.3°N, 37.5°E)
+- TARGET: "на Дніпропетровщину" → EASTERN border of Dnipropetrovsk oblast (~48.5°N, 36.5°E)
+- Bearing: ~270° (west)
+- CRITICAL: Target is at BORDER ENTRY POINT, not oblast center!
+
+Example 12: "🛵 КАБ на Харківщину з півночі."
+- ORIGIN: "з півночі" → north (Belgorod direction, ~50.3°N, 36.5°E)
+- TARGET: "на Харківщину" → NORTHERN border of Kharkiv oblast (~50.0°N, 36.5°E)
+- Bearing: ~180° (south)
+- CRITICAL: Target is at BORDER ENTRY POINT from threat origin direction!
+
+Example 13: "🛵 БпЛА на Запоріжжі (Тернувате-Новомиколаївка)"
+- ORIGIN: "окупована Запорізька область" (implied/inferred occupied south, ~46.5°N, 36.0°E)
+- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E)
+- Bearing: ~355° (north/north-west)
+- CRITICAL: Since UAV is heading towards Ternuvate/Novomykolaivka in Zaporizhzhia oblast, the origin MUST NOT be set to Zaporizhzhia center. Infer it from the occupied south (~80km away) so the vector points from occupied territory towards the target.
+
+Example 14: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
+- ORIGIN: "окупований південний схід" (implied/inferred occupied Donetsk/Zaporizhzhia, ~47.2°N, 36.2°E)
+- TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E)
+- Bearing: ~330° (north-west)
+- CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from occupied Zaporizhzhia/Donetsk region to point the flight vector from occupied territories towards Synelnykove.
+
+COORDINATE REQUIREMENTS:
+- You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng
+- DO NOT rely on server-side hints or fallbacks
+- If both origin and target are specified, they MUST be different coordinates (>1km apart)
+- If exact coordinates are unknown, provide approximate center coordinates of the region/city
+- Coordinates: latitude (-90 to 90), longitude (-180 to 180)
+- NEVER use 0.0, 0.0 as fallback - use null instead
+
+GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
+
+1. For KAB/Missile Threats to Oblasts (Border Entry Points):
+   - When KABs/Missiles target an OBLAST (not a specific city) and direction is not stated, place target coordinates at the BORDER ENTRY POINT from the most likely threat direction:
+     * Dnipropetrovsk oblast: threats typically from EAST (Donetsk direction) → use eastern border entry point (~48.5°N, 36.5°E).
+     * Kharkiv oblast: threats typically from NORTH (Belgorod direction) → use northern border entry point (~50.0°N, 36.5°E).
+     * Sumy oblast: threats typically from NORTH/EAST (Russia direction) → use northeastern border entry point (~51.0°N, 34.5°E).
+     * Chernihiv oblast: threats typically from NORTH (Russia/Belarus direction) → use northern border entry point.
+     * Kyiv oblast: threats can be from north/east → infer from context.
+     * Zaporizhzhia oblast: threats typically from SOUTH/EAST (Crimea/Donetsk) → use southern/eastern border entry point.
+     * Mykolaiv/Kherson oblasts: threats typically from SOUTH/EAST (Crimea) → use southern border entry point.
+   - If direction is UNKNOWN and no context is available, use the oblast center coordinates.
+   - If threat targets a CITY (not oblast), use city coordinates.
+
+2. For UAV (Drone) Threats (Inferred Entry Vectors):
+   - UAVs (БпЛА) never originate from the center of the targeted region or city. They always fly from Russian territory, occupied Ukrainian territories, or the Black/Azov Seas.
+   - If the post mentions UAVs at/heading to a specific location and does not specify where they came from:
+     * DO NOT set the origin_hint to the targeted region or city. Set origin_hint to a realistic launch/entry region (e.g., "окупований південь", "Росія", "окупований схід", etc.).
+     * You MUST calculate and provide explicit 'origin_lat' and 'origin_lng' coordinates positioned 60-120 km away from the target location in the direction of the threat's entry point, so that the movement vector correctly shows them entering from occupied/Russian territories, not from the center of the free region.
+     * Use the following regional entry/origin vectors to compute 'origin_lat'/'origin_lng' (located ~80km away in the specified direction):
+       - Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате", "Новомиколаївка"): UAVs enter from the SOUTH/SOUTH-EAST (occupied Zaporizhzhia/Sea of Azov direction, e.g., origin around ~46.5°N, 36.0°E).
+       - Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове", "Дніпро"): UAVs enter from the SOUTH/SOUTH-EAST (from Zaporizhzhia/Donetsk direction, e.g., origin around ~47.2°N, 36.2°E).
+       - Targets in Kharkiv oblast (e.g., "на Харків", "Куп'янськ"): UAVs enter from the NORTH/NORTH-EAST (Russia/Belgorod direction, e.g., origin around ~50.4°N, 36.3°E).
+       - Targets in Odesa/Mykolaiv/Kherson oblasts: UAVs enter from the SOUTH (Black Sea/Crimea, e.g., origin around ~45.5°N, 31.5°E for Odesa, or ~46.0°N, 32.5°E for Mykolaiv).
+       - Targets in Sumy/Chernihiv oblasts: UAVs enter from the NORTH/EAST (Russia, e.g., origin around ~51.5°N, 34.7°E for Sumy).
+       - Targets in Poltava/Kirovohrad/Cherkasy oblasts: UAVs enter from the EAST/SOUTH-EAST (Dnipropetrovsk/Zaporizhzhia direction, e.g. origin ~48.0°N, 35.0°E).
+       - Targets in Kyiv oblast/city: UAVs enter from the NORTH (Belarus, ~51.3°N, 30.5°E) or SOUTH/EAST.
+
+BEARING CALCULATION:
+- movement_bearing_deg = direction FROM origin TO target (0-360 degrees)
+- Formula: calculate bearing from (origin_lat, origin_lng) to (target_lat, target_lng)
+- Directions: North=0, North-East=45, East=90, South-East=135, South=180, South-West=225, West=270, North-West=315
+- Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°
+
+OTHER RULES:
+- Combine context from multiple lines if they describe the same event
+- If one post describes several simultaneous threats, return one threat object per independently trackable threat
+- "Швидкісна ціль" (high-speed target) = missile threat
+- Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)
+- All hints (region_hint, origin_hint, target_hint, direction_text) must be in Ukrainian only
+
+Return strict JSON only with this schema:
+{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null}]}
+No markdown, no comments, no extra keys.`;
+
+  return contextText
+    ? `${promptText}\n\nRecent context messages (for reference only, do not extract threats from these unless they are updated in the target message):\n${contextText}\n\nTarget message to parse:\n${messageText}`
+    : `${promptText}\n\nText: ${messageText}`;
 }
 
 export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {

@@ -1364,7 +1364,8 @@ export class SubscriptionsService {
     latitude: number,
     longitude: number,
   ) {
-    const result = await this.queryWithExecutor<ResolvedPointRow>(
+    // Сначала ищем громаду (is_subscription_leaf=TRUE)
+    let result = await this.queryWithExecutor<ResolvedPointRow>(
       executor,
       `
         SELECT rc.uid AS leaf_uid,
@@ -1382,6 +1383,28 @@ export class SubscriptionsService {
       `,
       [longitude, latitude],
     );
+
+    // Если громада не найдена, пробуем fallback на район
+    // Это нужно для точек в "разрывах" между полигонами громад OCHA
+    if (result.rowCount === 0) {
+      result = await this.queryWithExecutor<ResolvedPointRow>(
+        executor,
+        `
+          SELECT rc.uid AS leaf_uid,
+                 rc.region_type AS leaf_type,
+                 rc.title_uk AS leaf_title_uk,
+                 rc.raion_uid,
+                 rc.oblast_uid
+          FROM region_geometry rg
+          JOIN region_catalog rc ON rc.uid = rg.uid
+          WHERE rc.is_active = TRUE
+            AND rc.region_type = 'raion'
+            AND ST_Covers(rg.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326))
+          LIMIT 1
+        `,
+        [longitude, latitude],
+      );
+    }
 
     if (result.rowCount === 0) {
       throw new NotFoundException(

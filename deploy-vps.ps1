@@ -421,15 +421,27 @@ try {
     Write-Host "  Health check: $healthStatus"
     Write-Host ""
 
-    # Final health check
-    Write-Step "Running final health check..."
-    $healthCheckResult = & $sshExe @sshExecArgs $sshUser "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/v1/map/regions" 2>&1
+    # Final health check with retry loop (accommodates cache warm-up latency ~20s)
+    Write-Step "Running final health check (up to 60s for cache warm-up)..."
+    $maxAttempts = 12
+    $retryDelaySec = 5
+    $healthOk = $false
 
-    if ($healthCheckResult -match '^200$') {
-        Write-Success "API is responding correctly"
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $healthCheckResult = & $sshExe @sshExecArgs $sshUser "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/v1/map/regions" 2>&1
+
+        if ($healthCheckResult -match '^200$') {
+            Write-Success "API is responding correctly (attempt $attempt/$maxAttempts)"
+            $healthOk = $true
+            break
+        }
+
+        Write-Host "  [~] Attempt $attempt/$maxAttempts — got '$healthCheckResult', retrying in ${retryDelaySec}s..." -ForegroundColor DarkYellow
+        Start-Sleep -Seconds $retryDelaySec
     }
-    else {
-        Write-Host "[!] Health check returned: $healthCheckResult" -ForegroundColor Yellow
+
+    if (-not $healthOk) {
+        Write-Host "[!] Health check did not pass after $maxAttempts attempts. Last response: $healthCheckResult" -ForegroundColor Yellow
     }
 
     # Step 7: Install occupied territories timer
