@@ -52,41 +52,62 @@ function refreshAlertMarkers() {
 }
 
 function bringAlertLayersToFront() {
-    // Oblast borders should be at the back (under alert fills)
+    // Z-order from back to front:
+    // 1. Ukraine mask (background)
+    // 2. Oblast borders (at the back)
+    // 3. Alert fills (alertLayersGroup) — colored regions
+    // 4. Special alerts
+    // 5. Feature layers (oblast/raion/hromada) — borders only
+    // 6. Occupied territories — visible ABOVE feature layers
+    // 7. Interactive regions (transparent, for clicks)
+    // 8. Threat overlays (top layer)
+    // 9. Alert markers (icons)
+
+    // Oblast borders at the back (under alert fills)
     if (oblastBordersLayer) {
         oblastBordersLayer.bringToBack();
     }
-    // Occupied territories should be above borders but below alerts
-    if (occupiedTerritoriesLayer) {
-        occupiedTerritoriesLayer.bringToFront();
+    // Alert fills on top of borders
+    if (alertLayersGroup && typeof alertLayersGroup.bringToFront === 'function') {
+        alertLayersGroup.bringToFront();
+    } else if (alertLayersGroup && typeof alertLayersGroup.eachLayer === 'function') {
+        alertLayersGroup.eachLayer(function(l) {
+            if (l && typeof l.bringToFront === 'function') l.bringToFront();
+        });
     }
-    // Oblast features layer (with Kyiv) should be above occupied territories
-    if (overlayLayers['oblast']) {
-        overlayLayers['oblast'].bringToFront();
+    // Special alerts on top of fills
+    if (specialAlertLayer && typeof specialAlertLayer.bringToFront === 'function') {
+        specialAlertLayer.bringToFront();
+    } else if (specialAlertLayer && typeof specialAlertLayer.eachLayer === 'function') {
+        specialAlertLayer.eachLayer(function(l) {
+            if (l && typeof l.bringToFront === 'function') l.bringToFront();
+        });
+    }
+    // Feature layers (borders) on top of alerts
+    if (overlayLayers['oblast']) overlayLayers['oblast'].bringToFront();
+    if (overlayLayers['raion']) overlayLayers['raion'].bringToFront();
+    if (overlayLayers['hromada']) overlayLayers['hromada'].bringToFront();
+    // Occupied territories ABOVE feature layers but BELOW threats
+    if (occupiedTerritoriesLayer && typeof occupiedTerritoriesLayer.eachLayer === 'function') {
+        occupiedTerritoriesLayer.eachLayer(function(l) {
+            if (l && typeof l.bringToFront === 'function') l.bringToFront();
+        });
     }
     // Interactive regions layer (transparent, for clicks on non-alert areas)
     if (interactiveRegionsLayer) {
         interactiveRegionsLayer.bringToFront();
     }
-    // Bring the precomputed alert layer to front
-    if (alertLayersGroup) {
-        alertLayersGroup.bringToFront();
-    }
-    // Special alert layer for special alert types
-    if (specialAlertLayer) {
-        specialAlertLayer.bringToFront();
-    }
-    // Alert markers (icons) should be on top
-    if (alertMarkersLayer) {
-        alertMarkersLayer.eachLayer(function(layer) {
+    // Threat overlays should be on top of everything
+    if (threatOverlayLayer) {
+        threatOverlayLayer.eachLayer(function(layer) {
             if (layer && layer.bringToFront) {
                 layer.bringToFront();
             }
         });
     }
-    // Threat overlays should be on top of everything
-    if (threatOverlayLayer) {
-        threatOverlayLayer.eachLayer(function(layer) {
+    // Alert markers (icons) should be on top of threats
+    if (alertMarkersLayer) {
+        alertMarkersLayer.eachLayer(function(layer) {
             if (layer && layer.bringToFront) {
                 layer.bringToFront();
             }
@@ -323,10 +344,10 @@ function fitToVisibleData() {
     }
 
     hasFittedToData = true;
+    // fitBounds already sets the correct zoom — no need to zoom in further
+    // The initial view (zoom 5) shows all of Ukraine, fitBounds only zooms if
+    // the data doesn't fill the screen
     map.fitBounds(combinedBounds.pad(0.03), {
-        animate: false,
-    });
-    map.setZoom(Math.min(map.getZoom() + INITIAL_FIT_ZOOM_STEP, map.getMaxZoom()), {
         animate: false,
     });
     refreshLayout();
@@ -591,38 +612,289 @@ async function refreshOverlays() {
 
     setStatus('Оновлюємо мапу…');
 
-    // Load layers in parallel for better performance
-    // Critical layers: alerts layer + oblast borders + oblast features (for Kyiv) + occupied territories
-    await Promise.all([
-        loadAlertsLayer(),
-        loadOblastBorders(),
-        loadLayer('oblast'),  // Load oblast features to include Kyiv city
-        loadOccupiedTerritories(),  // Load occupied territories layer
-    ]);
+    try {
+        // Load layers in parallel for better performance
+        // Critical layers: alerts layer + oblast borders + oblast features (for Kyiv) + occupied territories
+        await Promise.all([
+            loadAlertsLayer(),
+            loadOblastBorders(),
+            loadLayer('oblast'),  // Load oblast features to include Kyiv city
+            loadOccupiedTerritories(),  // Load occupied territories layer
+        ]);
 
-    // Load interactive and threat layers in parallel
-    await Promise.all([
-        loadInteractiveRegionsLayer(),
-        loadThreatOverlays(),
-    ]);
+        // Load interactive and threat layers in parallel
+        await Promise.all([
+            loadInteractiveRegionsLayer(),
+            loadThreatOverlays(),
+        ]);
 
-    fitToVisibleData();
-    refreshLayout();
-    bringAlertLayersToFront();
+        fitToVisibleData();
+        refreshLayout();
+        bringAlertLayersToFront();
+    } catch (e) {
+        console.error('[refreshOverlays] Error:', e);
+        setStatus(e.message || 'Не вдалося оновити мапу.');
+        return;
+    }
+
     setStatus(null);
 }
 window.refreshOverlays = refreshOverlays;
+
+/**
+ * Render all layers using static geometry from local assets.
+ * This is the optimized path — no geometry fetch from server.
+ */
+async function renderAllLayers() {
+    if (!activeConfig) {
+        console.error('[renderAllLayers] No activeConfig');
+        return;
+    }
+
+    console.log('[renderAllLayers] Starting...');
+    setStatus('Завантажуємо мапу…');
+
+    try {
+        // Add zoom controls
+        if (typeof removeCustomZoomControls === 'function') removeCustomZoomControls();
+        if (typeof addCustomZoomControls === 'function') addCustomZoomControls();
+
+        // 1. Load static geometry from assets
+        console.log('[renderAllLayers] Step 1: Loading static geometry...');
+        if (typeof loadStaticGeometryFromAssets === 'function') {
+            await loadStaticGeometryFromAssets();
+            console.log('[renderAllLayers] Static geometry loaded:', staticGeometry.loaded,
+                'oblast:', (staticGeometry.oblast && staticGeometry.oblast.features ? staticGeometry.oblast.features.length : 0),
+                'raion:', (staticGeometry.raion && staticGeometry.raion.features ? staticGeometry.raion.features.length : 0),
+                'hromada:', (staticGeometry.hromada && staticGeometry.hromada.features ? staticGeometry.hromada.features.length : 0));
+        } else {
+            console.error('[renderAllLayers] loadStaticGeometryFromAssets not found');
+        }
+
+        // 2. Render occupied territories (may fetch from server as fallback)
+        console.log('[renderAllLayers] Step 2: Occupied territories...');
+        await renderOccupiedTerritories();
+
+        // 3. Render interactive regions from static geometry
+        console.log('[renderAllLayers] Step 3: Interactive regions...');
+        if (typeof renderInteractiveRegionsLayer === 'function') {
+            renderInteractiveRegionsLayer();
+        }
+
+        // 4. Render threat overlays
+        console.log('[renderAllLayers] Step 4: Threat overlays...');
+        if (typeof loadThreatOverlays === 'function') {
+            try {
+                await loadThreatOverlays();
+                console.log('[renderAllLayers] Threat overlays loaded');
+            } catch (e) {
+                console.warn('[renderAllLayers] Threat overlays failed:', e);
+            }
+        }
+
+        // 5. Fetch status bundle and apply to static geometry
+        console.log('[renderAllLayers] Step 5: Status bundle...');
+        if (typeof loadStatusBundle === 'function') {
+            try {
+                var bundle = await loadStatusBundle();
+                console.log('[renderAllLayers] Bundle received, applyBundleStatuses available:', typeof window.applyBundleStatuses === 'function',
+                    'staticGeometry.loaded:', staticGeometry.loaded);
+                if (typeof window.applyBundleStatuses === 'function' && staticGeometry.loaded) {
+                    window.applyBundleStatuses(bundle);
+                    // Apply Kyiv city inherited oblast status (must run AFTER bundle statuses)
+                    if (typeof window.applyKyivCityInheritedOblastStatus === 'function') {
+                        window.applyKyivCityInheritedOblastStatus();
+                    }
+                    console.log('[renderAllLayers] Statuses applied, sample:', staticGeometry.hromada && staticGeometry.hromada.features ? staticGeometry.hromada.features.slice(0, 3).map(function(f) { return f.properties.uid + '=' + f.properties.status; }).join(', ') : 'none');
+                }
+            } catch (e) {
+                console.error('[renderAllLayers] Status bundle failed:', e);
+            }
+        }
+
+        // 6. Render feature layers from static geometry with statuses applied
+        console.log('[renderAllLayers] Step 6: Rendering layers...');
+        ['oblast', 'raion', 'hromada'].forEach(function (layerId) {
+            if (typeof renderLayerFromStatic === 'function') {
+                renderLayerFromStatic(layerId);
+            }
+        });
+
+        // 7. Render oblast borders
+        console.log('[renderAllLayers] Step 7: Oblast borders...');
+        if (typeof renderOblastBorders === 'function') {
+            renderOblastBorders();
+        }
+
+        console.log('[renderAllLayers] Step 8: fitToVisibleData...');
+        fitToVisibleData();
+        refreshLayout();
+        bringAlertLayersToFront();
+    } catch (e) {
+        console.error('[renderAllLayers] Error:', e);
+        setStatus(e.message || 'Не вдалося завантажити мапу.');
+        return;
+    }
+
+    setStatus(null);
+    console.log('[renderAllLayers] Complete');
+}
 
 function scheduleOverlayRefresh() {
     if (refreshTimerId) {
         window.clearTimeout(refreshTimerId);
     }
 
-    refreshTimerId = window.setTimeout(() => {
-        refreshOverlays().catch((error) => {
-            console.error(error);
-            setStatus(error.message || 'Не вдалося оновити мапу.');
-        });
+    refreshTimerId = window.setTimeout(function () {
+        // Use status bundle for lightweight updates (~86KB instead of 2MB+)
+        if (typeof loadStatusBundle === 'function' && typeof refreshStatusesFromCache === 'function') {
+            loadStatusBundle()
+                .then(function () { refreshStatusesFromCache(); })
+                .catch(function (e) { console.warn('Auto-refresh failed:', e); });
+        } else {
+            refreshOverlays().catch(function (e) { console.warn('Auto-refresh fallback failed:', e); });
+        }
     }, 160);
 }
 window.scheduleOverlayRefresh = scheduleOverlayRefresh;
+
+/**
+ * Render a layer from static geometry (loaded from assets).
+ */
+function renderLayerFromStatic(layerId) {
+    console.log('[renderLayer] Rendering layer:', layerId);
+    var features = getFeaturesByLayerId(layerId);
+    console.log('[renderLayer] Static features for ' + layerId + ':', features.length);
+
+    if (layerId === 'oblast') {
+        applyKyivCityInheritedOblastState(features);
+        var kyivFeature = features.find(isKyivCityFeature);
+        console.log('[renderLayer] Kyiv city feature found:', !!kyivFeature);
+    }
+
+    var geoJsonLayer = L.geoJSON(features, {
+        style: function (feature) { return featureStyle(feature, layerId); },
+        onEachFeature: bindFeatureTooltip,
+    });
+
+    if (overlayLayers[layerId]) map.removeLayer(overlayLayers[layerId]);
+    overlayLayers[layerId] = geoJsonLayer.addTo(map);
+    console.log('[renderLayer] Layer ' + layerId + ' added to map');
+}
+
+/**
+ * Render interactive regions from static geometry.
+ */
+function renderInteractiveRegionsLayer() {
+    var visibleLayers = getVisibleLayers().filter(function (l) { return l !== 'oblast'; });
+    var allFeatures = [];
+    visibleLayers.forEach(function (layerId) {
+        var features = getFeaturesByLayerId(layerId);
+        if (features && features.length > 0) allFeatures = allFeatures.concat(features);
+    });
+
+    if (allFeatures.length === 0) return;
+
+    if (interactiveRegionsLayer) map.removeLayer(interactiveRegionsLayer);
+
+    interactiveRegionsLayer = L.geoJSON(allFeatures, {
+        style: { stroke: false, fillOpacity: 0, interactive: true },
+        onEachFeature: bindFeatureTooltip,
+    }).addTo(map);
+
+    console.log('[InteractiveLayer] Loaded', allFeatures.length, 'regions');
+}
+
+/**
+ * Render oblast borders from static geometry.
+ */
+function renderOblastBorders() {
+    console.log('[OblastBorders] Rendering from static geometry...');
+    var features = getFeaturesByLayerId('oblast');
+    if (!features || features.length === 0) {
+        console.warn('[OblastBorders] No oblast features');
+        return;
+    }
+
+    if (oblastBordersLayer) {
+        map.removeLayer(oblastBordersLayer);
+    }
+
+    var isDark = document.body.classList.contains('dark');
+    oblastBordersLayer = L.geoJSON(features, {
+        style: function () {
+            return {
+                stroke: true, color: '#5a7d8e', weight: 2.5,
+                fillColor: '#5a7d8e', fillOpacity: 0, interactive: true,
+            };
+        },
+        onEachFeature: bindFeatureTooltip,
+    }).addTo(map);
+
+    console.log('[OblastBorders] Layer added:', features.length, 'features');
+}
+
+/**
+ * Render occupied territories from static geometry, fallback to server.
+ */
+async function renderOccupiedTerritories() {
+    console.log('[OccupiedTerritories] Loading...');
+    if (occupiedTerritoriesLayer) {
+        map.removeLayer(occupiedTerritoriesLayer);
+    }
+
+    var feature = getOccupiedTerritoriesFeature();
+    console.log('[OccupiedTerritories] Static geoJSON:', JSON.stringify(feature).substring(0, 100));
+
+    // If static is empty or no features, try server
+    if (!feature || (feature.features && feature.features.length === 0)) {
+        try {
+            console.log('[OccupiedTerritories] Static empty, fetching from server...');
+            var resp = await fetch(buildUrl('/map/occupied-territories-layer'), {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (resp.ok) {
+                var data = await resp.json();
+                console.log('[OccupiedTerritories] Server response keys:', Object.keys(data));
+                console.log('[OccupiedTerritories] Has feature:', !!data.feature, 'type:', data.feature ? data.feature.type : 'N/A');
+                if (data.feature) {
+                    feature = data.feature;
+                    console.log('[OccupiedTerritories] Got feature from server, geometry type:', data.feature.geometry ? data.feature.geometry.type : 'N/A');
+                }
+            } else {
+                console.warn('[OccupiedTerritories] Server returned:', resp.status);
+            }
+        } catch (e) {
+            console.warn('[OccupiedTerritories] Server fetch failed:', e);
+        }
+    }
+
+    if (!feature) {
+        console.warn('[OccupiedTerritories] No data available');
+        return;
+    }
+    // Check if it's a FeatureCollection with empty features
+    if (feature.features && feature.features.length === 0) {
+        console.warn('[OccupiedTerritories] Empty FeatureCollection');
+        return;
+    }
+
+    console.log('[OccupiedTerritories] Rendering layer, feature type:', feature.type);
+    var isDark = document.body.classList.contains('dark');
+    occupiedTerritoriesLayer = L.geoJSON(feature, {
+        style: function () {
+            return {
+                stroke: true,
+                color: '#dc2626',
+                weight: 3,
+                opacity: 0.9,
+                fillColor: '#dc2626',
+                fillOpacity: 0.2,
+                dashArray: '6,4',
+                interactive: false,
+            };
+        },
+    }).addTo(map);
+
+    console.log('[OccupiedTerritories] Layer added to map');
+}

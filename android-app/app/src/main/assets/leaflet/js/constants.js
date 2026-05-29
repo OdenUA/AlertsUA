@@ -35,6 +35,7 @@ let alertMarkersLayer = null;
 let specialAlertLayer = null;
 let alertLayersGroup = null;
 let threatOverlayLayer = null;
+let occupiedTerritoriesLayer = null;
 let oblastBordersLayer = null;
 let interactiveRegionsLayer = null;
 let threatOverlayData = [];

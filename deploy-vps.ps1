@@ -1,4 +1,4 @@
-# improved VPS deploy script based on real deployment experience
+﻿# improved VPS deploy script based on real deployment experience
 [CmdletBinding()]
 param(
     [string]$ReleaseName,
@@ -178,7 +178,7 @@ $bundleEntries = @(
 )
 
 Write-Step "========================================="
-Write-Step "Тривога UA - Backend Deployment"
+Write-Step "РўСЂРёРІРѕРіР° UA - Backend Deployment"
 Write-Step "========================================="
 Write-Step "Release name: $ReleaseName"
 Write-Step "SSH target: $sshUser"
@@ -436,7 +436,7 @@ try {
             break
         }
 
-        Write-Host "  [~] Attempt $attempt/$maxAttempts — got '$healthCheckResult', retrying in ${retryDelaySec}s..." -ForegroundColor DarkYellow
+        Write-Host "  [~] Attempt $attempt/$maxAttempts - got '$healthCheckResult', retrying in ${retryDelaySec}s..." -ForegroundColor DarkYellow
         Start-Sleep -Seconds $retryDelaySec
     }
 

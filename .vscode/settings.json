@@ -30,5 +30,11 @@
             "database": "alerts_ua",
             "username": "alerts_ua_app"
         }
-    ]
+    ],
+    "chat.tools.terminal.autoApprove": {
+        "/^powershell -ExecutionPolicy Bypass -File \"E:\\\\Dev\\\\Projects\\\\Alerts\\\\check-deploy\\.ps1\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

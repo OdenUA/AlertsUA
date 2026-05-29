@@ -26,7 +26,11 @@ window.configureAlertsUa = function (nextApiBaseUrl) {
         map.removeLayer(threatOverlayLayer);
         threatOverlayLayer = null;
     }
-    initializeMap();
+    // Re-initialize using the new static-geometry approach
+    // The actual initialization is handled by app.js — just trigger it
+    if (typeof initializeMap === 'function') {
+        initializeMap();
+    }
 };
 
 window.invalidateAlertsUaMap = function () {
@@ -44,15 +48,21 @@ async function initializeMap() {
     try {
         refreshLayout();
 
-        // Добавляем кастомный контрол зума в левый нижний угол
+        // Добавляем кастомный контрол зума
         removeCustomZoomControls();
         addCustomZoomControls();
 
         await loadConfig();
         await loadUkraineMask();
-        await refreshOverlays();
+
+        // Use static geometry + status bundle (optimized path)
+        if (typeof renderAllLayers === 'function') {
+            await renderAllLayers();
+        } else {
+            await refreshOverlays();
+        }
+
         mapReady = true;
-        // Re-render threat overlays after map is ready to ensure correct zoom level
         renderThreatOverlays();
         mapReadyQueue.forEach(function(fn) { fn(); });
         mapReadyQueue = [];
@@ -162,12 +172,20 @@ map.on('zoomend', function () {
 
 window.addEventListener('resize', refreshLayout);
 
-// Auto-refresh alert states every 30 seconds
+// Auto-refresh alert states every 30 seconds — lightweight: only fetch status bundle (~86KB)
 setInterval(function () {
     if (!mapReady) { return; }
-    refreshOverlays().catch(function (error) {
-        console.warn('Auto-refresh failed:', error);
-    });
+    if (typeof loadStatusBundle === 'function') {
+        loadStatusBundle()
+            .then(function () {
+                if (typeof refreshStatusesFromCache === 'function') refreshStatusesFromCache();
+            })
+            .catch(function (error) {
+                console.warn('Auto-refresh failed:', error);
+            });
+    } else if (typeof scheduleOverlayRefresh === 'function') {
+        scheduleOverlayRefresh();
+    }
 }, 30000);
 
 // Кастомный контрол зума

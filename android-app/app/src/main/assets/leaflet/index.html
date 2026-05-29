@@ -31,8 +31,13 @@
     <script src="js/geometry.js"></script>
     <script src="js/threat-engine.js"></script>
     <script src="js/map-initialization.js"></script>
-    <script src="js/alert-layers.js"></script>
+    <!-- Occupied territories must load before alert-layers (it references loadOccupiedTerritories) -->
     <script src="js/occupied-territories.js"></script>
+    <script src="js/alert-layers.js"></script>
+    <!-- Static geometry loader — loads GeoJSON from local assets (file://) -->
+    <script src="js/static-geometry.js"></script>
+    <!-- Status bundle loader — lightweight status updates (~86KB vs 2MB+ full geometry) -->
+    <script src="js/status-bundle.js"></script>
     <script src="js/subscription-markers.js"></script>
     <script src="js/android-bridge.js"></script>
     <script src="js/app.js"></script>

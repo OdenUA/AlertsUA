@@ -2,7 +2,9 @@ export const CACHE_KEYS = {
   ALERTS_CURRENT: 'alerts:current',
   ALERTS_LAYER: 'alerts:layer:response',
   ALERTS_ACTIVE_UIDS: 'alerts:active:uids',
-  THREATS_BUCKET: (ts: number) => `threats:${Math.floor(ts / 300000) * 300000}`,
+  MAP_BUNDLE: 'map:bundle',
+  THREAT_BUNDLE: 'map:threat-bundle',
+  THREATS_BUCKET: (ts: number) => `threats:${Math.floor(ts / 60000) * 60000}`,
   FEATURES: (layer: string, lod: string) => `features:${layer}:${lod}`,
   REGIONS_STATIC: 'regions:static',
   OBLAST_SIMPLIFIED: 'oblast:simplified',
@@ -10,7 +12,9 @@ export const CACHE_KEYS = {
 
 export const CACHE_TTL = {
   ALERTS: 75,
-  THREATS: 8100,
+  MAP_BUNDLE: 120,
+  THREAT_BUNDLE: 60,
+  THREATS: 60,
   FEATURES: 3600,
   STATIC: 86400,
 } as const;

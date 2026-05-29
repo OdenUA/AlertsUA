@@ -26,7 +26,12 @@ function formatThreatPopupTime(value) {
         return '';
     }
 
-    return date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+    // Always use Kyiv timezone for threat popup times
+    return date.toLocaleTimeString('uk-UA', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Europe/Kyiv'
+    });
 }
 
 function buildThreatPopupContent(overlay) {

@@ -20,7 +20,26 @@ export interface OccupiedTerritoriesGeoJSON {
   }>;
 }
 
-const OCCUPIED_TERRITORIES_FILE = path.join(__dirname, '../../../data/occupied-territories.geojson');
+// Try multiple paths to find occupied territories data file:
+// 1. Release-local data/ (current working directory)
+// 2. Shared app-level data/ directory (survives deploy rotations)
+function resolveOccupiedTerritoriesPath(): string {
+  const cwdPath = path.join(process.cwd(), 'data', 'occupied-territories.geojson');
+  if (fs.existsSync(cwdPath)) {
+    return cwdPath;
+  }
+  // Fallback: shared app data directory (outside release directories)
+  // Structure: /srv/alerts-ua/app/current/ -> ../data/ = /srv/alerts-ua/app/data/
+  const appDataPath = path.join(process.cwd(), '..', 'data', 'occupied-territories.geojson');
+  if (fs.existsSync(appDataPath)) {
+    return appDataPath;
+  }
+  // Last fallback: two levels up
+  const parentPath = path.join(process.cwd(), '..', '..', 'data', 'occupied-territories.geojson');
+  return parentPath;
+}
+
+const OCCUPIED_TERRITORIES_FILE = resolveOccupiedTerritoriesPath();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 час
 
 @Injectable()

@@ -5,7 +5,7 @@ import { TimeUtil } from '../../common/utils/time.util';
 import { CacheService } from '../../common/cache/cache.service';
 import { MapBundleService } from './map-bundle.service';
 import { CACHE_KEYS, CACHE_TTL } from '../../common/cache/cache.constants';
-import type { AlertsBundleDto, FeaturesBundleDto } from '../../common/cache/dto/cache-bundle.dto';
+import type { AlertsBundleDto, FeaturesBundleDto, MapBundleDto, ThreatBundleDto } from '../../common/cache/dto/cache-bundle.dto';
 
 type MapFeatureRow = {
   uid: number;
@@ -460,6 +460,8 @@ export class MapService {
       };
     }
 
+    // Include ALL region types with active alerts — not just raions
+    // Artillery shelling and urban fights often occur in cities/hromadas
     const result = await this.databaseService.query<{
       uid: number;
       title_uk: string;
@@ -478,7 +480,7 @@ export class MapService {
         LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
         JOIN air_raid_state_current arc ON arc.uid = rc.uid
         WHERE rc.is_active = TRUE
-          AND rc.region_type = 'raion'
+          AND rc.is_subscription_leaf = TRUE
           AND arc.status = 'A'
         ORDER BY rc.uid ASC
       `,
@@ -685,7 +687,7 @@ export class MapService {
 
     // Cache non-bbox requests
     if (!bbox && overlays.length > 0) {
-      const bucketTs = Math.floor(Date.now() / 300000) * 300000;
+      const bucketTs = Math.floor(Date.now() / 60000) * 60000;
       const bundle = {
         bucket_ts: bucketTs,
         generated_at: TimeUtil.getNowInKyiv(),
@@ -856,4 +858,106 @@ export class MapService {
     return archivedCount;
   }
 
+  async getFullMapBundle(): Promise<MapBundleDto> {
+    const cached = await this.cacheService.get<MapBundleDto>(CACHE_KEYS.MAP_BUNDLE);
+    if (cached) {
+      this.logger.debug('Cache hit for map bundle');
+      return cached;
+    }
+
+    // Fallback: bundle not yet built — build it now
+    this.logger.warn('Map bundle not in cache, building on-demand');
+    const bundle = await this.mapBundleService.buildFullMapBundle();
+    await this.cacheService.set(CACHE_KEYS.MAP_BUNDLE, bundle, CACHE_TTL.MAP_BUNDLE);
+    return bundle;
+  }
+
+  async getThreatBundle(): Promise<any> {
+    const cached = await this.cacheService.get<any>(CACHE_KEYS.THREAT_BUNDLE);
+    if (cached) {
+      this.logger.debug('Cache hit for threat bundle');
+      return cached;
+    }
+
+    // Fallback: build threat bundle from DB
+    this.logger.warn('Threat bundle not in cache, building on-demand');
+    const bundle = await this.mapBundleService.buildThreatBundle();
+    await this.cacheService.set(CACHE_KEYS.THREAT_BUNDLE, bundle, CACHE_TTL.THREAT_BUNDLE);
+    return bundle;
+  }
+
+  async rebuildFullMapBundle(stateVersion?: number) {
+    this.logger.log('Rebuilding full map bundle on demand');
+    const bundle = await this.mapBundleService.buildFullMapBundle(stateVersion);
+    await this.cacheService.set(CACHE_KEYS.MAP_BUNDLE, bundle, CACHE_TTL.MAP_BUNDLE);
+    return {
+      success: true,
+      state_version: bundle.state_version,
+      active_alerts_count: bundle.active_alerts_count,
+      status_lookup_size: Object.keys(bundle.status_lookup).length,
+      alerts_layer_count: bundle.alerts_layer.features.length,
+      generated_at: bundle.generated_at,
+    };
+  }
+
+  async rebuildThreatBundle() {
+    this.logger.log('Rebuilding threat bundle on demand');
+    const bundle = await this.mapBundleService.buildThreatBundle();
+    await this.cacheService.set(CACHE_KEYS.THREAT_BUNDLE, bundle, CACHE_TTL.THREAT_BUNDLE);
+    return {
+      success: true,
+      overlay_count: bundle.overlay_count,
+      generated_at: bundle.generated_at,
+    };
+  }
+
+  async getStaticGeometry(layer: string, simplifyTolerance: number) {
+    if (!this.databaseService.isConfigured()) {
+      return { features: [], note_uk: 'База даних недоступна.' };
+    }
+
+    const regionTypes = layer === 'oblast' ? ['oblast', 'city'] : [layer];
+    const result = await this.databaseService.query<{
+      uid: number;
+      title_uk: string;
+      region_type: string;
+      parent_uid: number | null;
+      oblast_uid: number | null;
+      geometry_json: string;
+    }>(
+      `
+        SELECT rc.uid,
+               rc.title_uk,
+               rc.region_type,
+               rc.parent_uid,
+               rc.oblast_uid,
+               ST_AsGeoJSON(ST_Simplify(rg.geom, $1)) AS geometry_json
+        FROM region_catalog rc
+        JOIN region_geometry rg ON rg.uid = rc.uid
+        WHERE rc.is_active = TRUE
+          AND rc.region_type = ANY($2::text[])
+        ORDER BY rc.uid ASC
+      `,
+      [simplifyTolerance, regionTypes],
+    );
+
+    const features = result.rows.map((row) => ({
+      type: 'Feature',
+      geometry: JSON.parse(row.geometry_json),
+      properties: {
+        uid: row.uid,
+        title_uk: row.title_uk,
+        region_type: row.region_type,
+        parent_uid: row.parent_uid,
+        oblast_uid: row.oblast_uid,
+      },
+    }));
+
+    return {
+      layer,
+      simplify_tolerance: simplifyTolerance,
+      features,
+      count: features.length,
+    };
+  }
 }

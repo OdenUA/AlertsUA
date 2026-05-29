@@ -145,16 +145,28 @@ async function loadUkraineMask() {
         var maskFeature = null;
         var hasBorder = false;
 
-        // Prefer optimised union endpoint (available after backend deploy).
-        const boundaryResp = await fetch(buildUrl('/map/ukraine-boundary'), {
-            headers: { 'Accept': 'application/json' }
-        });
-        if (boundaryResp.ok) {
-            const data = await boundaryResp.json();
-            if (data.feature && data.feature.geometry) {
-                ukraineBoundaryGeometry = data.feature.geometry;
-                maskFeature = buildMaskFeature(data.feature.geometry);
+        // Prefer static geometry from assets (loaded at startup)
+        try {
+            var boundaryGeom = getUkraineBoundaryGeometry();
+            if (boundaryGeom) {
+                ukraineBoundaryGeometry = boundaryGeom;
+                maskFeature = buildMaskFeature(boundaryGeom);
                 hasBorder = true;
+            }
+        } catch(e) { /* static geometry not available */ }
+
+        // Fallback: try API endpoint
+        if (!maskFeature) {
+            const boundaryResp = await fetch(buildUrl('/map/ukraine-boundary'), {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (boundaryResp.ok) {
+                const data = await boundaryResp.json();
+                if (data.feature && data.feature.geometry) {
+                    ukraineBoundaryGeometry = data.feature.geometry;
+                    maskFeature = buildMaskFeature(data.feature.geometry);
+                    hasBorder = true;
+                }
             }
         }
 

@@ -29,4 +29,10 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo [+] Done: android-app\app\build\outputs\bundle\release\app-release.aab
+if exist "%~dp0android-app\app\build\outputs\bundle\release\app-release.aab" (
+    echo [+] Opening output folder...
+    explorer /select,"%~dp0android-app\app\build\outputs\bundle\release\app-release.aab"
+) else (
+    echo [!] Built file not found: "%~dp0android-app\app\build\outputs\bundle\release\app-release.aab"
+)
 endlocal

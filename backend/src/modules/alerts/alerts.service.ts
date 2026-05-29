@@ -250,7 +250,7 @@ export class AlertsService {
           // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
           // DO NOT include raions/oblasts — they are parent regions filled by their active children.
           const activeUidsResult = await client.query<{ uid: number }>(
-            `SELECT uid FROM air_raid_state_current arc
+            `SELECT arc.uid FROM air_raid_state_current arc
              JOIN region_catalog rc ON rc.uid = arc.uid
              WHERE arc.status IN ('A', 'P')
                AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
@@ -346,7 +346,7 @@ export class AlertsService {
           // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
           // DO NOT include raions/oblasts — they are parent regions filled by their active children.
           const activeUidsResult = await client.query<{ uid: number }>(
-            `SELECT uid FROM air_raid_state_current arc
+            `SELECT arc.uid FROM air_raid_state_current arc
              JOIN region_catalog rc ON rc.uid = arc.uid
              WHERE arc.status IN ('A', 'P')
                AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
@@ -849,7 +849,7 @@ export class AlertsService {
       // DO NOT include raions/oblasts — they are parent regions filled by their active children.
       // Including them would cause entire oblasts to be painted when only some hromadas are active.
       const activeUidsResult = await client.query<{ uid: number }>(
-        `SELECT uid FROM air_raid_state_current arc
+        `SELECT arc.uid FROM air_raid_state_current arc
          JOIN region_catalog rc ON rc.uid = arc.uid
          WHERE arc.status IN ('A', 'P')
            AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
@@ -868,6 +868,7 @@ export class AlertsService {
         CACHE_KEYS.FEATURES('hromada', 'medium'),
         CACHE_KEYS.FEATURES('hromada', 'high'),
       ]);
+
       this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached, ALL caches invalidated: state_version=${nextStateVersion}`);
     } catch (error) {
       this.logger.error(`Failed to rebuild alert layer: ${error}`);

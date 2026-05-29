@@ -1,8 +1,6 @@
-// Переменная для хранения слоя оккупированных территорий
-var occupiedTerritoriesLayer = null;
-
 /**
- * Загружает и отображает оккупированные территории на карте
+ * Загружает и отображает оккупированные территории на карте.
+ * Uses the occupiedTerritoriesLayer variable declared in constants.js.
  */
 async function loadOccupiedTerritories() {
     console.log('[OccupiedTerritories] Starting to load occupied territories...');

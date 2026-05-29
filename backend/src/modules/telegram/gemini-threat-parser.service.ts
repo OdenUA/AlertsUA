@@ -55,7 +55,7 @@ type ThreatVectorDedupeKeyInput = {
 };
 
 type LlmTarget = {
-  provider: 'grok' | 'gemini';
+  provider: 'deepseek' | 'grok' | 'gemini';
   model: string;
   apiKey: string;
 };
@@ -94,65 +94,30 @@ TARGET INDICATORS (destination):
 - "в напрямку [місце]" = towards [place]
 - "курсом на [місце]" = course towards [place]
 
-CURRENT LOCATION (where threat is NOW):
-- "БпЛА на [місто]" = UAV heading TO [city] (not currently there)
-- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city]
-- "БпЛА над [місто]" = UAV currently OVER [city]
-- "БпЛА на [область]" = UAV heading TO [region]
+CURRENT LOCATION (where threat is NOW) — HIGHEST PRIORITY, overrides all other rules:
+- "БпЛА по межі X і Y" = UAV ON THE BORDER between X and Y → use border coordinates as origin
+- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city] → use city coordinates as origin
+- "БпЛА над [місто/область]" = UAV currently OVER [city/oblast] → use those coordinates as origin
+- "БпЛА біля [місто]" = UAV currently NEAR [city] → use city coordinates as origin
+- "БпЛА в сторону X" = heading TOWARDS X → X is target, not current location
+- CRITICAL: When current location is explicitly stated, use it as origin. Do NOT apply regional entry vectors!
+- "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
+- "вектор - [city1]/[city2]" = exact movement direction towards those towns.
+- "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
 
-GEOGRAPHIC RULES:
+TARGET INDICATORS (destination):
+- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)
+- "в [місце]" = to/in [place]
+- "у [місце]" = to/in [place]
+- "в напрямку [місце]" = towards [place]
+- "курсом на [місце]" = course towards [place]
 
-Black Sea (Чорне море):
-- Coordinates: WATER, latitude < 46°N, approximately 45.0°N, 31.0°E
-- If message says "з Чорного моря" → origin_lat/lng MUST be in WATER (~45.0°N, 31.0°E)
-- If message says "з акваторії Чорного моря" → origin_lat/lng MUST be in WATER
-
-Odesa (Одеса):
-- Coordinates: LAND, latitude ~46.5°N, longitude ~30.7°E
-- If message says "на Одесу" or "в напрямку Одеси" → target_lat/lng MUST be on LAND
-
-CRITICAL EXAMPLES (study these carefully):
-
-Example 1: "🛵 Нові групи ворожих БпЛА у напрямку Одеси з Чорного моря."
-- ORIGIN: "з Чорного моря" → Black Sea (WATER, ~45.0°N, 31.0°E)
-- TARGET: "у напрямку Одеси" → Odesa (LAND, ~46.5°N, 30.7°E)
-- Bearing: ~320° (from Black Sea to Odesa)
-
-Example 2: "🛵 Одещина - БпЛА на Одесу/Чорноморське з акваторїї Чорного моря."
-- ORIGIN: "з акваторії Чорного моря" → Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
-- TARGET: "на Одесу/Чорноморське" → Odesa/Chornomorsk (LAND, ~46.5°N, 30.7°E for Odesa)
-
-Example 3: "🛵 БпЛА з Черкащини курсом на Кіровоградщину."
-- ORIGIN: "з Черкащини" → Cherkasy region (~49.5°N, 32.0°E)
-- TARGET: "курсом на Кіровоградщину" → Kirovohrad region (~48.5°N, 32.0°E)
-- Bearing: ~180° (south)
-
-Example 4: "🛵 БпЛА на Дніпро з південного заходу."
-- ORIGIN: "з південного заходу" → southwest (~48.0°N, 34.0°E)
-- TARGET: "на Дніпро" → Dnipro city (~48.5°N, 35.0°E)
-- Bearing: ~45° (northeast)
-
-Example 5: "🛵 Група БпЛА на півночі Київщини- курс на Житомирщину."
-- ORIGIN: "на півночі Київщини" → north of Kyiv region (~50.5°N, 30.5°E)
-- TARGET: "на Житомирщину" → Zhytomyr region (~50.3°N, 28.7°E)
-- Bearing: ~270° (west)
-
-Example 6: "🛵 БпЛА курсом на м.Харків з півночі."
-- ORIGIN: "з півночі" → north (~50.0°N, 36.0°E)
-- TARGET: "курсом на м.Харків" → Kharkiv city (~49.9°N, 36.2°E)
-- Bearing: ~180° (south)
-
-Example 7: "🛵 БпЛА з Херсонщини курсом на Миколаївщину"
-- ORIGIN: "з Херсонщини" → Kherson region (~46.6°N, 33.0°E)
-- TARGET: "курсом на Миколаївщину" → Mykolaiv region (~47.0°N, 32.0°E)
-- Bearing: ~315° (northwest)
-
-Example 8: "🛵 БпЛА в районі м. Запоріжжя"
-- CURRENT LOCATION: "в районі м. Запоріжжя" = in area of Zaporizhzhia city
-- No clear movement direction → origin and target may both be Zaporizhzhia
-
-Example 9: "🛵 Запоріжжя - БпЛА в напрямку міста з півдня."
-- ORIGIN: "з півдня" → south (~47.0°N, 35.0°E)
+ORIGIN INDICATORS (source/launch point):
+- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)
+- "від [місце]" = from [place]
+- "із [місце]" = from [place]
+- "з-під [місце]" = from under [place]
+- "з-за [місце]" = from behind [place]
 - TARGET: "в напрямку міста" (referring to Zaporizhzhia) → Zaporizhzhia city (~47.8°N, 35.1°E)
 - Bearing: ~0° (north)
 
@@ -185,6 +150,46 @@ Example 14: "🛵 БпЛА ➡️ курсом на Синельникове н�
 - Bearing: ~330° (north-west)
 - CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from occupied Zaporizhzhia/Donetsk region to point the flight vector from occupied territories towards Synelnykove.
 
+Example 15: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
+- CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
+- TARGET/DIRECTION: "в напрямку Полтавщини (вектор - Котельва/Опішня)" = heading towards Poltava oblast, specifically towards Kotelva/Opishnia towns (~50.0°N, 34.5°E)
+- Bearing: ~135° (south-east)
+- CRITICAL: "по межі X і Y" means the UAV is ON THE BORDER between those two oblasts. Do NOT place it in a completely different oblast like Dnipropetrovsk!
+- CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it. The Poltava entry vector rule does NOT apply here because the current location is explicitly stated.
+- CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
+
+Example 16: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
+- ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
+- TARGET: "курс на Полтавщину" = heading TO Poltava oblast (~49.5°N, 34.5°E)
+- Bearing: ~160° (south)
+- CRITICAL: "над [область]" means OVER that oblast — current position is there. Do NOT use inferred origin from occupied territories.
+
+Example 15: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
+- CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
+- TARGET/DIRECTION: "в напрямку Полтавщини (вектор - Котельва/Опішня)" = heading towards Poltava oblast, specifically towards Kotelva/Opishnia towns (~50.0°N, 34.5°E)
+- Bearing: ~135° (south-east)
+- CRITICAL: "по межі X і Y" means the UAV is ON THE BORDER between those two oblasts. Do NOT place it in a completely different oblast like Dnipropetrovsk!
+- CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
+- CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it.
+
+Example 16: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
+- ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
+- TARGET: "курс на Полтавщину" = heading TO Poltava oblast (~49.5°N, 34.5°E)
+- Bearing: ~160° (south)
+- CRITICAL: "над [область]" means OVER that oblast — current position is there. Do NOT use inferred origin from occupied territories.
+
+Example 17: "БпЛА в районі Сум, рухається в сторону Харкова"
+- CURRENT LOCATION: "в районі Сум" = in area of Sumy city (~50.9°N, 34.8°E)
+- TARGET: "в сторону Харкова" = towards Kharkiv city (~50.0°N, 36.2°E)
+- Bearing: ~135° (south-east)
+- CRITICAL: "в районі [місто]" = currently NEAR that city. Do NOT move it to another oblast!
+
+Example 18: "Каб з півночі Харківщини по Слов'янську"
+- ORIGIN: "з півночі Харківщини" = from north of Kharkiv oblast (~49.5°N, 37.6°E)
+- TARGET: "по Слов'янську" = at/over Sloviansk city (~48.9°N, 37.6°E)
+- Bearing: ~180° (south)
+- CRITICAL: "по [місто]" means AT that city. Target is the city itself.
+
 COORDINATE REQUIREMENTS:
 - You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng
 - DO NOT rely on server-side hints or fallbacks
@@ -207,19 +212,40 @@ GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
    - If direction is UNKNOWN and no context is available, use the oblast center coordinates.
    - If threat targets a CITY (not oblast), use city coordinates.
 
-2. For UAV (Drone) Threats (Inferred Entry Vectors):
-   - UAVs (БпЛА) never originate from the center of the targeted region or city. They always fly from Russian territory, occupied Ukrainian territories, or the Black/Azov Seas.
-   - If the post mentions UAVs at/heading to a specific location and does not specify where they came from:
-     * DO NOT set the origin_hint to the targeted region or city. Set origin_hint to a realistic launch/entry region (e.g., "окупований південь", "Росія", "окупований схід", etc.).
-     * You MUST calculate and provide explicit 'origin_lat' and 'origin_lng' coordinates positioned 60-120 km away from the target location in the direction of the threat's entry point, so that the movement vector correctly shows them entering from occupied/Russian territories, not from the center of the free region.
-     * Use the following regional entry/origin vectors to compute 'origin_lat'/'origin_lng' (located ~80km away in the specified direction):
-       - Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате", "Новомиколаївка"): UAVs enter from the SOUTH/SOUTH-EAST (occupied Zaporizhzhia/Sea of Azov direction, e.g., origin around ~46.5°N, 36.0°E).
-       - Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове", "Дніпро"): UAVs enter from the SOUTH/SOUTH-EAST (from Zaporizhzhia/Donetsk direction, e.g., origin around ~47.2°N, 36.2°E).
-       - Targets in Kharkiv oblast (e.g., "на Харків", "Куп'янськ"): UAVs enter from the NORTH/NORTH-EAST (Russia/Belgorod direction, e.g., origin around ~50.4°N, 36.3°E).
-       - Targets in Odesa/Mykolaiv/Kherson oblasts: UAVs enter from the SOUTH (Black Sea/Crimea, e.g., origin around ~45.5°N, 31.5°E for Odesa, or ~46.0°N, 32.5°E for Mykolaiv).
-       - Targets in Sumy/Chernihiv oblasts: UAVs enter from the NORTH/EAST (Russia, e.g., origin around ~51.5°N, 34.7°E for Sumy).
-       - Targets in Poltava/Kirovohrad/Cherkasy oblasts: UAVs enter from the EAST/SOUTH-EAST (Dnipropetrovsk/Zaporizhzhia direction, e.g. origin ~48.0°N, 35.0°E).
-       - Targets in Kyiv oblast/city: UAVs enter from the NORTH (Belarus, ~51.3°N, 30.5°E) or SOUTH/EAST.
+2. For UAV (Drone) Threats (Inferred Entry Vectors) — ONLY when origin is NOT explicitly stated:
+   - CRITICAL: These rules apply ONLY when the message does NOT explicitly state WHERE the drone currently is.
+   - If the message says "по межі X і Y", "над X", "в районі X", "біля X" — the origin is EXPLICIT. Do NOT use these entry vectors. Use the stated location directly.
+   - "в напрямку [область]" means heading TOWARDS that oblast, NOT that the drone is currently there. Do NOT apply that oblast's entry vector when "в напрямку" is used.
+   - If origin IS NOT stated and no direction phrases are present, use these regional entry vectors as fallback ONLY:
+     * Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате"): from SOUTH (~46.5°N, 36.0°E)
+     * Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове"): from SOUTH-EAST (~47.2°N, 36.2°E)
+     * Targets in Kharkiv oblast (e.g., "на Харків"): from NORTH (~50.4°N, 36.3°E)
+     * Targets in Odesa/Mykolaiv/Kherson: from SOUTH (~45.5°N, 31.5°E)
+     * Targets in Sumy/Chernihiv: from NORTH-EAST (~51.5°N, 34.7°E)
+     * Targets in Kyiv oblast/city: from NORTH (~51.3°N, 30.5°E)
+     * Targets in Poltava oblast (e.g., "на Полтавщині"): from EAST (~49.5°N, 35.5°E)
+   - WRONG EXAMPLE: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини" → origin is on Sumy/Kharkiv border (~50.0°N, 34.0°E), NOT from Poltava entry vectors
+   - RIGHT EXAMPLE: "БпЛА на Полтавщині" (no origin stated) → origin from EAST (~49.5°N, 35.5°E)
+
+CRITICAL LOCATION PRIORITY RULES (apply in this order, stop at first match):
+
+1. EXPLICIT CURRENT LOCATION — when message states WHERE the drone IS RIGHT NOW:
+   - "по межі X і Y" = ON THE BORDER between X and Y → use border coordinates as origin
+   - "над X" / "над [область]" = OVER X → use X coordinates as origin
+   - "в районі X" = IN AREA of X → use X coordinates as origin
+   - "біля X" = NEAR X → use X coordinates as origin
+   - "на X" (when X is oblast/city and message says "БпЛА на X") = depends on context — could be AT or HEADING TO
+   - CRITICAL: When explicit location is given, DO NOT apply regional entry vectors from rule 2. Use the stated location directly.
+
+2. EXPLICIT ORIGIN — when message states WHERE threat COMES FROM:
+   - "з X" / "із X" = FROM X → use X coordinates as origin
+   - "від X" = FROM X → use X coordinates as origin
+
+3. DIRECTIONAL PHRASES (only if no explicit origin/location):
+   - "з півночі" = from north → infer from north of target
+   - "з півдня" = from south → infer from south of target
+
+4. REGIONAL ENTRY VECTORS (fallback only, when nothing else is stated)
 
 BEARING CALCULATION:
 - movement_bearing_deg = direction FROM origin TO target (0-360 degrees)
@@ -275,7 +301,7 @@ export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unk
   return Math.min(baseTtlMinutes, 60);
 }
 
-export function isRetriableGeminiFailure(responseStatus: number | null, errorMessage: string | null | undefined) {
+export function isRetriableLlmFailure(responseStatus: number | null, errorMessage: string | null | undefined) {
   if (responseStatus !== null) {
     return responseStatus === 408 || responseStatus === 409 || responseStatus === 425 || responseStatus === 429 || responseStatus >= 500;
   }
@@ -313,7 +339,7 @@ export function shouldFallbackToGemini25Flash(responseStatus: number | null, err
   );
 }
 
-export function getGeminiRetryDelayMs(retryAttempt: number, baseDelayMs: number, maxDelayMs = 10_000) {
+export function getLlmRetryDelayMs(retryAttempt: number, baseDelayMs: number, maxDelayMs = 10_000) {
   const normalizedAttempt = Math.max(1, Math.floor(retryAttempt));
   const normalizedBaseDelayMs = Math.max(1, Math.floor(baseDelayMs));
   return Math.min(normalizedBaseDelayMs * 2 ** (normalizedAttempt - 1), maxDelayMs);
@@ -533,7 +559,7 @@ export class GeminiThreatParserService {
             shouldFallbackToGemini25Flash(responseStatus, parseErrorText);
           shouldRetryCurrentTarget =
             (requestAttempt < requestAttemptLimit || shouldSwitchGeminiModel) &&
-            isRetriableGeminiFailure(responseStatus, parseErrorText);
+            isRetriableLlmFailure(responseStatus, parseErrorText);
         } finally {
           await this.persistLlmExchange({
             jobId,
@@ -568,7 +594,7 @@ export class GeminiThreatParserService {
           );
         }
 
-        const retryDelayMs = getGeminiRetryDelayMs(requestAttempt, retryBaseDelayMs);
+        const retryDelayMs = getLlmRetryDelayMs(requestAttempt, retryBaseDelayMs);
         this.logger.warn(
           `LLM request retry scheduled job=${jobId} job_attempt=${attemptCount} target=${targetIndex + 1}/${llmTargets.length} provider=${activeTarget.provider} request_attempt=${requestAttempt}/${requestAttemptLimit} model=${activeTarget.model} delay_ms=${retryDelayMs}`,
         );
@@ -590,8 +616,17 @@ export class GeminiThreatParserService {
 
   private buildLlmTargets(): LlmTarget[] {
     const targets: LlmTarget[] = [];
+    const deepseekApiKey = this.toNullableString(this.configService.get<string>('DEEPSEEK_API_KEY'));
     const grokApiKey = this.toNullableString(this.configService.get<string>('GROK_API_KEY'));
     const geminiApiKey = this.toNullableString(this.configService.get<string>('GEMINI_API_KEY'));
+
+    if (deepseekApiKey) {
+      targets.push({
+        provider: 'deepseek',
+        model: this.configService.get<string>('DEEPSEEK_MODEL') ?? 'deepseek-v4-flash',
+        apiKey: deepseekApiKey,
+      });
+    }
 
     if (grokApiKey) {
       targets.push({
@@ -610,14 +645,14 @@ export class GeminiThreatParserService {
     }
 
     if (targets.length === 0) {
-      throw new Error('No LLM API key is configured. Set GROK_API_KEY or GEMINI_API_KEY.');
+      throw new Error('No LLM API key is configured. Set DEEPSEEK_API_KEY, GROK_API_KEY or GEMINI_API_KEY.');
     }
 
     return targets;
   }
 
   private buildLlmRequestPayload(target: LlmTarget, prompt: string) {
-    if (target.provider === 'grok') {
+    if (target.provider === 'grok' || target.provider === 'deepseek') {
       return {
         model: target.model,
         messages: [
@@ -648,6 +683,10 @@ export class GeminiThreatParserService {
   }
 
   private getLlmEndpoint(target: LlmTarget) {
+    if (target.provider === 'deepseek') {
+      return 'https://api.deepseek.com/chat/completions';
+    }
+
     if (target.provider === 'grok') {
       return 'https://api.x.ai/v1/chat/completions';
     }
@@ -660,7 +699,7 @@ export class GeminiThreatParserService {
       'Content-Type': 'application/json',
     };
 
-    if (target.provider === 'grok') {
+    if (target.provider === 'deepseek' || target.provider === 'grok') {
       headers.Authorization = `Bearer ${target.apiKey}`;
     }
 
@@ -668,8 +707,8 @@ export class GeminiThreatParserService {
   }
 
   private parseLlmCandidates(target: LlmTarget, responseBody: string) {
-    const textPayload = target.provider === 'grok'
-      ? this.extractGrokTextPayload(responseBody)
+    const textPayload = target.provider === 'deepseek' || target.provider === 'grok'
+      ? this.extractOpenaiTextPayload(responseBody)
       : this.extractGeminiTextPayload(responseBody);
     const jsonPayload = this.unwrapJson(textPayload);
     if (!jsonPayload) {
@@ -697,7 +736,7 @@ export class GeminiThreatParserService {
     return textPayload;
   }
 
-  private extractGrokTextPayload(responseBody: string) {
+  private extractOpenaiTextPayload(responseBody: string) {
     const parsedBody = JSON.parse(responseBody) as {
       choices?: Array<{
         message?: {
@@ -714,14 +753,16 @@ export class GeminiThreatParserService {
         : '';
 
     if (!textPayload.trim()) {
-      throw new Error('Grok returned no text payload.');
+      throw new Error('OpenAI-compatible API returned no text payload.');
     }
 
     return textPayload;
   }
 
   private describeLlmTarget(target: LlmTarget) {
-    return target.provider === 'grok' ? 'Grok' : 'Gemini';
+    if (target.provider === 'deepseek') return 'DeepSeek';
+    if (target.provider === 'grok') return 'Grok';
+    return 'Gemini';
   }
 
   private getAliasedNumberEnv(names: string[], fallback: number) {
@@ -1098,10 +1139,10 @@ export class GeminiThreatParserService {
       overlaysCreated += 1;
     }
 
-    // Invalidate threats cache so next request rebuilds the bundle
+    // Invalidate threats cache
     if (overlaysCreated > 0) {
       try {
-        const currentBucketTs = Math.floor(Date.now() / 300000) * 300000;
+        const currentBucketTs = Math.floor(Date.now() / 60000) * 60000;
         await this.cacheService.delete(CACHE_KEYS.THREATS_BUCKET(currentBucketTs));
         await this.cacheService.publish(CACHE_CHANNELS.THREATS_UPDATED, {
           overlays_created: overlaysCreated,

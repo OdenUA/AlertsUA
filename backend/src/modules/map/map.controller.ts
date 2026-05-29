@@ -1,4 +1,4 @@
-import { Controller, Get, Header, ParseIntPipe, Query } from '@nestjs/common';
+import { Controller, Get, Header, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { MapService } from './map.service';
 import { OccupiedTerritoriesService } from './occupied-territories.service';
 import { OccupiedTerritoriesGeoJSON } from './occupied-territories.service';
@@ -81,5 +81,33 @@ export class MapController {
   @Get('occupied-territories-layer')
   getOccupiedTerroriesLayer() {
     return this.occupiedTerritoriesService.getOccupiedTerroriesLayer();
+  }
+
+  @Get('bundle')
+  getMapBundle() {
+    return this.mapService.getFullMapBundle();
+  }
+
+  @Get('threat-bundle')
+  getThreatBundle() {
+    return this.mapService.getThreatBundle();
+  }
+
+  @Post('bundle/rebuild')
+  async rebuildMapBundle() {
+    return this.mapService.rebuildFullMapBundle();
+  }
+
+  @Post('threat-bundle/rebuild')
+  async rebuildThreatBundle() {
+    return this.mapService.rebuildThreatBundle();
+  }
+
+  @Get('static-geometry')
+  getStaticGeometry(
+    @Query('layer') layer = 'oblast',
+    @Query('simplify') simplify = '0.01',
+  ) {
+    return this.mapService.getStaticGeometry(layer, parseFloat(simplify));
   }
 }
