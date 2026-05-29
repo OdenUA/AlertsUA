@@ -70,6 +70,8 @@ const THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL = "INTERVAL '5 minutes'";
 @Injectable()
 export class MapService {
   private readonly logger = new Logger(MapService.name);
+  // In-memory JSON string cache to avoid JSON.stringify on every request
+  private readonly responseJsonCache = new Map<string, string>();
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -179,12 +181,19 @@ export class MapService {
       return { feature: null };
     }
 
+    // Use ST_Collect instead of ST_Union to avoid GEOS topology errors
+    // Collect just gathers geometries without trying to merge boundaries
+    const cacheKey = 'map:ukraine-boundary';
+    const cachedJson = this.responseJsonCache.get(cacheKey);
+    if (cachedJson) {
+      this.logger.debug('JSON cache hit for ukraine boundary');
+      return JSON.parse(cachedJson);
+    }
+
     const result = await this.databaseService.query<{ geom_json: string }>(
       `
         SELECT ST_AsGeoJSON(
-          ST_MakeValid(
-            ST_Union(ST_Simplify(rg.geom, 0.01))
-          )
+          ST_Collect(ST_Simplify(rg.geom, 0.01))
         ) AS geom_json
         FROM region_geometry rg
         JOIN region_catalog rc ON rc.uid = rg.uid
@@ -199,12 +208,17 @@ export class MapService {
       return { feature: null };
     }
 
-    return {
+    const response = {
       feature: {
         type: 'Feature',
         geometry: JSON.parse(row.geom_json),
       },
     };
+
+    // Cache boundary geometry (static data, never changes)
+    this.responseJsonCache.set(cacheKey, JSON.stringify(response));
+
+    return response;
   }
 
   getConfig() {
@@ -277,35 +291,64 @@ export class MapService {
     const cached = await this.cacheService.get<FeaturesBundleDto>(cacheKey);
     if (cached) {
       this.logger.debug(`Cache hit for features: ${cacheKey}`);
-      const alertsBundle = await this.cacheService.get<AlertsBundleDto>(CACHE_KEYS.ALERTS_CURRENT);
-      this.mapBundleService.mergeAlertsStatus(cached, alertsBundle);
-      return {
+      // Get active UIDs for subscription_leaf regions only (hromadas, cities) — matches original alertsBundle behavior
+      const statusResult = await this.databaseService.query<{ uid: number; alert_type: string }>(
+        `SELECT arc.uid, arc.alert_type
+         FROM air_raid_state_current arc
+         JOIN region_catalog rc ON rc.uid = arc.uid
+         WHERE arc.status IN ('A', 'P')
+           AND rc.is_subscription_leaf = TRUE`,
+      );
+      const statusLookup: Record<number, { status: string; alert_type: string }> = {};
+      for (const row of statusResult.rows) {
+        statusLookup[row.uid] = { status: 'A', alert_type: row.alert_type };
+      }
+      cached.features.status_lookup = statusLookup;
+      const response = {
         layer,
         bbox: bbox ?? null,
         zoom: zoom ?? null,
         pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
         features: this.buildFeaturesFromBundle(cached),
       };
+      const responseJsonKey = `features:json:${layer}:${selectedLod}` + (bbox ? `:${bbox}` : '');
+      this.responseJsonCache.set(responseJsonKey, JSON.stringify(response));
+      return response;
     }
 
     // Cache miss - build bundle
     this.logger.debug(`Cache miss for features: ${cacheKey}`);
     const bundle = await this.mapBundleService.buildFeaturesBundle(layer, selectedLod, parsedBbox ?? undefined);
 
-    // Merge alerts status
-    const alertsBundle = await this.cacheService.get<AlertsBundleDto>(CACHE_KEYS.ALERTS_CURRENT);
-    this.mapBundleService.mergeAlertsStatus(bundle, alertsBundle);
+    // Get active UIDs for subscription_leaf regions only (hromadas, cities)
+    const statusResult = await this.databaseService.query<{ uid: number; alert_type: string }>(
+      `SELECT arc.uid, arc.alert_type
+       FROM air_raid_state_current arc
+       JOIN region_catalog rc ON rc.uid = arc.uid
+       WHERE arc.status IN ('A', 'P')
+         AND rc.is_subscription_leaf = TRUE`,
+    );
+    const statusLookup: Record<number, { status: string; alert_type: string }> = {};
+    for (const row of statusResult.rows) {
+      statusLookup[row.uid] = { status: 'A', alert_type: row.alert_type };
+    }
+    bundle.features.status_lookup = statusLookup;
 
     // Cache the bundle
     await this.cacheService.set(cacheKey, bundle, CACHE_TTL.FEATURES);
 
-    return {
+    const response = {
       layer,
       bbox: bbox ?? null,
       zoom: zoom ?? null,
       pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
       features: this.buildFeaturesFromBundle(bundle),
     };
+
+    const responseJsonKey = `features:json:${layer}:${selectedLod}` + (bbox ? `:${bbox}` : '');
+    this.responseJsonCache.set(responseJsonKey, JSON.stringify(response));
+
+    return response;
   }
 
   private buildFeaturesFromBundle(bundle: FeaturesBundleDto) {
@@ -452,6 +495,14 @@ export class MapService {
       };
     }
 
+    // Pre-serialized JSON cache — avoids DB + JSON.stringify on every request
+    const cacheKey = 'alerts:layer:json';
+    const cachedJson = this.responseJsonCache.get(cacheKey);
+    if (cachedJson) {
+      this.logger.debug('JSON cache hit for alerts layer');
+      return JSON.parse(cachedJson);
+    }
+
     const result = await this.databaseService.query<{
       uid: number;
       region_type: string;
@@ -478,7 +529,7 @@ export class MapService {
       `,
     );
 
-    return {
+    const response = {
       generated_at: TimeUtil.getNowInKyiv(),
       features: result.rows.map((row) => ({
         type: 'Feature',
@@ -491,6 +542,10 @@ export class MapService {
       })),
       updated_at: result.rows[0]?.updated_at,
     };
+
+    this.responseJsonCache.set(cacheKey, JSON.stringify(response));
+
+    return response;
   }
 
   async getThreatOverlays(bbox?: string) {

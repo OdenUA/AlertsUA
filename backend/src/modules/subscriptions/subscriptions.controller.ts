@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Header,
 } from '@nestjs/common';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { ResolvePointDto } from './dto/resolve-point.dto';
@@ -19,6 +20,7 @@ export class SubscriptionsController {
   constructor(private readonly subscriptionsService: SubscriptionsService) {}
 
   @Post('resolve-point')
+  @Header('Cache-Control', 'public, max-age=60') // 1 minute
   async resolvePoint(@Body() dto: ResolvePointDto) {
     return this.subscriptionsService.resolvePoint(dto.latitude, dto.longitude);
   }

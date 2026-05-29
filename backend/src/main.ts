@@ -2,11 +2,16 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import compression from 'compression';
 import { AppModule } from './app.module';
 import { ApiErrorFilter } from './common/http/api-error.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  
+  // Enable compression for all responses
+  app.use(compression());
+  
   app.use(helmet());
   app.useGlobalPipes(
     new ValidationPipe({

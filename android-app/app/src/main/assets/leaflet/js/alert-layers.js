@@ -435,8 +435,15 @@ async function loadAlertsLayer() {
         map.removeLayer(alertLayersGroup);
     }
 
+    // Filter to fully active regions only (status 'A')
+    // For partial alerts (P), only specific raions/hromadas are active — handled by features layers
+    const activeFeatures = features.filter(function(feature) {
+        var props = feature && feature.properties;
+        return props && props.status === 'A';
+    });
+
     // Create new alerts layer
-    alertLayersGroup = L.geoJSON(features, {
+    alertLayersGroup = L.geoJSON(activeFeatures, {
         style: function(feature) {
             const props = feature && feature.properties;
             const alertType = props && props.alert_type || 'air_raid';

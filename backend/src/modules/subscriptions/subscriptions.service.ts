@@ -1,10 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { InstallationsService } from '../installations/installations.service';
 import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { TimeUtil } from '../../common/utils/time.util';
+import { CacheService } from '../../common/cache/cache.service';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 
@@ -148,10 +149,25 @@ export class SubscriptionsService {
     private readonly installationsService: InstallationsService,
     private readonly databaseService: DatabaseService,
     private readonly supabaseSyncService: SupabaseSyncService,
+    private readonly cacheService: CacheService,
   ) {}
 
   async resolvePoint(latitude: number, longitude: number) {
     this.ensureDatabaseConfigured();
+
+    // Cache key based on rounded coordinates (100m precision to reduce cache misses)
+    const latKey = Math.round(latitude * 1000) / 1000;
+    const lonKey = Math.round(longitude * 1000) / 1000;
+    const cacheKey = `resolve-point:${latKey}:${lonKey}`;
+
+    // Try cache first - point resolution is expensive (5+ queries)
+    const cached = await this.cacheService.get<any>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Cache hit for resolve-point: ${cacheKey}`);
+      return cached;
+    }
+
+    this.logger.debug(`Cache miss for resolve-point: ${cacheKey}`);
     const point = await this.resolvePointWithDisplayContext(this.databaseService, latitude, longitude);
     const [stateContext, ancestorTitles] = await Promise.all([
       this.loadStateContext(
@@ -192,7 +208,7 @@ export class SubscriptionsService {
     activeItems.sort((a, b) => (a.active_from ?? '').localeCompare(b.active_from ?? ''));
     const activeFrom = activeItems[0]?.active_from ?? null;
 
-    return {
+    const response = {
       address_uk: this.buildAddressLabel(point.leaf_title_uk),
       resolved_region: {
         leaf_uid:  point.leaf_uid,
@@ -220,6 +236,11 @@ export class SubscriptionsService {
       latitude,
       longitude,
     };
+
+    // Cache for 5 minutes - point resolution is expensive
+    await this.cacheService.set(cacheKey, response, 300);
+
+    return response;
   }
 
   async create(token: string, dto: CreateSubscriptionDto) {

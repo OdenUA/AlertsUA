@@ -99,6 +99,35 @@ fun SimplifiedMapScreen(
         mutableStateListOf<SubscriptionPin>().also { it.addAll(repository.loadSubscriptionPins()) }
     }
 
+    // ── Sync subscriptions from server on startup ──
+    LaunchedEffect(Unit) {
+        android.util.Log.d("SimplifiedMap", "Loading subscriptions from server...")
+        val apiBaseUrl = repository.loadApiBaseUrl()
+
+        // Ensure installation is registered (handles cache clear / reinstall)
+        try {
+            repository.ensureInstallationRegistered(apiBaseUrl)
+        } catch (e: Exception) {
+            android.util.Log.w("SimplifiedMap", "Installation registration failed", e)
+        }
+
+        // Fetch subscriptions with retry
+        var remotePins = runCatching { repository.fetchSubscriptions(apiBaseUrl) }.getOrNull()
+        if (remotePins.isNullOrEmpty()) {
+            delay(5_000L)
+            remotePins = runCatching { repository.fetchSubscriptions(apiBaseUrl) }.getOrNull()
+        }
+
+        if (!remotePins.isNullOrEmpty()) {
+            subscriptionPins.clear()
+            subscriptionPins.addAll(remotePins)
+            repository.saveSubscriptionPins(remotePins)
+            android.util.Log.d("SimplifiedMap", "Loaded ${remotePins.size} subscriptions from server")
+        } else {
+            android.util.Log.d("SimplifiedMap", "No subscriptions found on server")
+        }
+    }
+
     var isRefreshing by remember { mutableStateOf(false) }
 
     // Refresh function

@@ -445,10 +445,30 @@ class AlertsRepository(context: Context) {
             }
         }
 
-        // Fallback: try to fetch by android_id (for reinstalled apps)
+        // Fallback: try to fetch by android_id (for reinstalled apps or cleared cache)
         if (androidId.isNotBlank()) {
-            android.util.Log.d("AlertsRepository", "No installation token or no subscriptions, trying android_id: $androidId")
-            return@withContext fetchSubscriptionsByAndroidId(apiBaseUrl, androidId)
+            android.util.Log.d("AlertsRepository", "No installation token or no subscriptions via token, trying android_id: $androidId")
+            val pins = fetchSubscriptionsByAndroidId(apiBaseUrl, androidId)
+            if (pins.isNotEmpty()) {
+                return@withContext pins
+            }
+        }
+
+        // Last resort: ensure installation is registered, then try again
+        if (installToken == null) {
+            android.util.Log.d("AlertsRepository", "No token and no subscriptions via android_id, ensuring installation is registered")
+            ensureInstallationRegistered(rawApiBaseUrl)
+            val newToken = loadInstallationToken()
+            if (newToken != null) {
+                val pins = fetchSubscriptionsWithToken(apiBaseUrl, newToken, androidId)
+                if (pins.isNotEmpty()) {
+                    return@withContext pins
+                }
+            }
+            // Final fallback: try android_id again (server may have created new installation)
+            if (androidId.isNotBlank()) {
+                return@withContext fetchSubscriptionsByAndroidId(apiBaseUrl, androidId)
+            }
         }
 
         emptyList()
