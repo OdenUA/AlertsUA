@@ -181,8 +181,8 @@ export class MapService {
       return { feature: null };
     }
 
-    // Use ST_Collect instead of ST_Union to avoid GEOS topology errors
-    // Collect just gathers geometries without trying to merge boundaries
+    // Use ST_Buffer(ST_Collect(...), 0) instead of ST_Union to avoid GEOS errors
+    // Buffer 0 merges overlapping geometries into a single polygon (union effect)
     const cacheKey = 'map:ukraine-boundary';
     const cachedJson = this.responseJsonCache.get(cacheKey);
     if (cachedJson) {
@@ -193,7 +193,10 @@ export class MapService {
     const result = await this.databaseService.query<{ geom_json: string }>(
       `
         SELECT ST_AsGeoJSON(
-          ST_Collect(ST_Simplify(rg.geom, 0.01))
+          ST_Buffer(
+            ST_Collect(ST_Simplify(rg.geom, 0.01)),
+            0
+          )
         ) AS geom_json
         FROM region_geometry rg
         JOIN region_catalog rc ON rc.uid = rg.uid
@@ -291,64 +294,74 @@ export class MapService {
     const cached = await this.cacheService.get<FeaturesBundleDto>(cacheKey);
     if (cached) {
       this.logger.debug(`Cache hit for features: ${cacheKey}`);
-      // Get active UIDs for subscription_leaf regions only (hromadas, cities) — matches original alertsBundle behavior
-      const statusResult = await this.databaseService.query<{ uid: number; alert_type: string }>(
-        `SELECT arc.uid, arc.alert_type
-         FROM air_raid_state_current arc
-         JOIN region_catalog rc ON rc.uid = arc.uid
-         WHERE arc.status IN ('A', 'P')
-           AND rc.is_subscription_leaf = TRUE`,
-      );
+      // Read active UIDs from Redis cache (< 1KB) instead of DB query
+      // Fallback: query DB directly if cache hasn't been populated yet (before first poll cycle)
+      let activeUidsData = await this.cacheService.get<{ uids: number[] }>(CACHE_KEYS.ALERTS_ACTIVE_UIDS);
+      if (!activeUidsData) {
+        this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
+        const dbResult = await this.databaseService.query<{ uid: number }>(
+          `SELECT arc.uid FROM air_raid_state_current arc
+           JOIN region_catalog rc ON rc.uid = arc.uid
+           WHERE arc.status IN ('A', 'P')
+             AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+        );
+        activeUidsData = { uids: dbResult.rows.map((r) => r.uid) };
+        // Populate cache for subsequent requests
+        await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, activeUidsData, CACHE_TTL.ALERTS);
+      }
       const statusLookup: Record<number, { status: string; alert_type: string }> = {};
-      for (const row of statusResult.rows) {
-        statusLookup[row.uid] = { status: 'A', alert_type: row.alert_type };
+      if (activeUidsData.uids) {
+        for (const uid of activeUidsData.uids) {
+          statusLookup[uid] = { status: 'A', alert_type: 'air_raid' };
+        }
       }
       cached.features.status_lookup = statusLookup;
-      const response = {
+      return {
         layer,
         bbox: bbox ?? null,
         zoom: zoom ?? null,
         pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
         features: this.buildFeaturesFromBundle(cached),
       };
-      const responseJsonKey = `features:json:${layer}:${selectedLod}` + (bbox ? `:${bbox}` : '');
-      this.responseJsonCache.set(responseJsonKey, JSON.stringify(response));
-      return response;
     }
 
     // Cache miss - build bundle
     this.logger.debug(`Cache miss for features: ${cacheKey}`);
     const bundle = await this.mapBundleService.buildFeaturesBundle(layer, selectedLod, parsedBbox ?? undefined);
 
-    // Get active UIDs for subscription_leaf regions only (hromadas, cities)
-    const statusResult = await this.databaseService.query<{ uid: number; alert_type: string }>(
-      `SELECT arc.uid, arc.alert_type
-       FROM air_raid_state_current arc
-       JOIN region_catalog rc ON rc.uid = arc.uid
-       WHERE arc.status IN ('A', 'P')
-         AND rc.is_subscription_leaf = TRUE`,
-    );
+    // Read active UIDs from Redis cache (< 1KB) instead of DB query
+    // Fallback: query DB directly if cache hasn't been populated yet (before first poll cycle)
+    let activeUidsData = await this.cacheService.get<{ uids: number[] }>(CACHE_KEYS.ALERTS_ACTIVE_UIDS);
+    if (!activeUidsData) {
+      this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
+      const dbResult = await this.databaseService.query<{ uid: number }>(
+        `SELECT arc.uid FROM air_raid_state_current arc
+         JOIN region_catalog rc ON rc.uid = arc.uid
+         WHERE arc.status IN ('A', 'P')
+           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+      );
+      activeUidsData = { uids: dbResult.rows.map((r) => r.uid) };
+      // Populate cache for subsequent requests
+      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, activeUidsData, CACHE_TTL.ALERTS);
+    }
     const statusLookup: Record<number, { status: string; alert_type: string }> = {};
-    for (const row of statusResult.rows) {
-      statusLookup[row.uid] = { status: 'A', alert_type: row.alert_type };
+    if (activeUidsData.uids) {
+      for (const uid of activeUidsData.uids) {
+        statusLookup[uid] = { status: 'A', alert_type: 'air_raid' };
+      }
     }
     bundle.features.status_lookup = statusLookup;
 
     // Cache the bundle
     await this.cacheService.set(cacheKey, bundle, CACHE_TTL.FEATURES);
 
-    const response = {
+    return {
       layer,
       bbox: bbox ?? null,
       zoom: zoom ?? null,
       pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
       features: this.buildFeaturesFromBundle(bundle),
     };
-
-    const responseJsonKey = `features:json:${layer}:${selectedLod}` + (bbox ? `:${bbox}` : '');
-    this.responseJsonCache.set(responseJsonKey, JSON.stringify(response));
-
-    return response;
   }
 
   private buildFeaturesFromBundle(bundle: FeaturesBundleDto) {
@@ -495,12 +508,13 @@ export class MapService {
       };
     }
 
-    // Pre-serialized JSON cache — avoids DB + JSON.stringify on every request
-    const cacheKey = 'alerts:layer:json';
-    const cachedJson = this.responseJsonCache.get(cacheKey);
-    if (cachedJson) {
-      this.logger.debug('JSON cache hit for alerts layer');
-      return JSON.parse(cachedJson);
+    // Cache alerts-layer in Redis with TTL (not in-memory only) so stale data auto-expires
+    // when poll worker updates alerts but hasn't run rebuild yet.
+    const redisCacheKey = CACHE_KEYS.ALERTS_LAYER;
+    const cached = await this.cacheService.get<any>(redisCacheKey);
+    if (cached) {
+      this.logger.debug('Redis cache hit for alerts layer');
+      return cached;
     }
 
     const result = await this.databaseService.query<{
@@ -537,13 +551,14 @@ export class MapService {
         properties: {
           uid: row.uid,
           region_type: row.region_type,
+          status: 'A',
           alert_type: row.alert_type,
         },
       })),
       updated_at: result.rows[0]?.updated_at,
     };
 
-    this.responseJsonCache.set(cacheKey, JSON.stringify(response));
+    await this.cacheService.set(redisCacheKey, response, CACHE_TTL.ALERTS);
 
     return response;
   }

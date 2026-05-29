@@ -247,7 +247,28 @@ export class AlertsService {
 
           // Rebuild precomputed alert layer even on 304
           await this.rebuildAlertLayer(client);
-          this.logger.log('Precomputed alert layer rebuilt (304 response)');
+          // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
+          // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+          const activeUidsResult = await client.query<{ uid: number }>(
+            `SELECT uid FROM air_raid_state_current arc
+             JOIN region_catalog rc ON rc.uid = arc.uid
+             WHERE arc.status IN ('A', 'P')
+               AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+          );
+          const activeUids = activeUidsResult.rows.map((r) => r.uid);
+          await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
+          // Immediately invalidate Redis caches so next request gets fresh data
+          await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
+          // Invalidate all feature caches (geometry bundles with stale status)
+          await this.cacheService.delete([
+            CACHE_KEYS.FEATURES('oblast', 'low'),
+            CACHE_KEYS.FEATURES('oblast', 'medium'),
+            CACHE_KEYS.FEATURES('raion', 'medium'),
+            CACHE_KEYS.FEATURES('raion', 'high'),
+            CACHE_KEYS.FEATURES('hromada', 'medium'),
+            CACHE_KEYS.FEATURES('hromada', 'high'),
+          ]);
+          this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (304 response)`);
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache on 304: ${error}`);
@@ -322,7 +343,28 @@ export class AlertsService {
 
           // Rebuild precomputed alert layer even when no changes
           await this.rebuildAlertLayer(client);
-          this.logger.log('Precomputed alert layer rebuilt (no changes)');
+          // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
+          // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+          const activeUidsResult = await client.query<{ uid: number }>(
+            `SELECT uid FROM air_raid_state_current arc
+             JOIN region_catalog rc ON rc.uid = arc.uid
+             WHERE arc.status IN ('A', 'P')
+               AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+          );
+          const activeUids = activeUidsResult.rows.map((r) => r.uid);
+          await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
+          // Immediately invalidate Redis caches so next request gets fresh data
+          await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
+          // Invalidate all feature caches (geometry bundles with stale status)
+          await this.cacheService.delete([
+            CACHE_KEYS.FEATURES('oblast', 'low'),
+            CACHE_KEYS.FEATURES('oblast', 'medium'),
+            CACHE_KEYS.FEATURES('raion', 'medium'),
+            CACHE_KEYS.FEATURES('raion', 'high'),
+            CACHE_KEYS.FEATURES('hromada', 'medium'),
+            CACHE_KEYS.FEATURES('hromada', 'high'),
+          ]);
+          this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (no changes)`);
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache: ${error}`);
@@ -802,7 +844,31 @@ export class AlertsService {
     // Rebuild precomputed alert layer for fast map rendering
     try {
       await this.rebuildAlertLayer(client);
-      this.logger.log('Precomputed alert layer rebuilt');
+
+      // Build lightweight active UIDs list for subscription_leaf regions only (hromadas + cities).
+      // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+      // Including them would cause entire oblasts to be painted when only some hromadas are active.
+      const activeUidsResult = await client.query<{ uid: number }>(
+        `SELECT uid FROM air_raid_state_current arc
+         JOIN region_catalog rc ON rc.uid = arc.uid
+         WHERE arc.status IN ('A', 'P')
+           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+      );
+      const activeUids = activeUidsResult.rows.map((r) => r.uid);
+      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
+
+      // Immediately invalidate full alert caches so next request gets fresh data
+      await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
+      // Invalidate all feature caches (geometry bundles have stale status lookup)
+      await this.cacheService.delete([
+        CACHE_KEYS.FEATURES('oblast', 'low'),
+        CACHE_KEYS.FEATURES('oblast', 'medium'),
+        CACHE_KEYS.FEATURES('raion', 'medium'),
+        CACHE_KEYS.FEATURES('raion', 'high'),
+        CACHE_KEYS.FEATURES('hromada', 'medium'),
+        CACHE_KEYS.FEATURES('hromada', 'high'),
+      ]);
+      this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached, ALL caches invalidated: state_version=${nextStateVersion}`);
     } catch (error) {
       this.logger.error(`Failed to rebuild alert layer: ${error}`);
     }

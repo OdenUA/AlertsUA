@@ -1,5 +1,7 @@
 export const CACHE_KEYS = {
   ALERTS_CURRENT: 'alerts:current',
+  ALERTS_LAYER: 'alerts:layer:response',
+  ALERTS_ACTIVE_UIDS: 'alerts:active:uids',
   THREATS_BUCKET: (ts: number) => `threats:${Math.floor(ts / 300000) * 300000}`,
   FEATURES: (layer: string, lod: string) => `features:${layer}:${lod}`,
   REGIONS_STATIC: 'regions:static',
