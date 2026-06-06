@@ -7,7 +7,9 @@ import { AppModule } from './app.module';
 import { ApiErrorFilter } from './common/http/api-error.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'],
+  });
   
   // Enable compression for all responses
   app.use(compression());

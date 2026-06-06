@@ -114,6 +114,11 @@ export class TelegramIngestService implements OnModuleDestroy {
         }
 
         const messageDate = this.toDate(message.date);
+        const maxMessageAgeMs = 60 * 60 * 1000; // 1 hour
+        if (Date.now() - messageDate.getTime() > maxMessageAgeMs) {
+          continue;
+        }
+
         const sourceHash = createHash('sha256')
           .update(`${channelRef}:${messageId}:${text}`)
           .digest('hex');

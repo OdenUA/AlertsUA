@@ -3,7 +3,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 
 async function rebuildAlertLayer() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'],
+  });
   const databaseService = app.get(DatabaseService);
 
   if (!databaseService.isConfigured()) {

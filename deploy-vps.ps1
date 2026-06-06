@@ -225,7 +225,7 @@ if ($DryRun) {
 try {
     # Step 1: Lint
     if (-not $SkipLint) {
-        Write-Step "Step 1/7: Running TypeScript type check..."
+        Write-Step "Step 1/8: Running TypeScript type check..."
         $lintSuccess = Invoke-ExternalCommand -Command $npmCmd -Arguments @('run', 'lint') -WorkingDirectory $backendDir -AllowFailure
         if (-not $lintSuccess) {
             Write-Host "[!] Lint failed but continuing with build" -ForegroundColor Yellow
@@ -235,12 +235,12 @@ try {
         }
     }
     else {
-        Write-Step "Step 1/7: Skipping TypeScript check (SkipLint specified)"
+        Write-Step "Step 1/8: Skipping TypeScript check (SkipLint specified)"
     }
 
     # Step 2: Build
     if (-not $SkipBuild) {
-        Write-Step "Step 2/7: Building backend..."
+        Write-Step "Step 2/8: Building backend..."
 
         # Clean old build - but be careful with file locks
         $distPath = Join-Path $backendDir 'dist'
@@ -289,11 +289,11 @@ try {
         Write-Success "Build successful"
     }
     else {
-        Write-Step "Step 2/7: Skipping build (SkipBuild specified)"
+        Write-Step "Step 2/8: Skipping build (SkipBuild specified)"
     }
 
     # Step 3: Create archive
-    Write-Step "Step 3/7: Creating deployment archive..."
+    Write-Step "Step 3/8: Creating deployment archive..."
     if (Test-Path $localArchivePath) {
         Remove-Item -Path $localArchivePath -Force
     }
@@ -340,17 +340,17 @@ try {
     Write-Success "Archive created"
 
     # Step 4: Upload archive
-    Write-Step "Step 4/7: Uploading archive to VPS..."
+    Write-Step "Step 4/8: Uploading archive to VPS..."
     Invoke-ExternalCommand -Command $scpExe -Arguments ($scpCommonArgs + @($localArchivePath, "${sshUser}:$remoteArchivePath")) -WorkingDirectory $repoRoot
     Write-Success "Archive uploaded"
 
     # Step 5: Upload deploy script
-    Write-Step "Step 5/7: Uploading deploy helper script..."
+    Write-Step "Step 5/8: Uploading deploy helper script..."
     Invoke-ExternalCommand -Command $scpExe -Arguments ($scpCommonArgs + @($remoteDeployScript, "${sshUser}:$remoteScriptPath")) -WorkingDirectory $repoRoot
     Write-Success "Deploy script uploaded"
 
     # Step 6: Execute deployment
-    Write-Step "Step 6/7: Executing remote deployment..."
+    Write-Step "Step 6/8: Executing remote deployment..."
 
     $forceInstallFlag = if ($ForceInstallDependencies) { '1' } else { '0' }
     $remoteCommand = "FORCE_NPM_INSTALL=$forceInstallFlag bash $remoteScriptPath --archive $remoteArchivePath --release-name $ReleaseName"
@@ -421,6 +421,14 @@ try {
     Write-Host "  Health check: $healthStatus"
     Write-Host ""
 
+    # Step 8: Cleanup old releases
+    Write-Step "Step 8/8: Cleaning up old releases..."
+
+    $cleanupCommand = 'cd /srv/alerts-ua/app/releases && CURRENT=$(basename $(readlink -f /srv/alerts-ua/app/current)) && ls -1t | tail -n +11 | while read rel; do if [ "$rel" != "$CURRENT" ]; then rm -rf "$rel"; fi; done && echo "Cleanup complete"'
+    $cleanupOutput = & $sshExe @sshExecArgs $sshUser $cleanupCommand 2>&1 | Out-String
+    Write-Host $cleanupOutput
+    Write-Success "Old releases cleaned up"
+
     # Final health check with retry loop (accommodates cache warm-up latency ~20s)
     Write-Step "Running final health check (up to 60s for cache warm-up)..."
     $maxAttempts = 12
@@ -445,7 +453,7 @@ try {
     }
 
     # Step 7: Install occupied territories timer
-    Write-Step "Step 7/7: Installing occupied territories update timer..."
+    Write-Step "Step 7/8: Installing occupied territories update timer..."
 
     $setupTimerScript = Join-Path $repoRoot 'infra\vps\scripts\setup-occupied-timer.sh'
     if (Test-Path $setupTimerScript) {

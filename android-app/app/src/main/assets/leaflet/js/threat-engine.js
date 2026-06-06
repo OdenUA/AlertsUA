@@ -452,28 +452,47 @@ function buildThreatOverlayLayer(overlays) {
                 zIndexOffset: 760,
             });
 
+            mk.addTo(layerGroup);
+
             if (hasPopup) {
                 var popupContent = buildThreatPopupContent(overlay);
                 var hitMarker = L.marker([markerLatLng.lat, markerLatLng.lng], {
                     icon: makeThreatTapTargetIcon(),
                     interactive: true,
-                    zIndexOffset: 750,
+                    zIndexOffset: 800,
                 });
-                var popup = hitMarker.bindPopup(popupContent, { maxWidth: 300, minWidth: 200, className: 'threat-custom-popup' });
+                // Use manual popup instead of bindPopup to avoid Leaflet mobile/WebView
+                // issues where the popup can only be opened once after zoom changes.
+                var popup = L.popup({
+                    maxWidth: 300,
+                    minWidth: 200,
+                    className: 'threat-custom-popup',
+                    autoPan: true,
+                    closeButton: true,
+                }).setContent(popupContent);
+
+                function openThreatPopup() {
+                    popup.setLatLng(hitMarker.getLatLng()).openOn(map);
+                }
+
+                hitMarker.on('click', openThreatPopup);
+                // Android WebView sometimes swallows click on transparent divIcons;
+                // touchend improves reliability.
+                hitMarker.on('touchend', function (e) {
+                    L.DomEvent.preventDefault(e);
+                    openThreatPopup();
+                });
 
                 // Prevent click events inside popup from bubbling to map
-                hitMarker.on('popupopen', function() {
+                popup.on('add', function () {
                     var popupElement = popup.getElement();
                     if (popupElement) {
                         L.DomEvent.disableClickPropagation(popupElement);
-                        console.log('[Threat] Click propagation disabled for popup');
                     }
                 });
 
                 hitMarker.addTo(layerGroup);
             }
-
-            mk.addTo(layerGroup);
         } catch (err) {
             console.error('Error drawing overlay marker:', err, entry.overlay);
         }
@@ -499,7 +518,24 @@ function renderThreatOverlays() {
         map.removeLayer(threatOverlayLayer);
     }
 
-    threatOverlayLayer = buildThreatOverlayLayer(threatOverlayData);
+    // Filter out expired threats client-side. Server already filters on fetch,
+    // but auto-refresh (loadStatusBundle) does not re-fetch threats, so old
+    // overlays would stay visible indefinitely without this check.
+    var now = Date.now();
+    var maxVisibleMs = 60 * 60 * 1000; // 1 hour
+    var visibleOverlays = threatOverlayData.filter(function(overlay) {
+        if (!overlay || !overlay.occurred_at) return false;
+        var occurredAt = new Date(overlay.occurred_at).getTime();
+        if (isNaN(occurredAt)) return false;
+        // Use explicit expires_at when available (matches server logic for unanchored threats)
+        if (overlay.expires_at) {
+            var expiresAt = new Date(overlay.expires_at).getTime();
+            if (!isNaN(expiresAt) && now < expiresAt) return true;
+        }
+        return now < occurredAt + maxVisibleMs;
+    });
+
+    threatOverlayLayer = buildThreatOverlayLayer(visibleOverlays);
     if (showThreats) {
         threatOverlayLayer.addTo(map);
     }

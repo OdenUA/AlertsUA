@@ -113,12 +113,12 @@ rollback() {
 
 check_health() {
   if command -v curl >/dev/null 2>&1; then
-    curl --silent --show-error --fail "$HEALTH_URL" >/dev/null
+    curl --silent --fail "$HEALTH_URL" >/dev/null 2>&1
     return
   fi
 
   if command -v wget >/dev/null 2>&1; then
-    wget -qO- "$HEALTH_URL" >/dev/null
+    wget -qO- "$HEALTH_URL" >/dev/null 2>&1
     return
   fi
 
@@ -186,6 +186,8 @@ if ! systemctl is-active --quiet "$API_SERVICE"; then
   rollback
   exit 1
 fi
+
+sleep 5
 
 HEALTH_OK="0"
 for _attempt in $(seq 1 15); do

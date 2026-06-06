@@ -188,6 +188,16 @@ setInterval(function () {
     }
 }, 30000);
 
+// Auto-refresh threat overlays every 60 seconds so expired threats disappear
+setInterval(function () {
+    if (!mapReady) { return; }
+    if (typeof loadThreatOverlays === 'function') {
+        loadThreatOverlays().catch(function (error) {
+            console.warn('Threat refresh failed:', error);
+        });
+    }
+}, 60000);
+
 // Кастомный контрол зума
 let customZoomControls = null;
 

@@ -6,6 +6,7 @@ secrets.env
 CLAUDE.md
 GEMINI.md
 QWEN.md
+AGENTS.md
 .claude/
 build-debug.bat
 build-release.bat

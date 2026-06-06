@@ -437,6 +437,7 @@ export class GeminiThreatParserService {
         JOIN telegram_messages_raw tmr ON tmr.raw_message_id = lpj.raw_message_id
         WHERE lpj.status IN ('pending', 'failed')
           AND lpj.attempt_count < $1
+          AND tmr.message_date > NOW() AT TIME ZONE 'Europe/Kyiv' - INTERVAL '1 hour'
         ORDER BY lpj.created_at ASC
         LIMIT $2
       `,
@@ -1002,6 +1003,10 @@ export class GeminiThreatParserService {
       if (candidate.action === 'clear') {
         continue;
       }
+
+      this.logger.debug(
+        `Insert threat vector check: vectorId=${vectorId} rawMessageId=${job.raw_message_id} occurredAt=${occurredAt.toISOString()} expiresAt=${expiresAt.toISOString()} originUid=${origin?.uid ?? null} targetUid=${target?.uid ?? null} hasTargetCoords=${hasTargetCoordinates} hasTargetRegion=${hasTargetRegion}`
+      );
 
       const insertVector = await client.query<{ inserted: number }>(
         `
