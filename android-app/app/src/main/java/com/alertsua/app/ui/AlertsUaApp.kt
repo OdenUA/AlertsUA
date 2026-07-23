@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.ViewCompat
 import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.admob.AdMobBanner as AdMobComposableBanner
@@ -148,7 +147,6 @@ fun AlertsUaApp(
     DisposableEffect(activity, view, isFullscreen) {
         val window = activity?.window
         if (window != null) {
-            WindowCompat.setDecorFitsSystemWindows(window, !isFullscreen)
             val insetsController = WindowCompat.getInsetsController(window, view)
             if (isFullscreen) {
                 insetsController.systemBarsBehavior =
@@ -161,7 +159,6 @@ fun AlertsUaApp(
         onDispose {
             val cleanupWindow = activity?.window
             if (cleanupWindow != null) {
-                WindowCompat.setDecorFitsSystemWindows(cleanupWindow, true)
                 WindowCompat.getInsetsController(cleanupWindow, view)
                     .show(WindowInsetsCompat.Type.systemBars())
             }
@@ -299,7 +296,10 @@ fun AlertsUaApp(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .then(
+                        if (!isFullscreen) Modifier.statusBarsPadding() else Modifier
+                    ),
             ) {
                 // Карта с отступами, чтобы не перекрывалась рекламой
                 Box(modifier = Modifier.fillMaxSize()) {

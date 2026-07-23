@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.os.Build
+import com.alertsua.app.BuildConfig
 import com.alertsua.app.R
 import com.alertsua.app.admob.AdManager
 import kotlinx.coroutines.delay
@@ -67,7 +69,7 @@ fun FaqBottomSheet(
         ),
         FAQItem(
             question = "Написати нам",
-            answer = "Натисніть цю кнопку, щоб відкрити програму електронної пошти та надіслати листа на адресу alertuaapp@gmail.com з темою \"Питання щодо додатку Тривога UA\""
+            answer = "Натисніть цю кнопку, щоб відкрити поштовий клієнт із заповненим листом. У листі буде вказана технічна інформація про пристрій, версію Android та версію додатку."
         )
     )
 
@@ -381,15 +383,33 @@ private fun FAQItemView(
     }
 }
 
-// Helper function to open email intent
+// Відкриває поштовий клієнт напряму (без вибору середства відправки)
 private fun sendEmail(context: android.content.Context) {
+    val deviceInfo = """
+        Технічна інформація:
+        Пристрій: ${Build.MANUFACTURER} ${Build.MODEL}
+        Версія Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})
+        Версія додатку: ${BuildConfig.VERSION_NAME}
+        Код версії: ${BuildConfig.VERSION_CODE}
+    """.trimIndent()
+
+    val body = """
+        Опишіть проблему чи пропозицію:
+
+
+        $deviceInfo
+    """.trimIndent()
+
+    val uri = android.net.Uri.parse(
+        "mailto:alertuaapp@gmail.com" +
+        "?subject=${android.net.Uri.encode("Питання щодо додатку Тривога UA")}" +
+        "&body=${android.net.Uri.encode(body)}"
+    )
+
+    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO, uri)
+
     try {
-        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "message/rfc822"
-            putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf("alertuaapp@gmail.com"))
-            putExtra(android.content.Intent.EXTRA_SUBJECT, "Питання щодо додатку Тривога UA")
-        }
-        context.startActivity(android.content.Intent.createChooser(intent, "Відправити email"))
+        context.startActivity(intent)
     } catch (e: Exception) {
         android.widget.Toast.makeText(
             context,

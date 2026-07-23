@@ -31,8 +31,8 @@ android {
     defaultConfig {
         applicationId = "com.alertsua.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 28
+        targetSdk = 36
+        versionCode = 30
         versionName = "0.6.3"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
@@ -52,7 +52,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
