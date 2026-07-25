@@ -9,3 +9,6 @@ Group=alerts-ua
 WorkingDirectory=/srv/alerts-ua/app/current
 EnvironmentFile=/srv/alerts-ua/env/.env.worker
 ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/workers/telegram-ingest.js
+# Защита от зависания MTProto-клиента: если oneshot не завершился за 120s,
+# systemd убивает процесс, и таймер запустит воркер заново.
+TimeoutStartSec=120

@@ -1,4 +1,4 @@
-﻿# improved VPS deploy script based on real deployment experience
+# improved VPS deploy script based on real deployment experience
 [CmdletBinding()]
 param(
     [string]$ReleaseName,
@@ -457,14 +457,22 @@ try {
 
     $setupTimerScript = Join-Path $repoRoot 'infra\vps\scripts\setup-occupied-timer.sh'
     if (Test-Path $setupTimerScript) {
-        # Upload and execute setup script
-        $remoteSetupPath = '/tmp/setup-occupied-timer.sh'
-        Invoke-ExternalCommand -Command $scpExe -Arguments ($scpCommonArgs + @($setupTimerScript, "${sshUser}:$remoteSetupPath")) -WorkingDirectory $repoRoot
+        # Upload the whole setup bundle (script + units) into a temp dir and execute from there
+        $remoteSetupDir = '/tmp/occupied-timer-setup'
+        $setupBundle = @(
+            'setup-occupied-timer.sh',
+            'fetch-occupied-territories.sh',
+            'alerts-ua-fetch-occupied.service',
+            'alerts-ua-fetch-occupied.timer'
+        ) | ForEach-Object { Join-Path $repoRoot "infra\vps\scripts\$_" }
 
-        $timerOutput = & $sshExe @sshExecArgs $sshUser "bash $remoteSetupPath" 2>&1 | Out-String
+        & $sshExe @sshExecArgs $sshUser "mkdir -p $remoteSetupDir" 2>&1 | Out-Null
+        Invoke-ExternalCommand -Command $scpExe -Arguments ($scpCommonArgs + $setupBundle + @("${sshUser}:$remoteSetupDir/")) -WorkingDirectory $repoRoot
+
+        $timerOutput = & $sshExe @sshExecArgs $sshUser "bash $remoteSetupDir/setup-occupied-timer.sh" 2>&1 | Out-String
         Write-Host $timerOutput
 
-        & $sshExe @sshExecArgs $sshUser "rm -f $remoteSetupPath" 2>&1 | Out-Null
+        & $sshExe @sshExecArgs $sshUser "rm -rf $remoteSetupDir" 2>&1 | Out-Null
         Write-Success "Occupied territories timer installed"
     }
     else {

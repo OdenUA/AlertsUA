@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart Alerts UA services daily at 04:30 Kyiv time
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 Europe/Kyiv
+Persistent=true
+Unit=alerts-ua-nightly-restart.service
+
+[Install]
+WantedBy=timers.target

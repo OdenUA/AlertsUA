@@ -1,0 +1,10 @@
+[Unit]
+Description=Archive expired threat overlays daily at 04:15 Kyiv time
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 Europe/Kyiv
+Persistent=true
+Unit=alerts-ua-archive-threats.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily restart of Alerts UA services (cache cleanup, hang insurance)
+After=network.target
+
+[Service]
+Type=oneshot
+# Перезапуск API сбрасывает in-memory кэши; перезапуск ingest —
+# страховка на случай зависшего MTProto-подключения.
+ExecStart=/bin/systemctl restart alerts-ua-api.service
+ExecStart=/bin/systemctl restart alerts-ua-telegram-ingest.service

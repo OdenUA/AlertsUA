@@ -10,12 +10,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "[*] Installing occupied territories fetch timer..."
 
 # Копируем скрипт
+mkdir -p /srv/alerts-ua/infra/scripts
 cp "${SCRIPT_DIR}/fetch-occupied-territories.sh" /srv/alerts-ua/infra/scripts/
 chmod +x /srv/alerts-ua/infra/scripts/fetch-occupied-territories.sh
 
-# Устанавливаем systemd unit и timer
-cp "${SCRIPT_DIR}/../alerts-ua-fetch-occupied.service" /etc/systemd/system/
-cp "${SCRIPT_DIR}/../alerts-ua-fetch-occupied.timer" /etc/systemd/system/
+# Устанавливаем systemd unit и timer (лежат рядом с этим скриптом)
+cp "${SCRIPT_DIR}/alerts-ua-fetch-occupied.service" /etc/systemd/system/
+cp "${SCRIPT_DIR}/alerts-ua-fetch-occupied.timer" /etc/systemd/system/
 
 # Перезагружаем systemd
 systemctl daemon-reload

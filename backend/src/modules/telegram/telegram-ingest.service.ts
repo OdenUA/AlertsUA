@@ -30,8 +30,57 @@ export class TelegramIngestService implements OnModuleDestroy {
 
   async onModuleDestroy() {
     if (this.client) {
-      await this.client.disconnect();
+      const client = this.client;
       this.client = null;
+      try {
+        await this.withTimeout(client.disconnect(), 5_000, 'client.disconnect');
+      } catch {
+        // Игнорируем: процесс всё равно завершается, зависший disconnect не должен блокировать выход.
+      }
+    }
+  }
+
+  /**
+   * Обертка с жёстким таймаутом для MTProto-вызовов.
+   * gramjs при обрыве соединения может оставить RPC-запрос висеть навсегда
+   * (reconnect-цикл жив, но promise не резолвится). Без таймаута oneshot-воркер
+   * зависает, и systemd-таймер больше не запускает его повторно.
+   */
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${operation} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      // Не держим event loop ради таймера.
+      timer.unref?.();
+
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
+  }
+
+  private getRpcTimeoutMs() {
+    const raw = this.configService.get<string>('TELEGRAM_INGEST_RPC_TIMEOUT_MS') ?? '60000';
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 5_000 ? value : 60_000;
+  }
+
+  /**
+   * Принудительно разрушает зависший клиент, чтобы следующий вызов создал новый.
+   */
+  private destroyClient() {
+    const client = this.client;
+    this.client = null;
+    if (client) {
+      client.destroy().catch(() => undefined);
     }
   }
 
@@ -250,7 +299,12 @@ export class TelegramIngestService implements OnModuleDestroy {
     const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
       connectionRetries: 5,
     });
-    await client.connect();
+    try {
+      await this.withTimeout(client.connect(), this.getRpcTimeoutMs(), 'client.connect');
+    } catch (error) {
+      client.destroy().catch(() => undefined);
+      throw error;
+    }
 
     this.client = client;
     this.logger.log('MTProto client is connected.');
@@ -260,18 +314,30 @@ export class TelegramIngestService implements OnModuleDestroy {
   private async fetchMessages(client: TelegramClient, channelRef: string, minId: number) {
     const limitRaw = this.configService.get<string>('TELEGRAM_INGEST_LIMIT') ?? '100';
     const limit = Math.min(200, Math.max(20, Number(limitRaw) || 100));
+    const timeoutMs = this.getRpcTimeoutMs();
 
-    const entity = await client.getEntity(channelRef);
-    const result = await client.getMessages(entity, {
-      limit,
-      minId,
-    });
+    try {
+      const entity = await this.withTimeout(client.getEntity(channelRef), timeoutMs, 'client.getEntity');
+      const result = await this.withTimeout(
+        client.getMessages(entity, {
+          limit,
+          minId,
+        }),
+        timeoutMs,
+        'client.getMessages',
+      );
 
-    const items = Array.from(result as unknown as TelegramRawMessage[])
-      .filter((message) => Number.isFinite(message.id))
-      .sort((left, right) => Number(left.id ?? 0) - Number(right.id ?? 0));
+      const items = Array.from(result as unknown as TelegramRawMessage[])
+        .filter((message) => Number.isFinite(message.id))
+        .sort((left, right) => Number(left.id ?? 0) - Number(right.id ?? 0));
 
-    return items;
+      return items;
+    } catch (error) {
+      // При таймауте/ошибке клиент может быть в зависшем состоянии —
+      // разрушаем его, чтобы следующий запуск таймера создал новое подключение.
+      this.destroyClient();
+      throw error;
+    }
   }
 
   private toDate(value: number | Date | undefined) {
