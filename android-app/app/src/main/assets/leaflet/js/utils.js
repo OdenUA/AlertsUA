@@ -35,7 +35,10 @@ function formatThreatPopupTime(value) {
 }
 
 function buildThreatPopupContent(overlay) {
-    var safeMessage = escapeHtml(overlay && overlay.message_text ? overlay.message_text : '').replace(/\r?\n/g, '<br>');
+    // Prefer the per-threat excerpt (verbatim quote of the fragment describing
+    // this specific threat); fall back to the full message for older rows.
+    var rawMessage = overlay && (overlay.source_excerpt || overlay.message_text);
+    var safeMessage = escapeHtml(rawMessage ? rawMessage : '').replace(/\r?\n/g, '<br>');
     var messageTime = formatThreatPopupTime(overlay && (overlay.message_date || overlay.occurred_at));
     var footerParts = ['<span>Telegram</span>'];
 

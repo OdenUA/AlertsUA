@@ -57,6 +57,7 @@ type ThreatOverlayRow = {
   expires_at: string | null;
   message_text: string | null;
   message_date: string | null;
+  source_excerpt: string | null;
   marker_json: string | null;
   corridor_json: string | null;
   area_json: string | null;
@@ -65,7 +66,6 @@ type ThreatOverlayRow = {
 const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
 const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
 const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '1 hour'";
-const THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL = "INTERVAL '5 minutes'";
 
 @Injectable()
 export class MapService {
@@ -613,6 +613,7 @@ export class MapService {
                tv.expires_at::text,
                tmr.message_text,
                tmr.message_date::text AS message_date,
+               tv.source_excerpt,
                ST_AsGeoJSON(COALESCE(tv.origin_geom, tv.target_geom)) AS marker_json,
                ST_AsGeoJSON(tv.corridor_geom) AS corridor_json,
                ST_AsGeoJSON(tv.danger_area_geom) AS area_json
@@ -620,33 +621,18 @@ export class MapService {
         JOIN threat_vectors tv ON tv.vector_id = tvo.vector_id
         LEFT JOIN telegram_messages_raw tmr ON tmr.raw_message_id = tv.raw_message_id
         LEFT JOIN region_catalog rc_anchor ON rc_anchor.uid = COALESCE(tv.target_uid, tv.origin_uid)
-        LEFT JOIN LATERAL (
-          SELECT e.occurred_at AS first_ended_at
-          FROM air_raid_events e
-          WHERE e.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
-            AND e.event_kind = 'ended'
-            AND e.occurred_at >= tv.occurred_at
-          ORDER BY e.occurred_at ASC
-          LIMIT 1
-        ) ended_since_occurrence ON TRUE
         LEFT JOIN air_raid_state_current arc_raion
           ON arc_raion.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
         WHERE tvo.status = 'active'
           AND (
-            -- Threats with region anchoring (target_uid or origin_uid): check alert status
+            -- Threats with region anchoring (target_uid or origin_uid): show if the
+            -- region still has an active/partial alert OR the threat was reported
+            -- recently (within the pending-alert window).
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
               AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
               AND (
-                -- Alert hasn't ended yet
-                ended_since_occurrence.first_ended_at IS NULL
-                -- Or alert ended recently (within grace period)
-                OR tv.occurred_at + ${THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL} > NOW()
-              )
-              AND (
-                -- Alert is still active in the region
                 arc_raion.status IN ('A', 'P')
-                -- Or threat is recent enough (pending alert interval)
                 OR tv.occurred_at + ${THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL} > NOW()
               )
             )
@@ -679,6 +665,7 @@ export class MapService {
         expires_at: row.expires_at,
         message_text: row.message_text,
         message_date: row.message_date,
+        source_excerpt: row.source_excerpt,
         marker,
         corridor,
         area,

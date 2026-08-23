@@ -252,6 +252,7 @@ export class MapBundleService {
       expires_at: string | null;
       message_text: string | null;
       message_date: string | null;
+      source_excerpt: string | null;
       // Geometry references — client looks up in local assets
       has_marker: boolean;
       has_corridor: boolean;
@@ -264,7 +265,6 @@ export class MapBundleService {
 
     const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
     const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '1 hour'";
-    const THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL = "INTERVAL '5 minutes'";
 
     const result = await this.databaseService.query<{
       overlay_id: string;
@@ -278,6 +278,7 @@ export class MapBundleService {
       expires_at: string | null;
       message_text: string | null;
       message_date: string | null;
+      source_excerpt: string | null;
       has_marker: boolean;
       has_corridor: boolean;
       has_area: boolean;
@@ -294,6 +295,7 @@ export class MapBundleService {
                tv.expires_at::text,
                tmr.message_text,
                tmr.message_date::text AS message_date,
+               tv.source_excerpt,
                (tv.origin_geom IS NOT NULL OR tv.target_geom IS NOT NULL) AS has_marker,
                (tv.corridor_geom IS NOT NULL) AS has_corridor,
                (tv.danger_area_geom IS NOT NULL) AS has_area
@@ -301,15 +303,6 @@ export class MapBundleService {
         JOIN threat_vectors tv ON tv.vector_id = tvo.vector_id
         LEFT JOIN telegram_messages_raw tmr ON tmr.raw_message_id = tv.raw_message_id
         LEFT JOIN region_catalog rc_anchor ON rc_anchor.uid = COALESCE(tv.target_uid, tv.origin_uid)
-        LEFT JOIN LATERAL (
-          SELECT e.occurred_at AS first_ended_at
-          FROM air_raid_events e
-          WHERE e.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
-            AND e.event_kind = 'ended'
-            AND e.occurred_at >= tv.occurred_at
-          ORDER BY e.occurred_at ASC
-          LIMIT 1
-        ) ended_since_occurrence ON TRUE
         LEFT JOIN air_raid_state_current arc_raion
           ON arc_raion.uid = COALESCE(rc_anchor.raion_uid, rc_anchor.uid)
         WHERE tvo.status = 'active'
@@ -317,10 +310,6 @@ export class MapBundleService {
             (
               COALESCE(tv.target_uid, tv.origin_uid) IS NOT NULL
               AND tv.occurred_at + ${THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL} > NOW()
-              AND (
-                ended_since_occurrence.first_ended_at IS NULL
-                OR tv.occurred_at + ${THREAT_OVERLAY_ENDED_GRACE_PERIOD_SQL} > NOW()
-              )
               AND (
                 arc_raion.status IN ('A', 'P')
                 OR tv.occurred_at + ${THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL} > NOW()
@@ -347,6 +336,7 @@ export class MapBundleService {
       expires_at: row.expires_at,
       message_text: row.message_text,
       message_date: row.message_date,
+      source_excerpt: row.source_excerpt,
       has_marker: row.has_marker,
       has_corridor: row.has_corridor,
       has_area: row.has_area,

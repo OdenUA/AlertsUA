@@ -23,6 +23,7 @@ type ParseCandidate = {
   target_lat: number | null;
   target_lng: number | null;
   movement_bearing_deg: number | null;
+  source_excerpt: string | null;
 };
 
 type PendingJobRow = {
@@ -260,8 +261,14 @@ OTHER RULES:
 - Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)
 - All hints (region_hint, origin_hint, target_hint, direction_text) must be in Ukrainian only
 
+SOURCE EXCERPT (per-threat quote):
+- source_excerpt = the EXACT verbatim quote of ONLY the part of the target message that describes this specific threat (keep emojis, punctuation and line breaks as-is)
+- When one post contains several threats (multiple lines/bullets), each threat object must quote ONLY its own line/fragment — never the whole message, never fragments of other threats
+- If the entire message describes a single threat, quote the entire message text
+- Do not translate, rephrase or summarize — quote the original text
+
 Return strict JSON only with this schema:
-{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null}]}
+{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
 No markdown, no comments, no extra keys.`;
 
   return contextText
@@ -292,18 +299,30 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
 }
 
 export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown', hasTarget: boolean) {
-  if (!hasTarget) {
-    return 60;
-  }
-  const baseTtlMinutes =
-    threatKind === 'uav' ? 60 : threatKind === 'kab' ? 60 : threatKind === 'missile' ? 35 : 45;
+  // All threats are visible in the app for up to 1 hour (matching the client-side
+  // filter and the API's THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL). Short TTLs for
+  // missiles caused them to disappear before users expected.
+  return 60;
+}
 
-  return Math.min(baseTtlMinutes, 60);
+export function isTimeoutLlmFailure(errorMessage: string | null | undefined) {
+  const normalized = (errorMessage ?? '').toLowerCase();
+  return normalized.includes('timeout') || normalized.includes('timed out') || normalized.includes('aborted');
 }
 
 export function isRetriableLlmFailure(responseStatus: number | null, errorMessage: string | null | undefined) {
   if (responseStatus !== null) {
-    return responseStatus === 408 || responseStatus === 409 || responseStatus === 425 || responseStatus === 429 || responseStatus >= 500;
+    // A response status can be present even for a timeout: headers may arrive
+    // (e.g. HTTP 200) before AbortSignal aborts the body read. Such failures
+    // must remain retriable.
+    return (
+      responseStatus === 408 ||
+      responseStatus === 409 ||
+      responseStatus === 425 ||
+      responseStatus === 429 ||
+      responseStatus >= 500 ||
+      isTimeoutLlmFailure(errorMessage)
+    );
   }
 
   const normalized = (errorMessage ?? '').toLowerCase();
@@ -505,6 +524,9 @@ export class GeminiThreatParserService {
       const baseTarget = llmTargets[targetIndex]!;
       let activeTarget = baseTarget;
       let requestAttemptLimit = maxRequestAttempts;
+      // Timeout failures get exactly one retry per provider target; a second
+      // timeout moves on to the next provider (fallback) immediately.
+      let timeoutRetryUsed = false;
       const geminiFallbackModel =
         activeTarget.provider === 'gemini'
           ? this.configService.get<string>('GEMINI_FALLBACK_MODEL') ?? 'gemini-2.5-flash'
@@ -548,7 +570,7 @@ export class GeminiThreatParserService {
           );
 
           return parsedCandidates
-            .map((item) => this.sanitizeCandidate(item))
+            .map((item) => this.sanitizeCandidate(item, messageText))
             .filter((item): item is ParseCandidate => item !== null);
         } catch (error) {
           lastError = error;
@@ -561,6 +583,13 @@ export class GeminiThreatParserService {
           shouldRetryCurrentTarget =
             (requestAttempt < requestAttemptLimit || shouldSwitchGeminiModel) &&
             isRetriableLlmFailure(responseStatus, parseErrorText);
+          if (shouldRetryCurrentTarget && isTimeoutLlmFailure(parseErrorText)) {
+            if (timeoutRetryUsed) {
+              shouldRetryCurrentTarget = false;
+            } else {
+              timeoutRetryUsed = true;
+            }
+          }
         } finally {
           await this.persistLlmExchange({
             jobId,
@@ -836,7 +865,7 @@ export class GeminiThreatParserService {
     }
   }
 
-  private sanitizeCandidate(candidate: ParseCandidate | null | undefined) {
+  private sanitizeCandidate(candidate: ParseCandidate | null | undefined, messageText?: string) {
     if (!candidate) {
       return null;
     }
@@ -858,10 +887,28 @@ export class GeminiThreatParserService {
       target_lat: this.toLatitude(candidate.target_lat),
       target_lng: this.toLongitude(candidate.target_lng),
       movement_bearing_deg: this.toBearing(candidate.movement_bearing_deg),
+      source_excerpt: this.sanitizeSourceExcerpt(candidate.source_excerpt, messageText),
     };
 
     // Validate coordinates and log warnings for suspicious patterns
     return this.validateAndCorrectCoordinates(sanitized);
+  }
+
+  private sanitizeSourceExcerpt(excerpt: string | null | undefined, messageText?: string): string | null {
+    const cleaned = this.toNullableString(excerpt)?.trim();
+    if (!cleaned) {
+      return null;
+    }
+
+    const trimmed = cleaned.slice(0, 500);
+    if (!messageText) {
+      return trimmed;
+    }
+
+    // Accept only verbatim quotes from the parsed message; if the LLM paraphrased,
+    // drop the excerpt so the client falls back to the full message text.
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    return normalize(messageText).includes(normalize(trimmed)) ? trimmed : null;
   }
 
   private cleanDirectionalWords(hint: string | null): string | null {
@@ -991,7 +1038,7 @@ export class GeminiThreatParserService {
           await client.query(
             `
               UPDATE threat_visual_overlays
-              SET status = 'inactive',
+              SET status = 'archived',
                   updated_at = NOW()
               WHERE vector_id = ANY($1::uuid[])
             `,
@@ -1031,6 +1078,7 @@ export class GeminiThreatParserService {
             color_hex,
             occurred_at,
             expires_at,
+            source_excerpt,
             parsed_payload,
             normalized_dedupe_key,
             created_at
@@ -1068,8 +1116,9 @@ export class GeminiThreatParserService {
             $18,
             $19,
             $20,
-            $21::jsonb,
-            $22,
+            $21,
+            $22::jsonb,
+            $23,
             NOW()
           )
           ON CONFLICT (normalized_dedupe_key) DO NOTHING
@@ -1096,6 +1145,7 @@ export class GeminiThreatParserService {
           this.toColor(candidate.threat_kind),
           occurredAt.toISOString(),
           expiresAt.toISOString(),
+          candidate.source_excerpt,
           JSON.stringify(candidate),
           dedupeKey,
         ],

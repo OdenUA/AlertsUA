@@ -444,7 +444,7 @@ function buildThreatOverlayLayer(overlays) {
         try {
             var overlay = entry.overlay;
             var markerLatLng = map.unproject(entry.point, map.getZoom());
-            var hasPopup = Boolean(overlay.message_text && overlay.message_date);
+            var hasPopup = Boolean((overlay.source_excerpt || overlay.message_text) && overlay.message_date);
             var icon = makeThreatIcon(overlay.threat_kind || overlay.icon_type || 'unknown', resolveThreatBearing(overlay), overlay);
             var mk = L.marker([markerLatLng.lat, markerLatLng.lng], {
                 icon: icon,
@@ -563,7 +563,8 @@ async function loadThreatOverlays() {
         response = await fetch(buildUrl('/map/threat-overlays'), {
             headers: {
                 'Accept': 'application/json'
-            }
+            },
+            cache: 'no-store'
         });
     } catch (error) {
         console.error('Fetch error:', error);
