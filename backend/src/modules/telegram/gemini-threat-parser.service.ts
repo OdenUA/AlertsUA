@@ -267,10 +267,12 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
 }
 
 export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown', hasTarget: boolean) {
-  // All threats are visible in the app for up to 1 hour (matching the client-side
-  // filter and the API's THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL). Short TTLs for
-  // missiles caused them to disappear before users expected.
-  return 60;
+  // Threat visibility windows: UAVs are slow-moving and stay on the map
+  // longer; missiles/KABs are short-lived.
+  if (threatKind === 'uav') {
+    return 45;
+  }
+  return 30; // kab, missile, unknown
 }
 
 export function isTimeoutLlmFailure(errorMessage: string | null | undefined) {

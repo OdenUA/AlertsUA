@@ -522,7 +522,6 @@ function renderThreatOverlays() {
     // but auto-refresh (loadStatusBundle) does not re-fetch threats, so old
     // overlays would stay visible indefinitely without this check.
     var now = Date.now();
-    var maxVisibleMs = 60 * 60 * 1000; // 1 hour
     var visibleOverlays = threatOverlayData.filter(function(overlay) {
         if (!overlay || !overlay.occurred_at) return false;
         var occurredAt = new Date(overlay.occurred_at).getTime();
@@ -532,6 +531,8 @@ function renderThreatOverlays() {
             var expiresAt = new Date(overlay.expires_at).getTime();
             if (!isNaN(expiresAt) && now < expiresAt) return true;
         }
+        // Fallback visibility window: uav 45 min, kab/missile/unknown 30 min.
+        var maxVisibleMs = overlay.threat_kind === 'uav' ? 45 * 60 * 1000 : 30 * 60 * 1000;
         return now < occurredAt + maxVisibleMs;
     });
 

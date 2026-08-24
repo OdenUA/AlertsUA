@@ -264,7 +264,8 @@ export class MapBundleService {
     }
 
     const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
-    const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = "INTERVAL '1 hour'";
+    // Per-kind visibility window: uav 45 min, kab/missile/unknown 30 min.
+    const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = `CASE WHEN tv.threat_kind = 'uav' THEN INTERVAL '45 minutes' ELSE INTERVAL '30 minutes' END`;
 
     const result = await this.databaseService.query<{
       overlay_id: string;
