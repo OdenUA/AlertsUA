@@ -74,7 +74,7 @@ const DIRECTIONAL_STOP_WORDS = new Set([
   'east', 'west', 'north', 'south', 'center', 'центр'
 ]);
 
-export function buildGeminiThreatPrompt(messageText: string, contextText?: string) {
+export function buildGeminiThreatPrompt(messageText: string) {
   const promptText = `Extract threats from Ukrainian military alert posts.
 
 CRITICAL: Distinguish between ORIGIN (where threat comes FROM) and TARGET (where threat is GOING TO).
@@ -105,22 +105,6 @@ CURRENT LOCATION (where threat is NOW) — HIGHEST PRIORITY, overrides all other
 - "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
 - "вектор - [city1]/[city2]" = exact movement direction towards those towns.
 - "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
-
-TARGET INDICATORS (destination):
-- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)
-- "в [місце]" = to/in [place]
-- "у [місце]" = to/in [place]
-- "в напрямку [місце]" = towards [place]
-- "курсом на [місце]" = course towards [place]
-
-ORIGIN INDICATORS (source/launch point):
-- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)
-- "від [місце]" = from [place]
-- "із [місце]" = from [place]
-- "з-під [місце]" = from under [place]
-- "з-за [місце]" = from behind [place]
-- TARGET: "в напрямку міста" (referring to Zaporizhzhia) → Zaporizhzhia city (~47.8°N, 35.1°E)
-- Bearing: ~0° (north)
 
 Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."
 - ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
@@ -158,20 +142,6 @@ Example 15: "БпЛА по межі Сумщини і Харківщини в н
 - CRITICAL: "по межі X і Y" means the UAV is ON THE BORDER between those two oblasts. Do NOT place it in a completely different oblast like Dnipropetrovsk!
 - CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it. The Poltava entry vector rule does NOT apply here because the current location is explicitly stated.
 - CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
-
-Example 16: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
-- ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
-- TARGET: "курс на Полтавщину" = heading TO Poltava oblast (~49.5°N, 34.5°E)
-- Bearing: ~160° (south)
-- CRITICAL: "над [область]" means OVER that oblast — current position is there. Do NOT use inferred origin from occupied territories.
-
-Example 15: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
-- CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
-- TARGET/DIRECTION: "в напрямку Полтавщини (вектор - Котельва/Опішня)" = heading towards Poltava oblast, specifically towards Kotelva/Opishnia towns (~50.0°N, 34.5°E)
-- Bearing: ~135° (south-east)
-- CRITICAL: "по межі X і Y" means the UAV is ON THE BORDER between those two oblasts. Do NOT place it in a completely different oblast like Dnipropetrovsk!
-- CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
-- CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it.
 
 Example 16: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
 - ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
@@ -271,9 +241,7 @@ Return strict JSON only with this schema:
 {"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
 No markdown, no comments, no extra keys.`;
 
-  return contextText
-    ? `${promptText}\n\nRecent context messages (for reference only, do not extract threats from these unless they are updated in the target message):\n${contextText}\n\nTarget message to parse:\n${messageText}`
-    : `${promptText}\n\nText: ${messageText}`;
+  return `${promptText}\n\nText: ${messageText}`;
 }
 
 export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
@@ -401,22 +369,7 @@ export class GeminiThreatParserService {
       try {
         const attemptCount = await this.markJobProcessing(job.job_id);
 
-        const contextRows = await this.databaseService.query<{ message_text: string; message_date: string }>(
-          `
-            SELECT message_text, message_date::text
-            FROM telegram_messages_raw
-            WHERE message_date <= $1
-              AND raw_message_id != $2
-            ORDER BY message_date DESC
-            LIMIT 15
-          `,
-          [job.message_date, job.raw_message_id]
-        );
-        const contextText = contextRows.rows.length > 0
-          ? contextRows.rows.reverse().map(r => `[${r.message_date}] ${r.message_text}`).join('\n')
-          : undefined;
-
-        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, contextText, job.raw_message_id);
+        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, job.raw_message_id);
 
         if (candidates.length === 0) {
           await this.markJobFailed(job.job_id, 'No candidates were extracted by parser.', true);
@@ -512,12 +465,12 @@ export class GeminiThreatParserService {
     );
   }
 
-  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string, contextText?: string, rawMessageId?: string) {
+  private async parseWithGemini(jobId: string, attemptCount: number, messageText: string, rawMessageId?: string) {
     const llmTargets = this.buildLlmTargets();
     const maxRequestAttempts = this.getAliasedNumberEnv(['LLM_REQUEST_MAX_ATTEMPTS', 'GEMINI_REQUEST_MAX_ATTEMPTS'], 3);
     const retryBaseDelayMs = this.getAliasedNumberEnv(['LLM_REQUEST_RETRY_DELAY_MS', 'GEMINI_REQUEST_RETRY_DELAY_MS'], 1_500);
     const timeoutMs = this.getAliasedNumberEnv(['LLM_TIMEOUT_MS', 'GEMINI_TIMEOUT_MS'], 30_000);
-    const prompt = buildGeminiThreatPrompt(messageText, contextText);
+    const prompt = buildGeminiThreatPrompt(messageText);
     let lastError: unknown = null;
 
     for (let targetIndex = 0; targetIndex < llmTargets.length; targetIndex += 1) {
@@ -682,8 +635,13 @@ export class GeminiThreatParserService {
   }
 
   private buildLlmRequestPayload(target: LlmTarget, prompt: string) {
+    // Reasoning/thinking is disabled by default: for short threat-extraction
+    // prompts reasoning tokens made up ~95% of billed completion tokens.
+    // Set LLM_THINKING_ENABLED=true to re-enable provider reasoning.
+    const thinkingEnabled = this.configService.get<string>('LLM_THINKING_ENABLED') === 'true';
+
     if (target.provider === 'grok' || target.provider === 'deepseek') {
-      return {
+      const payload: Record<string, unknown> = {
         model: target.model,
         messages: [
           {
@@ -692,10 +650,23 @@ export class GeminiThreatParserService {
           },
         ],
         temperature: 0.1,
+        // Cap runaway completions; when thinking is enabled reasoning tokens
+        // also count against max_tokens, so the cap must stay generous.
+        max_tokens: thinkingEnabled ? 8192 : 1500,
         response_format: {
           type: 'json_object',
         },
       };
+
+      if (!thinkingEnabled) {
+        if (target.provider === 'deepseek') {
+          payload.thinking = { type: 'disabled' };
+        } else {
+          payload.reasoning_effort = 'low';
+        }
+      }
+
+      return payload;
     }
 
     return {
@@ -708,6 +679,8 @@ export class GeminiThreatParserService {
       generationConfig: {
         temperature: 0.1,
         responseMimeType: 'application/json',
+        maxOutputTokens: thinkingEnabled ? 8192 : 1536,
+        ...(thinkingEnabled ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
       },
     };
   }
