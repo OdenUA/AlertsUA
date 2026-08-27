@@ -263,7 +263,10 @@ export class MapBundleService {
       throw new Error('Database not configured');
     }
 
-    const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '1 hour'";
+    // Grace window for fresh reports before the official alert is raised in the
+    // target region. Must stay shorter than the max-visible window so that
+    // anchored threats disappear as soon as the region alert ends.
+    const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '15 minutes'";
     // Per-kind visibility window: uav 45 min, kab/missile/unknown 30 min.
     const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = `CASE WHEN tv.threat_kind = 'uav' THEN INTERVAL '45 minutes' ELSE INTERVAL '30 minutes' END`;
 
