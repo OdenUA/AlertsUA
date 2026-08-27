@@ -1,12 +1,11 @@
 package com.alertsua.app.admob
 
-import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
@@ -14,10 +13,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 
 @Composable
 fun AdMobBanner(
-    modifier: Modifier = Modifier,
-    isVisible: Boolean = true,
-    refreshTrigger: Int = 0,
-    isLandscape: Boolean = false
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
 
@@ -26,36 +22,29 @@ fun AdMobBanner(
         Log.d("AdMob", "Ads are disabled via Easter egg")
         return
     }
-    val adUnitId = remember(isLandscape) {
-        // В обеих ориентациях используем стандартный баннер
-        "ca-app-pub-7267693224424927/6615114075"
-    }
-    val adSize = remember(isLandscape) {
-        // В обеих ориентациях используем стандартный размер баннера
-        AdSize.BANNER
+
+    // AdView создаётся один раз и живёт независимо от рекомпозиций:
+    // обновление карты, смена темы и т.п. на баннер не влияют
+    val adView = remember {
+        Log.d("AdMob", "Creating AdView")
+        AdView(context).apply {
+            adUnitId = "ca-app-pub-7267693224424927/6615114075"
+            setAdSize(AdSize.BANNER)
+            loadAd(AdRequest.Builder().build())
+        }
     }
 
-    Log.d("AdMob", "AdMobBanner called with isVisible: $isVisible, refreshTrigger: $refreshTrigger, isLandscape: $isLandscape")
+    // Уничтожаем AdView только когда баннер реально покидает композицию
+    // (полноэкранный режим, закрытие экрана)
+    DisposableEffect(adView) {
+        onDispose {
+            Log.d("AdMob", "Destroying AdView on dispose")
+            adView.destroy()
+        }
+    }
 
-    // Полное пересоздание AdView при изменении параметров
     AndroidView(
         modifier = modifier,
-        factory = { ctx: Context ->
-            Log.d("AdMob", "Creating AdView in factory")
-            AdView(ctx).apply {
-                Log.d("AdMob", "Setting adUnitId: $adUnitId, adSize: $adSize")
-                this.adUnitId = adUnitId
-                setAdSize(adSize)
-                loadAd(AdRequest.Builder().build())
-                Log.d("AdMob", "AdView created and ad requested - ID: $adUnitId, Size: ${adSize.width}x${adSize.height}")
-            }
-        },
-        update = { adView ->
-            // Полное пересоздание при любом изменении
-            if (refreshTrigger > 0) {
-                Log.d("AdMob", "Destroying old AdView due to refreshTrigger")
-                adView.destroy()
-            }
-        }
+        factory = { adView }
     )
 }

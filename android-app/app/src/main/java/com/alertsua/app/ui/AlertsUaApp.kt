@@ -112,7 +112,6 @@ fun AlertsUaApp(
     var showThreats by rememberSaveable { mutableStateOf(true) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var useSimplifiedMap by rememberSaveable { mutableStateOf(repository.loadSimplifiedMapEnabled()) }
-    var orientationChangeTrigger by remember { mutableIntStateOf(0) }
     var showFaqDialog by remember { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -125,11 +124,6 @@ fun AlertsUaApp(
     LaunchedEffect(forceShowRatePrompt) {
         showRatePrompt = ratePromptManager.shouldShowPrompt() || forceShowRatePrompt
         Log.d("RatePromptUI", "showRatePrompt=$showRatePrompt (forceShow=$forceShowRatePrompt)")
-    }
-
-    // Обновляем триггер при изменении ориентации
-    LaunchedEffect(isLandscape) {
-        orientationChangeTrigger++
     }
 
     val toggleDarkMode: () -> Unit = {
@@ -327,7 +321,7 @@ fun AlertsUaApp(
                     }
                 }
 
-                // AdMob Banner - поверх карты
+                // AdMob Banner - поверх карты (не зависит от обновления карты)
                 if (!isFullscreen) {
                     if (isLandscape) {
                         // Альбомная ориентация: слева сверху
@@ -335,10 +329,7 @@ fun AlertsUaApp(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .padding(top = 8.dp, start = 8.dp)
-                                .height(50.dp),
-                            isVisible = true,
-                            refreshTrigger = refreshTrigger + orientationChangeTrigger,
-                            isLandscape = isLandscape
+                                .height(50.dp)
                         )
                     } else {
                         // Портретная ориентация: поверх карты в отступе
@@ -346,10 +337,7 @@ fun AlertsUaApp(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .padding(top = 8.dp, start = 16.dp, end = 16.dp)
-                                .height(50.dp),
-                            isVisible = true,
-                            refreshTrigger = refreshTrigger + orientationChangeTrigger,
-                            isLandscape = isLandscape
+                                .height(50.dp)
                         )
                     }
                 }
