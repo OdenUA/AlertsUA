@@ -32,7 +32,7 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 31
+        versionCode = 34
         versionName = "0.6.4"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
@@ -115,6 +115,9 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics-ktx:22.1.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-ads:25.4.0")
+    // Явно фиксируем свежий WorkManager: транзитивный 2.7.0 (из play-services-ads)
+    // падает на устройствах со страницами 16 КБ (WorkDatabase), 2.10+ это исправляет
+    implementation("androidx.work:work-runtime:2.11.2")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)
