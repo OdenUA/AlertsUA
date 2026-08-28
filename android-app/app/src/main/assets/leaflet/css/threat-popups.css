@@ -102,3 +102,30 @@ body.dark .threat-popup-avatar {
     background: currentColor;
     opacity: 0.55;
 }
+.threat-popup-life {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: auto;
+}
+.threat-popup-life:empty {
+    display: none;
+}
+.threat-popup-life-icon {
+    width: 12px;
+    height: 12px;
+    display: block;
+}
+.threat-popup-life-track {
+    fill: currentColor;
+    opacity: 0.22;
+}
+.threat-popup-life-sector {
+    fill: currentColor;
+    opacity: 0.9;
+}
+.threat-popup-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
