@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("com.google.gms.google-services")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 fun getSigningValue(name: String): String? {
@@ -32,8 +32,8 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.6.3"
+        versionCode = 31
+        versionName = "0.6.4"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -68,17 +68,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     packaging {
@@ -113,10 +111,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
+    implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
     implementation("com.google.firebase:firebase-analytics-ktx:22.1.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("com.google.android.gms:play-services-ads:23.4.0")
+    implementation("com.google.android.gms:play-services-ads:25.4.0")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)

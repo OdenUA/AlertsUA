@@ -14,7 +14,7 @@ for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
 rem Set up Java environment
 set "JAVA_HOME=C:\Program Files\Java\jdk-21"
 set "ANDROID_SDK_ROOT=E:\Dev\Android\SDK"
-set "GRADLE=%~dp0.tools\gradle-8.7\bin\gradle.bat"
+set "GRADLE=%~dp0.tools\gradle-9.7.1\bin\gradle.bat"
 
 cd /d "%~dp0android-app"
 

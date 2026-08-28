@@ -3,6 +3,7 @@ package com.alertsua.app.map
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -991,9 +992,7 @@ private fun AlertTypeIcon(alertType: String) {
     val badgeBg = alertTypeBadgeColor(alertType)
 
     val bitmap = remember(assetPath) {
-        runCatching {
-            context.assets.open(assetPath).use { BitmapFactory.decodeStream(it) }
-        }.getOrNull()
+        runCatching { decodeSampledAsset(context, assetPath, 16) }.getOrNull()
     }
 
     Row(
@@ -1018,6 +1017,27 @@ private fun AlertTypeIcon(alertType: String) {
             color = Color(0xFFE9EDF2),
         )
     }
+}
+
+/**
+ * Декодирует иконку из assets в пониженном разрешении (inSampleSize),
+ * чтобы не держать в памяти полноразмерный bitmap для отображения в [sizeDp].
+ */
+private fun decodeSampledAsset(context: Context, assetPath: String, sizeDp: Int): Bitmap? {
+    val targetPx = (sizeDp * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.assets.open(assetPath).use { BitmapFactory.decodeStream(it, null, bounds) }
+
+    var inSampleSize = 1
+    while (bounds.outWidth / (inSampleSize * 2) >= targetPx &&
+        bounds.outHeight / (inSampleSize * 2) >= targetPx
+    ) {
+        inSampleSize *= 2
+    }
+
+    val options = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+    return context.assets.open(assetPath).use { BitmapFactory.decodeStream(it, null, options) }
 }
 
 private fun formatHistoryPointInTime(startedAt: String): String {

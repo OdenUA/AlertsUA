@@ -47,6 +47,8 @@ backend/*.tsbuildinfo
 # Local dependencies and oversized local artifacts
 node_modules/
 .tools/gradle-8.7-bin.zip
+.tools/gradle-9.5.0-bin.zip
+.tools/gradle-9.7.1-bin.zip
 docs/research/ukr_admin4.geojson
 android-app/*.jks
 backend/data/
