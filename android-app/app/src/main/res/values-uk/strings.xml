@@ -68,6 +68,13 @@
     <string name="vibration_settings">Вібрація</string>
     <string name="vibration_enabled">Вібрація увімкнена</string>
     <string name="vibration_disabled">Вібрація вимкнена</string>
+    <!-- Permissions -->
+    <string name="permissions_section_title">Дозволи</string>
+    <string name="permission_notifications_title">Сповіщення</string>
+    <string name="permission_location_title">Геолокація</string>
+    <string name="permission_status_granted">Надано</string>
+    <string name="permission_status_denied">Не надано</string>
+    <string name="permission_grant_action">Дозволити</string>
     <!-- Rate Prompt -->
     <string name="rate_prompt_title">Підтримайте проект</string>
     <string name="rate_prompt_message">Дякуємо, що користуєтесь Тривога UA! Якщо вам подобається наш додаток, оцініть його — це допоможе нам стати кращими.</string>

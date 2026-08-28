@@ -173,6 +173,15 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Подхватываем разрешение геолокации, выданное через системные настройки
+        locationPermissionGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         forceShowRatePrompt = intent.getStringExtra(RatePromptManager.EXTRA_FORCE_SHOW) == "true"
