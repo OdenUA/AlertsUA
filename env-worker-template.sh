@@ -18,17 +18,21 @@ TELEGRAM_SESSION_STRING="INSERT_TELEGRAM_SESSION_STRING"
 TELEGRAM_CHANNEL_REFS=@kpszsu
 
 # LLM Configuration
-GROK_API_KEY=INSERT_GROK_API_KEY
-GROK_MODEL=grok-4-1-fast-reasoning
+# Chain: deepseek-v4-flash -> gemini-3.5-flash-lite -> gemini-2.5-flash
+DEEPSEEK_API_KEY=INSERT_DEEPSEEK_API_KEY
+DEEPSEEK_MODEL=deepseek-v4-flash
+# Grok disabled: uncomment to insert grok between deepseek and gemini in the chain
+#GROK_API_KEY=INSERT_GROK_API_KEY
+#GROK_MODEL=grok-4-1-fast-reasoning
 GEMINI_API_KEY=INSERT_GEMINI_API_KEY
-GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_MODEL=gemini-3.5-flash-lite
 GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 
 # Optional: Telegram Ingest Settings
 TELEGRAM_INGEST_LIMIT=100
 TELEGRAM_PARSER_BATCH=20
 TELEGRAM_PARSER_MAX_ATTEMPTS=3
-GEMINI_TIMEOUT_MS=30000
+GEMINI_TIMEOUT_MS=120000
 
 # Database connection (required by workers)
 DATABASE_URL=postgresql://INSERT_DB_USER:INSERT_DB_PASSWORD@127.0.0.1:5432/alerts_ua
