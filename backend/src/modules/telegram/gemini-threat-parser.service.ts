@@ -63,6 +63,18 @@ type LlmTarget = {
 
 const REGION_HINT_STOP_WORDS = new Set(['область', 'район', 'region', 'oblast', 'raion', 'district']);
 
+// Section headers of multi-threat messages (e.g. "Ситуація по реактивних БпЛА:")
+// normalized to short nominative titles for client popups. Unknown wording falls
+// back to the verbatim header line.
+const THREAT_HEADER_TITLE_MAP: Array<[RegExp, string]> = [
+  [/^реактивн(ий|і|их|им)?\s+бпла$/iu, 'Реактивний БпЛА:'],
+  [/^бпла(?:[ «"-]*шахед(и|ів)?)?$/iu, 'БпЛА:'],
+  [/^шахед(и|ів)$/iu, 'БпЛА:'],
+  [/^каб(и|ів|ах)?$/iu, 'КАБ:'],
+  [/^ракет(и|ах)?$/iu, 'Ракети:'],
+  [/^швидкісн(а\s+ціль|і\s+цілі|их\s+цілей)$/iu, 'Швидкісна ціль:'],
+];
+
 // NEW: Add directional words that should never match as standalone region names
 const DIRECTIONAL_STOP_WORDS = new Set([
   'схід', 'захід', 'північ', 'південь',
@@ -883,7 +895,65 @@ export class GeminiThreatParserService {
     // Accept only verbatim quotes from the parsed message; if the LLM paraphrased,
     // drop the excerpt so the client falls back to the full message text.
     const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
-    return normalize(messageText).includes(normalize(trimmed)) ? trimmed : null;
+    if (!normalize(messageText).includes(normalize(trimmed))) {
+      return null;
+    }
+
+    return this.prependMessageHeaderTitle(trimmed, messageText);
+  }
+
+  /**
+   * Multi-threat messages like "Ситуація по реактивних БпЛА:\n- <line>\n- <line>"
+   * are split by the LLM into per-line excerpts that lose the section header.
+   * Restore a short title so the client popup shows e.g.
+   * "Реактивний БпЛА:\n- на заході Харківщини, курс на Полтавщину;".
+   */
+  private prependMessageHeaderTitle(excerpt: string, messageText: string): string {
+    const title = this.deriveMessageHeaderTitle(messageText, excerpt);
+    if (!title) {
+      return excerpt;
+    }
+
+    return `${title}\n${excerpt}`.slice(0, 500);
+  }
+
+  private deriveMessageHeaderTitle(messageText: string, excerpt: string): string | null {
+    const lines = messageText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length < 2) {
+      return null;
+    }
+
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const headerLine = lines[0]!;
+    // Excerpt already contains the header (e.g. single-threat full-message quote).
+    if (normalize(excerpt).includes(normalize(headerLine))) {
+      return null;
+    }
+
+    // Strip leading emoji/symbols; a section header must end with ':'.
+    const headerCore = headerLine
+      .replace(/^[^\p{L}\p{N}]+/u, '')
+      .replace(/[\s\p{Extended_Pictographic}\uFE0F]+$/u, '')
+      .trim();
+    if (!headerCore.endsWith(':')) {
+      return null;
+    }
+
+    const headerBody = headerCore.slice(0, -1).trim();
+    const strippedBody = headerBody
+      .replace(/^(?:ситуація|обстановка|інформація|дані)\s+(?:станом\s+на|по|щодо|про)\s+/iu, '')
+      .trim();
+
+    const normalizedTitle = THREAT_HEADER_TITLE_MAP.find(([pattern]) => pattern.test(strippedBody));
+    if (normalizedTitle) {
+      return normalizedTitle[1];
+    }
+
+    // Unknown header wording: keep it verbatim rather than risk broken grammar.
+    return headerCore;
   }
 
   private cleanDirectionalWords(hint: string | null): string | null {
