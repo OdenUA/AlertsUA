@@ -14,7 +14,6 @@ for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
 set "ADB=E:\Dev\Android\SDK\platform-tools\adb.exe"
 set "APK=%~dp0android-app\app\build\outputs\apk\debug\app-debug.apk"
 set "PACKAGE=com.alertsua.app"
-set "EMULATOR=emulator-5554"
 
 if not exist "%APK%" (
     echo [!] APK not found: %APK%
@@ -23,13 +22,20 @@ if not exist "%APK%" (
     exit /b 1
 )
 
-echo [*] Checking emulator connection...
-"%ADB%" -s %EMULATOR% get-state >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [!] Emulator %EMULATOR% is not running. Start it with start-emulator.bat first.
+echo [*] Looking for an active emulator...
+set "EMULATOR="
+for /f "tokens=1,2" %%A in ('"%ADB%" devices') do (
+    set "_serial=%%A"
+    if "%%B"=="device" if "!_serial:~0,9!"=="emulator-" if not defined EMULATOR set "EMULATOR=%%A"
+)
+
+if not defined EMULATOR (
+    echo [!] No active emulator found. Start it with start-emulator.bat first.
     pause
     exit /b 1
 )
+
+echo [*] Found emulator: %EMULATOR%
 
 echo [*] Installing APK on %EMULATOR%...
 "%ADB%" -s %EMULATOR% shell pm clear com.alertsua.app
