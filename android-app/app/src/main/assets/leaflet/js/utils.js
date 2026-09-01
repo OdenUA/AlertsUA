@@ -98,6 +98,7 @@ function buildThreatPopupContent(overlay) {
     var rawMessage = overlay && (overlay.source_excerpt || overlay.message_text);
     var safeMessage = escapeHtml(rawMessage ? rawMessage : '').replace(/\r?\n/g, '<br>');
     var messageTime = formatThreatPopupTime(overlay && (overlay.message_date || overlay.occurred_at));
+    var channelConfig = getThreatChannelConfig(overlay && overlay.channel_ref);
     var footerParts = ['<span>Telegram</span>'];
 
     if (messageTime) {
@@ -108,9 +109,9 @@ function buildThreatPopupContent(overlay) {
     return [
         '<div class="threat-popup-card">',
         '  <div class="threat-popup-header">',
-        '    <div class="threat-popup-avatar">' + THREAT_LAYER_TELEGRAM_ICON_MARKUP + '</div>',
+        '    <div class="threat-popup-avatar">' + channelConfig.avatar + '</div>',
         '    <div class="threat-popup-meta">',
-        '      <div class="threat-popup-author">' + escapeHtml(THREAT_POPUP_SENDER) + '</div>',
+        '      <div class="threat-popup-author">' + escapeHtml(channelConfig.sender) + '</div>',
         '      <div class="threat-popup-label">Оперативне повідомлення</div>',
         '    </div>',
         '  </div>',

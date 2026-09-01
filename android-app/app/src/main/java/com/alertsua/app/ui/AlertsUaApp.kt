@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
@@ -51,7 +53,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -68,6 +73,10 @@ import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.faq.FaqBottomSheet
 import com.alertsua.app.ui.rateprompt.RatePromptCard
 import com.alertsua.app.ui.settings.SettingsScreen
+
+// Telegram-каналы — источники угроз. Одновременно показываются угрозы только одного канала.
+private const val THREAT_CHANNEL_KPSZSU = "@kpszsu"
+private const val THREAT_CHANNEL_WAR_MONITOR = "@war_monitor"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,7 +118,7 @@ fun AlertsUaApp(
         }
     }
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    var showThreats by rememberSaveable { mutableStateOf(true) }
+    var activeThreatChannel by rememberSaveable { mutableStateOf<String?>(THREAT_CHANNEL_KPSZSU) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var useSimplifiedMap by rememberSaveable { mutableStateOf(repository.loadSimplifiedMapEnabled()) }
     var showFaqDialog by remember { mutableStateOf(false) }
@@ -207,23 +216,48 @@ fun AlertsUaApp(
                         ) {
                             // All buttons centered horizontally
                             if (!useSimplifiedMap) {
-                                IconButton(onClick = { showThreats = !showThreats }) {
+                                IconButton(onClick = {
+                                    activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
+                                }) {
                                     Icon(
                                         painter = painterResource(
-                                            id = if (showThreats) {
+                                            id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
                                                 R.drawable.ic_threat_layers_telegram_active
                                             } else {
                                                 R.drawable.ic_threat_layers_telegram_inactive
                                             },
                                         ),
                                         contentDescription = stringResource(
-                                            id = if (showThreats) {
+                                            id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
                                                 R.string.threat_layers_hide_telegram
                                             } else {
                                                 R.string.threat_layers_show_telegram
                                             },
                                         ),
                                         tint = Color.Unspecified,
+                                    )
+                                }
+                                val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
+                                IconButton(onClick = {
+                                    activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
+                                }) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
+                                        contentDescription = stringResource(
+                                            id = if (warMonitorActive) {
+                                                R.string.threat_layers_hide_war_monitor
+                                            } else {
+                                                R.string.threat_layers_show_war_monitor
+                                            },
+                                        ),
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .alpha(if (warMonitorActive) 1f else 0.45f),
+                                        colorFilter = if (warMonitorActive) {
+                                            null
+                                        } else {
+                                            ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                        },
                                     )
                                 }
                             }
@@ -314,7 +348,7 @@ fun AlertsUaApp(
                             modifier = modifierWithPadding.fillMaxSize(),
                             darkMode = darkMode,
                             refreshTrigger = refreshTrigger,
-                            showThreats = showThreats,
+                            activeThreatChannel = activeThreatChannel,
                             locationPermissionGranted = locationPermissionGranted,
                             requestLocationPermission = requestLocationPermission,
                         )
@@ -353,23 +387,48 @@ fun AlertsUaApp(
                     ) {
                         // Top: Telegram threats
                         if (!useSimplifiedMap) {
-                            IconButton(onClick = { showThreats = !showThreats }) {
+                            IconButton(onClick = {
+                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
+                            }) {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (showThreats) {
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
                                             R.drawable.ic_threat_layers_telegram_active
                                         } else {
                                             R.drawable.ic_threat_layers_telegram_inactive
                                         },
                                     ),
                                     contentDescription = stringResource(
-                                        id = if (showThreats) {
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
                                             R.string.threat_layers_hide_telegram
                                         } else {
                                             R.string.threat_layers_show_telegram
                                         },
                                     ),
                                     tint = Color.Unspecified,
+                                )
+                            }
+                            val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
+                            IconButton(onClick = {
+                                activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
+                            }) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
+                                    contentDescription = stringResource(
+                                        id = if (warMonitorActive) {
+                                            R.string.threat_layers_hide_war_monitor
+                                        } else {
+                                            R.string.threat_layers_show_war_monitor
+                                        },
+                                    ),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(if (warMonitorActive) 1f else 0.45f),
+                                    colorFilter = if (warMonitorActive) {
+                                        null
+                                    } else {
+                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                    },
                                 )
                             }
                         }

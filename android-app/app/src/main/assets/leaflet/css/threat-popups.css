@@ -58,6 +58,12 @@ body.dark .threat-popup-avatar {
     height: 26px;
     display: block;
 }
+.threat-popup-avatar img {
+    width: 26px;
+    height: 26px;
+    display: block;
+    border-radius: 8px;
+}
 .threat-popup-meta {
     min-width: 0;
 }

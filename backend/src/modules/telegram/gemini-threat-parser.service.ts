@@ -173,6 +173,22 @@ Example 18: "Каб з півночі Харківщини по Слов'янс�
 - Bearing: ~180° (south)
 - CRITICAL: "по [місто]" means AT that city. Target is the city itself.
 
+Example 19: "Дніпропетровщина: 🔄 7х реактивів в сектор Перещепине / Магдалинівка."
+- threat_kind: uav ("реактиви" = jet-powered UAVs)
+- CURRENT LOCATION: "в сектор Перещепине / Магдалинівка" = in the sector of those towns → use midpoint (~49.0°N, 35.3°E) as origin
+- TARGET: not stated → null
+- CRITICAL: monitoring-channel slang "реактиви" means jet UAVs, NOT missiles.
+
+TERMINOLOGY (monitoring channel slang):
+- "Бандеролі" / "Бандероль" = jet-powered UAV (реактивний БпЛА) → threat_kind "uav"
+- "реактив" / "реактиви" / "реактивний" = jet-powered UAV → threat_kind "uav" (even without the word "БпЛА")
+- "дорозвідка" = reconnaissance UAV activity → threat_kind "uav"
+- "мгКР" / "КР" / "крилаті ракети" / "крилата ракета" = cruise missile(s) → threat_kind "missile"
+- "Увага по крилатим ракетам" = cruise missile warning for the named place → threat_kind "missile"
+- Emoji "🅿️" marks a threat position/update, "🔄" marks maneuvering — treat them as formatting, not content
+- "Уважно до відбою" / "дорозвідка до відбою" = the threat remains active until all-clear — it is NOT a cancellation
+- "зараз чисто" / "чисто" = all-clear → action "clear"
+
 COORDINATE REQUIREMENTS:
 - You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng
 - DO NOT rely on server-side hints or fallbacks

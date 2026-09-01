@@ -124,7 +124,7 @@ fun AlertMapScreen(
     modifier: Modifier = Modifier,
     darkMode: Boolean = false,
     refreshTrigger: Int = 0,
-    showThreats: Boolean = true,
+    activeThreatChannel: String? = "@kpszsu",
     locationPermissionGranted: Boolean = false,
     requestLocationPermission: (() -> Unit)? = null,
 ) {
@@ -366,8 +366,8 @@ fun AlertMapScreen(
         }
     }
 
-    LaunchedEffect(showThreats) {
-        mapController.setThreatsVisibility(showThreats)
+    LaunchedEffect(activeThreatChannel) {
+        mapController.setThreatChannel(activeThreatChannel)
     }
 
     // Watch for location permission grant from MainActivity

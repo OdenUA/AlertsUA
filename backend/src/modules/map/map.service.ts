@@ -58,6 +58,7 @@ type ThreatOverlayRow = {
   message_text: string | null;
   message_date: string | null;
   source_excerpt: string | null;
+  channel_ref: string | null;
   marker_json: string | null;
   corridor_json: string | null;
   area_json: string | null;
@@ -70,6 +71,8 @@ const GEOMETRY_PACK_VERSION = 'ocha-cod-ab-v05';
 const THREAT_OVERLAY_PENDING_ALERT_INTERVAL_SQL = "INTERVAL '15 minutes'";
 // Per-kind visibility window: uav 45 min, kab/missile/unknown 30 min.
 const THREAT_OVERLAY_MAX_VISIBLE_INTERVAL_SQL = `CASE WHEN tv.threat_kind = 'uav' THEN INTERVAL '45 minutes' ELSE INTERVAL '30 minutes' END`;
+// Channel served to legacy clients that do not pass the `sources` query param.
+const THREAT_OVERLAY_DEFAULT_CHANNEL = '@kpszsu';
 
 @Injectable()
 export class MapService {
@@ -569,7 +572,7 @@ export class MapService {
     return response;
   }
 
-  async getThreatOverlays(bbox?: string) {
+  async getThreatOverlays(bbox?: string, sources?: string) {
     if (!this.databaseService.isConfigured()) {
       return {
         generated_at: TimeUtil.getNowInKyiv(),
@@ -578,8 +581,21 @@ export class MapService {
       };
     }
 
+    // Channel filter: old clients (no `sources` param) keep the legacy behavior
+    // and receive only the default channel; updated clients pass the full list of
+    // channels they support and filter per-channel on their side.
+    const channelRefs = (sources ?? '')
+      .split(',')
+      .map((ref) => ref.trim())
+      .filter((ref) => ref.length > 0);
+    const effectiveChannels =
+      channelRefs.length > 0 ? channelRefs : [THREAT_OVERLAY_DEFAULT_CHANNEL];
+    const sourcesKey = [...effectiveChannels].sort().join(',');
+
     // Try cache first for non-bbox requests (full map)
-    const cacheKey = bbox ? `threats:${bbox}` : CACHE_KEYS.THREATS_BUCKET(Date.now());
+    const cacheKey = bbox
+      ? `threats:${bbox}`
+      : `${CACHE_KEYS.THREATS_BUCKET(Date.now())}:${sourcesKey}`;
     const cached = await this.cacheService.get<any>(cacheKey);
     if (cached && !bbox) {
       this.logger.debug(`Cache hit for threats: bucket=${cached.bucket_ts}`);
@@ -604,6 +620,14 @@ export class MapService {
       `;
     }
 
+    // Restrict overlays to the requested source channels. Overlays whose raw
+    // message is gone (channel_id IS NULL) are attributed to the default
+    // channel — the client treats them the same way.
+    values.push(effectiveChannels);
+    const channelClause = effectiveChannels.includes(THREAT_OVERLAY_DEFAULT_CHANNEL)
+      ? `AND (tmr.channel_id = ANY($${values.length}) OR tmr.channel_id IS NULL)`
+      : `AND tmr.channel_id = ANY($${values.length})`;
+
     const result = await this.databaseService.query<ThreatOverlayRow>(
       `
         SELECT tvo.overlay_id,
@@ -618,6 +642,7 @@ export class MapService {
                tmr.message_text,
                tmr.message_date::text AS message_date,
                tv.source_excerpt,
+               tmr.channel_id AS channel_ref,
                ST_AsGeoJSON(COALESCE(tv.origin_geom, tv.target_geom)) AS marker_json,
                ST_AsGeoJSON(tv.corridor_geom) AS corridor_json,
                ST_AsGeoJSON(tv.danger_area_geom) AS area_json
@@ -647,6 +672,7 @@ export class MapService {
             )
           )
           ${bboxClause}
+          ${channelClause}
         ORDER BY tvo.render_priority ASC, tv.occurred_at DESC
       `,
       values,
@@ -670,6 +696,7 @@ export class MapService {
         message_text: row.message_text,
         message_date: row.message_date,
         source_excerpt: row.source_excerpt,
+        channel_ref: row.channel_ref,
         marker,
         corridor,
         area,
@@ -684,7 +711,7 @@ export class MapService {
         generated_at: TimeUtil.getNowInKyiv(),
         overlays: overlays,
       };
-      await this.cacheService.set(CACHE_KEYS.THREATS_BUCKET(Date.now()), bundle, CACHE_TTL.THREATS);
+      await this.cacheService.set(`${CACHE_KEYS.THREATS_BUCKET(Date.now())}:${sourcesKey}`, bundle, CACHE_TTL.THREATS);
     }
 
     return {

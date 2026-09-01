@@ -536,32 +536,42 @@ function renderThreatOverlays() {
         return now < occurredAt + maxVisibleMs;
     });
 
+    // Only one source channel is shown at a time (selected from the app bottom bar).
+    // Overlays without channel_ref (legacy rows) belong to the default channel.
+    if (activeThreatChannel) {
+        visibleOverlays = visibleOverlays.filter(function(overlay) {
+            return (overlay.channel_ref || THREAT_CHANNEL_DEFAULT) === activeThreatChannel;
+        });
+    }
+
     threatOverlayLayer = buildThreatOverlayLayer(visibleOverlays);
-    if (showThreats) {
+    if (activeThreatChannel) {
         threatOverlayLayer.addTo(map);
     }
 }
 
-let showThreats = true;
+let activeThreatChannel = THREAT_CHANNEL_DEFAULT;
 
-function setThreatsVisibility(visible) {
-    showThreats = visible;
-    if (threatOverlayLayer) {
-        if (showThreats) {
-            map.addLayer(threatOverlayLayer);
-            // Also trigger a refresh right away to fetch if it was empty
-            scheduleOverlayRefresh();
-        } else {
-            map.removeLayer(threatOverlayLayer);
-        }
+function setThreatChannel(channelRef) {
+    activeThreatChannel = channelRef || null;
+    if (activeThreatChannel) {
+        // Rebuild the layer with the new channel filter and fetch fresh data.
+        renderThreatOverlays();
+        scheduleOverlayRefresh();
+    } else if (threatOverlayLayer) {
+        map.removeLayer(threatOverlayLayer);
     }
 }
-window.setThreatsVisibility = setThreatsVisibility;
+window.setThreatChannel = setThreatChannel;
 
 async function loadThreatOverlays() {
     let response;
     try {
-        response = await fetch(buildUrl('/map/threat-overlays'), {
+        // Request all channels this client can display; the per-channel
+        // filtering happens client-side in renderThreatOverlays.
+        response = await fetch(buildUrl('/map/threat-overlays', {
+            sources: Object.keys(THREAT_CHANNEL_CONFIG).join(','),
+        }), {
             headers: {
                 'Accept': 'application/json'
             },

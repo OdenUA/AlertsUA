@@ -44,10 +44,11 @@ class MapController {
         }
     }
 
-    /** Toggles the visibility of the Telegram threat overlays layer. */
-    fun setThreatsVisibility(visible: Boolean) {
+    /** Selects which threat source channel is shown on the map (null hides all threats). */
+    fun setThreatChannel(channelRef: String?) {
+        val jsArg = channelRef?.let { JSONObject.quote(it) } ?: "null"
         webView?.post {
-            webView?.evaluateJavascript("if(window.setThreatsVisibility) window.setThreatsVisibility($visible);", null)
+            webView?.evaluateJavascript("if(window.setThreatChannel) window.setThreatChannel($jsArg);", null)
         }
     }
 }

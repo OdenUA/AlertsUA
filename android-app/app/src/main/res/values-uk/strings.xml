@@ -6,6 +6,8 @@
     <string name="fullscreen_exit">Вийти з повноекранного режиму</string>
     <string name="threat_layers_show_telegram">Показати шари загроз із Telegram</string>
     <string name="threat_layers_hide_telegram">Приховати шари загроз із Telegram</string>
+    <string name="threat_layers_show_war_monitor">Показати загрози з War Monitor</string>
+    <string name="threat_layers_hide_war_monitor">Приховати загрози з War Monitor</string>
     <string name="selected_point_empty">Натисніть на місці, щоб переглянути стан тривоги.</string>
     <string name="selected_point_pending">Визначаємо вибране місце…</string>
     <string name="selected_place_value">%1$s</string>

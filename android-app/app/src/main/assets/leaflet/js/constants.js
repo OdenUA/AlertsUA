@@ -134,3 +134,22 @@ const THREAT_LAYER_TELEGRAM_ICON_MARKUP = [
     '</g>',
     '</svg>'
 ].join('');
+
+// Threat source channel configuration: popup avatar + sender label per channel.
+// channel_ref comes from telegram_messages_raw.channel_id via /map/threat-overlays.
+// Overlays without channel_ref (legacy rows) fall back to THREAT_CHANNEL_DEFAULT.
+const THREAT_CHANNEL_DEFAULT = '@kpszsu';
+const THREAT_CHANNEL_CONFIG = {
+    '@kpszsu': {
+        sender: THREAT_POPUP_SENDER,
+        avatar: THREAT_LAYER_TELEGRAM_ICON_MARKUP,
+    },
+    '@war_monitor': {
+        sender: 'War Monitor',
+        avatar: '<img src="file:///android_asset/leaflet/icons/war-monitor.png" alt="" />',
+    },
+};
+
+function getThreatChannelConfig(channelRef) {
+    return THREAT_CHANNEL_CONFIG[channelRef] || THREAT_CHANNEL_CONFIG[THREAT_CHANNEL_DEFAULT];
+}

@@ -253,6 +253,7 @@ export class MapBundleService {
       message_text: string | null;
       message_date: string | null;
       source_excerpt: string | null;
+      channel_ref: string | null;
       // Geometry references — client looks up in local assets
       has_marker: boolean;
       has_corridor: boolean;
@@ -283,6 +284,7 @@ export class MapBundleService {
       message_text: string | null;
       message_date: string | null;
       source_excerpt: string | null;
+      channel_ref: string | null;
       has_marker: boolean;
       has_corridor: boolean;
       has_area: boolean;
@@ -300,6 +302,7 @@ export class MapBundleService {
                tmr.message_text,
                tmr.message_date::text AS message_date,
                tv.source_excerpt,
+               tmr.channel_id AS channel_ref,
                (tv.origin_geom IS NOT NULL OR tv.target_geom IS NOT NULL) AS has_marker,
                (tv.corridor_geom IS NOT NULL) AS has_corridor,
                (tv.danger_area_geom IS NOT NULL) AS has_area
@@ -341,6 +344,7 @@ export class MapBundleService {
       message_text: row.message_text,
       message_date: row.message_date,
       source_excerpt: row.source_excerpt,
+      channel_ref: row.channel_ref,
       has_marker: row.has_marker,
       has_corridor: row.has_corridor,
       has_area: row.has_area,
