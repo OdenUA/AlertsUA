@@ -231,6 +231,7 @@ fun AlertMapScreen(
     // ── Location-based subscription prompt ─────────────────────────────────
     var showLocationPrompt by remember { mutableStateOf(false) }
     var resolvedHromada by remember { mutableStateOf<String?>(null) }
+    var resolvedLocationPoint by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var isResolvingLocation by remember { mutableStateOf(false) }
     var subscriptionsLoaded by remember { mutableStateOf(false) }
 
@@ -250,6 +251,7 @@ fun AlertMapScreen(
             val location = getCurrentLocation(context)
             if (location != null) {
                 android.util.Log.d("AlertMapScreen", "Location acquired: ${location.latitude}, ${location.longitude}")
+                resolvedLocationPoint = location.latitude to location.longitude
                 val resolvedLocation = repository.resolvePoint(
                     rawApiBaseUrl = activeApiBaseUrl,
                     latitude = location.latitude,
@@ -280,9 +282,13 @@ fun AlertMapScreen(
 
         coroutineScope.launch {
             try {
-                // Get location again to ensure fresh coordinates
-                val location = getCurrentLocation(context)
-                if (location == null) {
+                // Используем координаты, полученные при resolve; геолокацию
+                // запрашиваем повторно, только если их нет
+                val cachedPoint = resolvedLocationPoint
+                val freshLocation = if (cachedPoint == null) getCurrentLocation(context) else null
+                val lat = cachedPoint?.first ?: freshLocation?.latitude
+                val lon = cachedPoint?.second ?: freshLocation?.longitude
+                if (lat == null || lon == null) {
                     snackbarHostState.showSnackbar(context.getString(R.string.location_error))
                     return@launch
                 }
@@ -290,14 +296,14 @@ fun AlertMapScreen(
                 repository.ensureInstallationRegistered(activeApiBaseUrl)
                 val subscriptionId = repository.subscribeToPoint(
                     rawApiBaseUrl = activeApiBaseUrl,
-                    latitude = location.latitude,
-                    longitude = location.longitude,
+                    latitude = lat,
+                    longitude = lon,
                     levelLabel = "hromada",
                 )
                 val pin = SubscriptionPin(
                     subscriptionId = subscriptionId,
-                    lat = location.latitude,
-                    lon = location.longitude,
+                    lat = lat,
+                    lon = lon,
                     levelLabel = "hromada",
                 )
                 subscriptionPins.add(pin)
@@ -394,7 +400,10 @@ fun AlertMapScreen(
 
     // Track when the WebView map page is ready so we can place markers reactively
     var mapPageReady by remember { mutableStateOf(false) }
-    mapController.onMapPageReady = { mapPageReady = true }
+    DisposableEffect(mapController) {
+        mapController.onMapPageReady = { mapPageReady = true }
+        onDispose { mapController.onMapPageReady = null }
+    }
 
     // ── Sync subscriptions from server on startup (with one retry on failure) ─
     LaunchedEffect(activeApiBaseUrl) {
@@ -425,12 +434,10 @@ fun AlertMapScreen(
     }
 
     // Place / replace all markers whenever the pin list or map readiness changes.
-    // addSubscriptionMarker is idempotent (replaces existing marker for same id).
+    // Маркеры восстанавливаются одним JS-вызовом вместо IPC-вызова на каждый пин.
     LaunchedEffect(subscriptionPins.size, mapPageReady) {
         if (mapPageReady && subscriptionPins.isNotEmpty()) {
-            subscriptionPins.forEach { pin ->
-                mapController.addSubscriptionMarker(pin.lat, pin.lon, pin.subscriptionId)
-            }
+            mapController.restoreSubscriptionMarkers(subscriptionPins.toList())
         }
     }
 
@@ -438,59 +445,67 @@ fun AlertMapScreen(
 
     val bridge = remember { LeafletBridge() }
 
-    bridge.pointSelectedHandler = { latitude, longitude ->
-        selectedLat = latitude
-        selectedLon = longitude
-        retrySubscribeAfterPermissionGrant = false
-        actionMode = SheetActionMode.SUBSCRIBE
-        activeSubscriptionId = null
-        resolvedPoint = null
-        resolveError = null
-        showBottomSheet = true
-        coroutineScope.launch {
-            isResolvingPoint = true
-            try {
-                android.util.Log.d("AlertMap", "Resolving point: lat=$latitude, lon=$longitude")
-                resolvedPoint = repository.resolvePoint(activeApiBaseUrl, latitude, longitude)
-                val region = resolvedPoint?.resolvedRegion
-                android.util.Log.d("AlertMap", "Resolved: hromada=${region?.hromadaTitleUk}, oblastUid=${region?.oblastUid}")
-                android.util.Log.d("AlertMap", "History: active=${region?.oblastHistory?.active?.size}, today=${region?.oblastHistory?.today?.size}")
-            } catch (error: Exception) {
-                android.util.Log.e("AlertMap", "Error: ${error.message}", error)
-                resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
-            } finally {
-                isResolvingPoint = false
-            }
-        }
-    }
-
-    bridge.subscriptionMarkerTappedHandler = { markerId ->
-        val tappedPin = subscriptionPins.find { it.subscriptionId == markerId }
-        if (tappedPin == null) {
-            coroutineScope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.unsubscribe_error))
-            }
-        } else {
-            selectedLat = tappedPin.lat
-            selectedLon = tappedPin.lon
+    // Обработчики моста назначаются один раз, а не при каждой рекомпозиции
+    DisposableEffect(bridge) {
+        bridge.pointSelectedHandler = { latitude, longitude ->
+            selectedLat = latitude
+            selectedLon = longitude
             retrySubscribeAfterPermissionGrant = false
-            actionMode = SheetActionMode.UNSUBSCRIBE
-            activeSubscriptionId = tappedPin.subscriptionId
-            selectedLevel = levelFromApiLabel(tappedPin.levelLabel) ?: selectedLevel
+            actionMode = SheetActionMode.SUBSCRIBE
+            activeSubscriptionId = null
             resolvedPoint = null
             resolveError = null
             showBottomSheet = true
-
             coroutineScope.launch {
                 isResolvingPoint = true
                 try {
-                    resolvedPoint = repository.resolvePoint(activeApiBaseUrl, tappedPin.lat, tappedPin.lon)
+                    android.util.Log.d("AlertMap", "Resolving point: lat=$latitude, lon=$longitude")
+                    resolvedPoint = repository.resolvePoint(activeApiBaseUrl, latitude, longitude)
+                    val region = resolvedPoint?.resolvedRegion
+                    android.util.Log.d("AlertMap", "Resolved: hromada=${region?.hromadaTitleUk}, oblastUid=${region?.oblastUid}")
+                    android.util.Log.d("AlertMap", "History: active=${region?.oblastHistory?.active?.size}, today=${region?.oblastHistory?.today?.size}")
                 } catch (error: Exception) {
+                    android.util.Log.e("AlertMap", "Error: ${error.message}", error)
                     resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
                 } finally {
                     isResolvingPoint = false
                 }
             }
+        }
+
+        bridge.subscriptionMarkerTappedHandler = { markerId ->
+            val tappedPin = subscriptionPins.find { it.subscriptionId == markerId }
+            if (tappedPin == null) {
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar(context.getString(R.string.unsubscribe_error))
+                }
+            } else {
+                selectedLat = tappedPin.lat
+                selectedLon = tappedPin.lon
+                retrySubscribeAfterPermissionGrant = false
+                actionMode = SheetActionMode.UNSUBSCRIBE
+                activeSubscriptionId = tappedPin.subscriptionId
+                selectedLevel = levelFromApiLabel(tappedPin.levelLabel) ?: selectedLevel
+                resolvedPoint = null
+                resolveError = null
+                showBottomSheet = true
+
+                coroutineScope.launch {
+                    isResolvingPoint = true
+                    try {
+                        resolvedPoint = repository.resolvePoint(activeApiBaseUrl, tappedPin.lat, tappedPin.lon)
+                    } catch (error: Exception) {
+                        resolveError = error.message ?: context.getString(R.string.resolve_point_error_fallback)
+                    } finally {
+                        isResolvingPoint = false
+                    }
+                }
+            }
+        }
+
+        onDispose {
+            bridge.pointSelectedHandler = { _, _ -> }
+            bridge.subscriptionMarkerTappedHandler = { _ -> }
         }
     }
 
@@ -1109,11 +1124,14 @@ private fun formatAlertStartLabel(start: java.time.ZonedDateTime, now: java.time
     }
 }
 
+private val TZ_OFFSET_HOURS_ONLY = Regex("([+-]\\d{2})$")
+private val TZ_OFFSET_COMPACT = Regex("([+-]\\d{2})(\\d{2})$")
+
 private fun parseBackendInstant(rawTimestamp: String): Instant {
     val normalized = rawTimestamp.trim()
         .replace(' ', 'T')
-        .replace(Regex("([+-]\\d{2})$"), "$1:00")
-        .replace(Regex("([+-]\\d{2})(\\d{2})$"), "$1:$2")
+        .replace(TZ_OFFSET_HOURS_ONLY, "$1:00")
+        .replace(TZ_OFFSET_COMPACT, "$1:$2")
     return java.time.OffsetDateTime.parse(normalized).toInstant()
 }
 

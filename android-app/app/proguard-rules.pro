@@ -59,6 +59,13 @@
 -keep class androidx.lifecycle.** { *; }
 -keep class androidx.webkit.** { *; }
 
+# --- Логирование: вырезаем android.util.Log из release ---
+-assumenosideeffects class android.util.Log {
+    public static *** v(...);
+    public static *** d(...);
+    public static *** i(...);
+}
+
 # --- Suppress warnings ---
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**

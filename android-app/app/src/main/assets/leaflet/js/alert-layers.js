@@ -247,11 +247,11 @@ function featureStyle(feature, layerId) {
 }
 
 function selectPoint(latlng) {
-    console.log('[selectPoint] Called! isThreatPopupOpen=' + window.isThreatPopupOpen);
+    debugLog('[selectPoint] Called! isThreatPopupOpen=' + window.isThreatPopupOpen);
 
     // Check if a popup was just closed (suppressNextClick flag from mousedown)
     if (window.suppressNextClick) {
-        console.log('[selectPoint] suppressNextClick is TRUE, NOT opening bottom sheet');
+        debugLog('[selectPoint] suppressNextClick is TRUE, NOT opening bottom sheet');
         window.suppressNextClick = false;
         return;
     }
@@ -261,7 +261,7 @@ function selectPoint(latlng) {
     var isPopupOpen = popup && popup._map === map;
 
     if (isPopupOpen) {
-        console.log('[selectPoint] Popup is still open, closing it only');
+        debugLog('[selectPoint] Popup is still open, closing it only');
         if (map && map.closePopup) {
             map.closePopup();
         }
@@ -269,7 +269,7 @@ function selectPoint(latlng) {
     }
 
     if (window.AndroidBridge && window.AndroidBridge.onPointSelected) {
-        console.log('[selectPoint] Calling AndroidBridge.onPointSelected');
+        debugLog('[selectPoint] Calling AndroidBridge.onPointSelected');
         window.AndroidBridge.onPointSelected(latlng.lat, latlng.lng);
     }
 }
@@ -296,7 +296,7 @@ function bindFeatureTooltip(feature, layer) {
         if (event && event.latlng) {
             // Don't open bottom sheet if a threat popup is open
             if (window.isThreatPopupOpen) {
-                console.log('[FeatureClick] Threat popup is open, closing popup only');
+                debugLog('[FeatureClick] Threat popup is open, closing popup only');
                 window.isThreatPopupOpen = false;
                 if (map && map.closePopup) {
                     map.closePopup();
@@ -354,7 +354,7 @@ function fitToVisibleData() {
 }
 
 async function loadLayer(layerId) {
-    console.log('[loadLayer] Loading layer:', layerId);
+    debugLog('[loadLayer] Loading layer:', layerId);
     const packVersions = activeConfig && activeConfig.overlay_config
         ? activeConfig.overlay_config.geometry_pack_versions || {}
         : {};
@@ -374,12 +374,12 @@ async function loadLayer(layerId) {
 
     const data = await response.json();
     const features = data.features || [];
-    console.log('[loadLayer] Features loaded for ' + layerId + ':', features.length);
+    debugLog('[loadLayer] Features loaded for ' + layerId + ':', features.length);
 
     if (layerId === 'oblast') {
         applyKyivCityInheritedOblastState(features);
         const kyivFeature = features.find(isKyivCityFeature);
-        console.log('[loadLayer] Kyiv city feature found:', !!kyivFeature);
+        debugLog('[loadLayer] Kyiv city feature found:', !!kyivFeature);
     }
 
     const geoJsonLayer = L.geoJSON(features, {
@@ -392,7 +392,7 @@ async function loadLayer(layerId) {
     }
 
     overlayLayers[layerId] = geoJsonLayer.addTo(map);
-    console.log('[loadLayer] Layer ' + layerId + ' added to map');
+    debugLog('[loadLayer] Layer ' + layerId + ' added to map');
 }
 
 async function loadSpecialAlertLayer() {
@@ -532,11 +532,11 @@ async function loadInteractiveRegionsLayer() {
         onEachFeature: bindFeatureTooltip,
     }).addTo(map);
 
-    console.log('[InteractiveLayer] Loaded', allFeatures.length, 'regions for click handling');
+    debugLog('[InteractiveLayer] Loaded', allFeatures.length, 'regions for click handling');
 }
 
 async function loadOblastBorders() {
-    console.log('[OblastBorders] Starting to load oblast borders...');
+    debugLog('[OblastBorders] Starting to load oblast borders...');
     let response;
     try {
         response = await fetch(buildUrl('/map/simplified-oblast'), {
@@ -576,16 +576,16 @@ async function loadOblastBorders() {
         };
     }).filter(function(f) { return f.geometry !== null; });
 
-    console.log('[OblastBorders] Loaded', features.length, 'oblast borders');
+    debugLog('[OblastBorders] Loaded', features.length, 'oblast borders');
 
     // Remove old borders layer if exists
     if (oblastBordersLayer) {
-        console.log('[OblastBorders] Removing old borders layer');
+        debugLog('[OblastBorders] Removing old borders layer');
         map.removeLayer(oblastBordersLayer);
     }
 
     var isDark = document.body.classList.contains('dark');
-    console.log('[OblastBorders] Dark mode:', isDark);
+    debugLog('[OblastBorders] Dark mode:', isDark);
 
     // Create new borders layer (stroke only, no fill, but interactive for clicks)
     oblastBordersLayer = L.geoJSON(features, {
@@ -602,7 +602,7 @@ async function loadOblastBorders() {
         onEachFeature: bindFeatureTooltip,
     }).addTo(map);
 
-    console.log('[OblastBorders] Layer added to map, total layers:', map._layers);
+    debugLog('[OblastBorders] Layer added to map, total layers:', map._layers);
 }
 
 async function refreshOverlays() {
@@ -651,7 +651,7 @@ async function renderAllLayers() {
         return;
     }
 
-    console.log('[renderAllLayers] Starting...');
+    debugLog('[renderAllLayers] Starting...');
     setStatus('Завантажуємо мапу…');
 
     try {
@@ -660,10 +660,10 @@ async function renderAllLayers() {
         if (typeof addCustomZoomControls === 'function') addCustomZoomControls();
 
         // 1. Load static geometry from assets
-        console.log('[renderAllLayers] Step 1: Loading static geometry...');
+        debugLog('[renderAllLayers] Step 1: Loading static geometry...');
         if (typeof loadStaticGeometryFromAssets === 'function') {
             await loadStaticGeometryFromAssets();
-            console.log('[renderAllLayers] Static geometry loaded:', staticGeometry.loaded,
+            debugLog('[renderAllLayers] Static geometry loaded:', staticGeometry.loaded,
                 'oblast:', (staticGeometry.oblast && staticGeometry.oblast.features ? staticGeometry.oblast.features.length : 0),
                 'raion:', (staticGeometry.raion && staticGeometry.raion.features ? staticGeometry.raion.features.length : 0),
                 'hromada:', (staticGeometry.hromada && staticGeometry.hromada.features ? staticGeometry.hromada.features.length : 0));
@@ -672,32 +672,26 @@ async function renderAllLayers() {
         }
 
         // 2. Render occupied territories (may fetch from server as fallback)
-        console.log('[renderAllLayers] Step 2: Occupied territories...');
+        debugLog('[renderAllLayers] Step 2: Occupied territories...');
         await renderOccupiedTerritories();
 
-        // 3. Render interactive regions from static geometry
-        console.log('[renderAllLayers] Step 3: Interactive regions...');
-        if (typeof renderInteractiveRegionsLayer === 'function') {
-            renderInteractiveRegionsLayer();
-        }
-
-        // 4. Render threat overlays
-        console.log('[renderAllLayers] Step 4: Threat overlays...');
+        // 3. Render threat overlays
+        debugLog('[renderAllLayers] Step 4: Threat overlays...');
         if (typeof loadThreatOverlays === 'function') {
             try {
                 await loadThreatOverlays();
-                console.log('[renderAllLayers] Threat overlays loaded');
+                debugLog('[renderAllLayers] Threat overlays loaded');
             } catch (e) {
                 console.warn('[renderAllLayers] Threat overlays failed:', e);
             }
         }
 
         // 5. Fetch status bundle and apply to static geometry
-        console.log('[renderAllLayers] Step 5: Status bundle...');
+        debugLog('[renderAllLayers] Step 5: Status bundle...');
         if (typeof loadStatusBundle === 'function') {
             try {
                 var bundle = await loadStatusBundle();
-                console.log('[renderAllLayers] Bundle received, applyBundleStatuses available:', typeof window.applyBundleStatuses === 'function',
+                debugLog('[renderAllLayers] Bundle received, applyBundleStatuses available:', typeof window.applyBundleStatuses === 'function',
                     'staticGeometry.loaded:', staticGeometry.loaded);
                 if (typeof window.applyBundleStatuses === 'function' && staticGeometry.loaded) {
                     window.applyBundleStatuses(bundle);
@@ -705,28 +699,30 @@ async function renderAllLayers() {
                     if (typeof window.applyKyivCityInheritedOblastStatus === 'function') {
                         window.applyKyivCityInheritedOblastStatus();
                     }
-                    console.log('[renderAllLayers] Statuses applied, sample:', staticGeometry.hromada && staticGeometry.hromada.features ? staticGeometry.hromada.features.slice(0, 3).map(function(f) { return f.properties.uid + '=' + f.properties.status; }).join(', ') : 'none');
+                    debugLog('[renderAllLayers] Statuses applied, sample:', staticGeometry.hromada && staticGeometry.hromada.features ? staticGeometry.hromada.features.slice(0, 3).map(function(f) { return f.properties.uid + '=' + f.properties.status; }).join(', ') : 'none');
                 }
             } catch (e) {
                 console.error('[renderAllLayers] Status bundle failed:', e);
             }
         }
 
-        // 6. Render feature layers from static geometry with statuses applied
-        console.log('[renderAllLayers] Step 6: Rendering layers...');
-        ['oblast', 'raion', 'hromada'].forEach(function (layerId) {
-            if (typeof renderLayerFromStatic === 'function') {
-                renderLayerFromStatic(layerId);
-            }
-        });
+        // 6. Render feature layers from static geometry with statuses applied.
+        // Oblast layer renders all features (borders + Kyiv city inheritance);
+        // raion/hromada layers render ONLY active ('A') regions — ~1400 invisible
+        // polygons are no longer drawn by the canvas renderer on every pan/zoom frame.
+        debugLog('[renderAllLayers] Step 6: Rendering layers...');
+        if (typeof renderLayerFromStatic === 'function') {
+            renderLayerFromStatic('oblast');
+        }
+        renderActiveFillLayers();
 
         // 7. Render oblast borders
-        console.log('[renderAllLayers] Step 7: Oblast borders...');
+        debugLog('[renderAllLayers] Step 7: Oblast borders...');
         if (typeof renderOblastBorders === 'function') {
             renderOblastBorders();
         }
 
-        console.log('[renderAllLayers] Step 8: fitToVisibleData...');
+        debugLog('[renderAllLayers] Step 8: fitToVisibleData...');
         fitToVisibleData();
         refreshLayout();
         bringAlertLayersToFront();
@@ -737,7 +733,7 @@ async function renderAllLayers() {
     }
 
     setStatus(null);
-    console.log('[renderAllLayers] Complete');
+    debugLog('[renderAllLayers] Complete');
 }
 
 function scheduleOverlayRefresh() {
@@ -762,14 +758,14 @@ window.scheduleOverlayRefresh = scheduleOverlayRefresh;
  * Render a layer from static geometry (loaded from assets).
  */
 function renderLayerFromStatic(layerId) {
-    console.log('[renderLayer] Rendering layer:', layerId);
+    debugLog('[renderLayer] Rendering layer:', layerId);
     var features = getFeaturesByLayerId(layerId);
-    console.log('[renderLayer] Static features for ' + layerId + ':', features.length);
+    debugLog('[renderLayer] Static features for ' + layerId + ':', features.length);
 
     if (layerId === 'oblast') {
         applyKyivCityInheritedOblastState(features);
         var kyivFeature = features.find(isKyivCityFeature);
-        console.log('[renderLayer] Kyiv city feature found:', !!kyivFeature);
+        debugLog('[renderLayer] Kyiv city feature found:', !!kyivFeature);
     }
 
     var geoJsonLayer = L.geoJSON(features, {
@@ -779,37 +775,49 @@ function renderLayerFromStatic(layerId) {
 
     if (overlayLayers[layerId]) map.removeLayer(overlayLayers[layerId]);
     overlayLayers[layerId] = geoJsonLayer.addTo(map);
-    console.log('[renderLayer] Layer ' + layerId + ' added to map');
+    debugLog('[renderLayer] Layer ' + layerId + ' added to map');
 }
 
 /**
- * Render interactive regions from static geometry.
+ * Render raion/hromada fill layers containing ONLY active ('A') regions,
+ * plus the special-alert layer and its icon markers.
+ * Called on initial render and whenever alert statuses actually change.
+ * Inactive regions are not added to the canvas renderer at all — clicks on
+ * them are handled by the map-level click handler (isInsideUkraine check).
  */
-function renderInteractiveRegionsLayer() {
-    var visibleLayers = getVisibleLayers().filter(function (l) { return l !== 'oblast'; });
-    var allFeatures = [];
-    visibleLayers.forEach(function (layerId) {
-        var features = getFeaturesByLayerId(layerId);
-        if (features && features.length > 0) allFeatures = allFeatures.concat(features);
+function renderActiveFillLayers() {
+    ['raion', 'hromada'].forEach(function (layerId) {
+        var features = getFeaturesByLayerId(layerId).filter(function (f) {
+            return f && f.properties && f.properties.status === 'A';
+        });
+
+        if (overlayLayers[layerId]) map.removeLayer(overlayLayers[layerId]);
+
+        overlayLayers[layerId] = L.geoJSON(features, {
+            style: function (feature) { return featureStyle(feature, layerId); },
+            onEachFeature: bindFeatureTooltip,
+        }).addTo(map);
+        debugLog('[renderActiveFillLayers] ' + layerId + ':', features.length, 'active features');
     });
 
-    if (allFeatures.length === 0) return;
-
-    if (interactiveRegionsLayer) map.removeLayer(interactiveRegionsLayer);
-
-    interactiveRegionsLayer = L.geoJSON(allFeatures, {
-        style: { stroke: false, fillOpacity: 0, interactive: true },
+    // Special alert types (artillery shelling, urban fights) — subset of active hromadas
+    var specialFeatures = getFeaturesByLayerId('hromada').filter(function (f) {
+        return f && f.properties && f.properties.status === 'A' && isSpecialAlertType(f.properties.alert_type);
+    });
+    if (specialAlertLayer) map.removeLayer(specialAlertLayer);
+    specialAlertLayer = L.geoJSON(specialFeatures, {
+        style: function (f) { return featureStyle(f, 'special'); },
         onEachFeature: bindFeatureTooltip,
     }).addTo(map);
 
-    console.log('[InteractiveLayer] Loaded', allFeatures.length, 'regions');
+    refreshAlertMarkers();
 }
 
 /**
  * Render oblast borders from static geometry.
  */
 function renderOblastBorders() {
-    console.log('[OblastBorders] Rendering from static geometry...');
+    debugLog('[OblastBorders] Rendering from static geometry...');
     var features = getFeaturesByLayerId('oblast');
     if (!features || features.length === 0) {
         console.warn('[OblastBorders] No oblast features');
@@ -831,35 +839,35 @@ function renderOblastBorders() {
         onEachFeature: bindFeatureTooltip,
     }).addTo(map);
 
-    console.log('[OblastBorders] Layer added:', features.length, 'features');
+    debugLog('[OblastBorders] Layer added:', features.length, 'features');
 }
 
 /**
  * Render occupied territories from static geometry, fallback to server.
  */
 async function renderOccupiedTerritories() {
-    console.log('[OccupiedTerritories] Loading...');
+    debugLog('[OccupiedTerritories] Loading...');
     if (occupiedTerritoriesLayer) {
         map.removeLayer(occupiedTerritoriesLayer);
     }
 
     var feature = getOccupiedTerritoriesFeature();
-    console.log('[OccupiedTerritories] Static geoJSON:', JSON.stringify(feature).substring(0, 100));
+    debugLog('[OccupiedTerritories] Static geoJSON:', JSON.stringify(feature).substring(0, 100));
 
     // If static is empty or no features, try server
     if (!feature || (feature.features && feature.features.length === 0)) {
         try {
-            console.log('[OccupiedTerritories] Static empty, fetching from server...');
+            debugLog('[OccupiedTerritories] Static empty, fetching from server...');
             var resp = await fetch(buildUrl('/map/occupied-territories-layer'), {
                 headers: { 'Accept': 'application/json' }
             });
             if (resp.ok) {
                 var data = await resp.json();
-                console.log('[OccupiedTerritories] Server response keys:', Object.keys(data));
-                console.log('[OccupiedTerritories] Has feature:', !!data.feature, 'type:', data.feature ? data.feature.type : 'N/A');
+                debugLog('[OccupiedTerritories] Server response keys:', Object.keys(data));
+                debugLog('[OccupiedTerritories] Has feature:', !!data.feature, 'type:', data.feature ? data.feature.type : 'N/A');
                 if (data.feature) {
                     feature = data.feature;
-                    console.log('[OccupiedTerritories] Got feature from server, geometry type:', data.feature.geometry ? data.feature.geometry.type : 'N/A');
+                    debugLog('[OccupiedTerritories] Got feature from server, geometry type:', data.feature.geometry ? data.feature.geometry.type : 'N/A');
                 }
             } else {
                 console.warn('[OccupiedTerritories] Server returned:', resp.status);
@@ -879,22 +887,6 @@ async function renderOccupiedTerritories() {
         return;
     }
 
-    console.log('[OccupiedTerritories] Rendering layer, feature type:', feature.type);
-    var isDark = document.body.classList.contains('dark');
-    occupiedTerritoriesLayer = L.geoJSON(feature, {
-        style: function () {
-            return {
-                stroke: true,
-                color: '#dc2626',
-                weight: 3,
-                opacity: 0.9,
-                fillColor: '#dc2626',
-                fillOpacity: 0.2,
-                dashArray: '6,4',
-                interactive: false,
-            };
-        },
-    }).addTo(map);
-
-    console.log('[OccupiedTerritories] Layer added to map');
+    debugLog('[OccupiedTerritories] Rendering layer, feature type:', feature.type);
+    renderOccupiedTerritoriesFeature(feature);
 }

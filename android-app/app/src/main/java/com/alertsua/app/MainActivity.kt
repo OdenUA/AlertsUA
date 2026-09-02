@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 val token = task.result
-                Log.i("AlertsUaFirebase", "FCM token: $token")
+                Log.i("AlertsUaFirebase", "FCM token received (${token.length} chars)")
                 val repo = AlertsRepository(applicationContext)
                 repo.saveFcmToken(token)
                 // Register installation with the backend and update FCM token

@@ -25,7 +25,7 @@ function loadStaticGeometryFromAssets() {
             { key: 'occupiedTerritories', path: 'data/occupied-territories.geojson' },
         ];
 
-        console.log('[StaticGeometry] Loading', files.length, 'files via XHR from assets...');
+        debugLog('[StaticGeometry] Loading', files.length, 'files via XHR from assets...');
 
         var pending = files.length;
         var errors = [];
@@ -46,7 +46,7 @@ function loadStaticGeometryFromAssets() {
                     }
                     var count = (data && data.features) ? data.features.length : 0;
                     loadedInfo.push(file.key + '(' + count + ')');
-                    console.log('[StaticGeometry] Loaded', file.key, ':', count, 'features');
+                    debugLog('[StaticGeometry] Loaded', file.key, ':', count, 'features');
                 } catch (e) {
                     errors.push(file.key + ': ' + e.message);
                     console.error('[StaticGeometry] Parse error for', file.key, ':', e.message);
@@ -54,7 +54,7 @@ function loadStaticGeometryFromAssets() {
                 if (--pending === 0) {
                     buildFeatureLookup();
                     staticGeometry.loaded = true;
-                    console.log('[StaticGeometry] Complete. OK:', loadedInfo.join(', '), 'Errors:', errors.length ? errors.join(', ') : 'none');
+                    debugLog('[StaticGeometry] Complete. OK:', loadedInfo.join(', '), 'Errors:', errors.length ? errors.join(', ') : 'none');
                     if (errors.length > 0) console.warn('[StaticGeometry] Errors:', errors);
                     resolve(staticGeometry);
                 }
@@ -88,7 +88,7 @@ function buildFeatureLookup() {
         });
     });
 
-    console.log('[StaticGeometry] Feature lookup:', Object.keys(staticGeometry.featureByUid).length, 'features');
+    debugLog('[StaticGeometry] Feature lookup:', Object.keys(staticGeometry.featureByUid).length, 'features');
 }
 
 /**
@@ -126,8 +126,11 @@ function applyBundleStatuses(bundle) {
         });
     });
 
-    console.log('[StaticGeometry] Applied statuses v' + bundle.state_version +
+    debugLog('[StaticGeometry] Applied statuses v' + bundle.state_version +
         ', lookup size:', Object.keys(statusLookup).length);
+
+    // Отмечаем версию как применённую, чтобы 30-секундный опрос не перерисовывал слои
+    lastAppliedStateVersion = bundle.state_version || 0;
 }
 
 function applyKyivCityInheritedOblastStatus() {
@@ -156,7 +159,7 @@ function applyKyivCityInheritedOblastStatus() {
     }
 
     if (!kyivOblast || !kyivCity) {
-        console.log('[StaticGeometry] Kyiv inheritance skipped:', kyivOblast ? 'oblast found' : 'no oblast', kyivCity ? 'city found' : 'no city');
+        debugLog('[StaticGeometry] Kyiv inheritance skipped:', kyivOblast ? 'oblast found' : 'no oblast', kyivCity ? 'city found' : 'no city');
         return;
     }
 
@@ -173,7 +176,7 @@ function applyKyivCityInheritedOblastStatus() {
         kyivCity.properties.alert_type = oblastAlertType;
     }
 
-    console.log('[StaticGeometry] Kyiv city inherited oblast status:', oblastStatus,
+    debugLog('[StaticGeometry] Kyiv city inherited oblast status:', oblastStatus,
         'city status:', kyivCity.properties.status,
         'alert_type:', kyivCity.properties.alert_type);
 }

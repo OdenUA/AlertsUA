@@ -113,33 +113,20 @@ class SimplifiedMapController {
         val tapLon = xToLon(tapWx, wp)
         val tapLat = yToLat(tapWy, wp)
 
-        android.util.Log.d("SimplifiedMap", "=== TAP DEBUG ===")
-        android.util.Log.d("SimplifiedMap", "Tap: lat=$tapLat, lon=$tapLon")
-        android.util.Log.d("SimplifiedMap", "Kyiv bounds: $kyivCityBounds")
-
         // Special handling for Kyiv city (not in simplified-oblast API)
         val inKyivCity = tapLat >= kyivCityBounds.south && tapLat <= kyivCityBounds.north &&
             tapLon >= kyivCityBounds.west && tapLon <= kyivCityBounds.east
 
-        android.util.Log.d("SimplifiedMap", "inKyivCity: $inKyivCity (lat ${tapLat >= kyivCityBounds.south} && ${tapLat <= kyivCityBounds.north}, lon ${tapLon >= kyivCityBounds.west} && ${tapLon <= kyivCityBounds.east})")
-
         var tapped = _oblasts.value.find { oblast ->
-            val within = tapLat >= oblast.bounds.south && tapLat <= oblast.bounds.north &&
+            tapLat >= oblast.bounds.south && tapLat <= oblast.bounds.north &&
                 tapLon >= oblast.bounds.west && tapLon <= oblast.bounds.east
-            if (within) {
-                android.util.Log.d("SimplifiedMap", "Matched: ${oblast.titleUk}, bounds=${oblast.bounds}")
-            }
-            within
         }
 
         // If tap is within Kyiv city bounds but no match found, use Kyiv oblast
         if (tapped == null && inKyivCity) {
-            android.util.Log.d("SimplifiedMap", "Tap in Kyiv city bounds, using Kyiv oblast")
             tapped = _oblasts.value.find { it.titleUk == "Київська область" }
-            android.util.Log.d("SimplifiedMap", "Kyiv oblast found: ${tapped != null}")
         }
 
-        android.util.Log.d("SimplifiedMap", "Selected: ${tapped?.titleUk ?: "none"}")
         _selectedOblast.value = tapped
         if (tapped != null) {
             _tapTrigger.value++

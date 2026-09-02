@@ -1,9 +1,14 @@
 package com.alertsua.app.map.simplified
 
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import com.alertsua.app.data.ActiveAlertGeometry
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.tan
 
 class SimplifiedMapRenderer {
 
@@ -12,6 +17,14 @@ class SimplifiedMapRenderer {
         style = Paint.Style.FILL
         color = 0xFFD7263D.toInt()
         alpha = 180
+        isAntiAlias = true
+    }
+
+    // Active alert sub-region fill (leaf geometries from active-alerts-simplified)
+    private val alertRegionFillPaint = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFD7263D.toInt()
+        alpha = 160
         isAntiAlias = true
     }
 
@@ -126,18 +139,34 @@ class SimplifiedMapRenderer {
 
     private val markerRadius = 8f
 
+    // ── Path cache ─────────────────────────────────────────────────────────
+    // Геометрия хранится как Path в нормализованных координатах Меркатора (0..1).
+    // Проекция не зависит от viewport — пересчёт только при смене данных,
+    // на каждый кадр остаётся один аффинный transform в нативном коде.
+    private var oblastsSource: List<OblastData>? = null
+    private var oblastPaths: List<Path> = emptyList()
+    private var alertsSource: List<ActiveAlertGeometry>? = null
+    private var alertPaths: List<Path> = emptyList()
+    private val scratchPath = Path()
+
     fun renderOblasts(
         canvas: Canvas,
         oblasts: List<OblastData>,
-        projection: (LatLng) -> Pair<Float, Float>,
+        matrix: Matrix,
         isDark: Boolean
     ) {
         val borderPaint = if (isDark) borderPaintDark else borderPaintLight
         val normalFillPaint = if (isDark) normalFillPaintDark else normalFillPaintLight
 
-        for (oblast in oblasts) {
+        if (oblasts !== oblastsSource) {
+            oblastPaths = oblasts.map { buildNormalizedPath(it.geometry) }
+            oblastsSource = oblasts
+        }
+
+        for (i in oblasts.indices) {
             try {
-                val path = createPath(oblast.geometry, projection)
+                val oblast = oblasts[i]
+                val path = transformedPath(oblastPaths[i], matrix)
 
                 // 'A' = full alert (red fill), 'P'/'N' = normal (theme-based fill)
                 // Partial alerts ('P') show only sub-regions with active alerts via renderActiveAlerts()
@@ -155,21 +184,18 @@ class SimplifiedMapRenderer {
     fun renderActiveAlerts(
         canvas: Canvas,
         alerts: List<ActiveAlertGeometry>,
-        projection: (LatLng) -> Pair<Float, Float>
+        matrix: Matrix
     ) {
         if (alerts.isEmpty()) return
 
-        val alertPaint = Paint().apply {
-            style = Paint.Style.FILL
-            color = 0xFFD7263D.toInt()
-            alpha = 160
-            isAntiAlias = true
+        if (alerts !== alertsSource) {
+            alertPaths = alerts.map { buildNormalizedPath(it.geometry) }
+            alertsSource = alerts
         }
 
-        for (alert in alerts) {
+        for (path in alertPaths) {
             try {
-                val path = createPath(alert.geometry, projection)
-                canvas.drawPath(path, alertPaint)
+                canvas.drawPath(transformedPath(path, matrix), alertRegionFillPaint)
             } catch (_: Exception) { }
         }
     }
@@ -232,21 +258,34 @@ class SimplifiedMapRenderer {
         }
     }
 
-    private fun createPath(
-        geometry: List<List<List<Double>>>,
-        projection: (LatLng) -> Pair<Float, Float>
-    ): Path {
+    /**
+     * Строит Path в нормализованных координатах Меркатора (0..1).
+     * Тригонометрия выполняется один раз на геометрию, а не на каждый кадр.
+     */
+    private fun buildNormalizedPath(geometry: List<List<List<Double>>>): Path {
         val path = Path()
         for (ring in geometry) {
             if (ring.isEmpty()) continue
-            val (firstX, firstY) = projection(LatLng(ring[0][1], ring[0][0]))
-            path.moveTo(firstX, firstY)
+            path.moveTo(lonToX01(ring[0][0]), latToY01(ring[0][1]))
             for (i in 1 until ring.size) {
-                val (x, y) = projection(LatLng(ring[i][1], ring[i][0]))
-                path.lineTo(x, y)
+                path.lineTo(lonToX01(ring[i][0]), latToY01(ring[i][1]))
             }
             path.close()
         }
         return path
+    }
+
+    private fun transformedPath(base: Path, matrix: Matrix): Path {
+        scratchPath.rewind()
+        base.transform(matrix, scratchPath)
+        return scratchPath
+    }
+
+    private fun lonToX01(lon: Double): Float =
+        ((lon + 180.0) / 360.0).toFloat()
+
+    private fun latToY01(lat: Double): Float {
+        val rad = Math.toRadians(lat)
+        return ((1.0 - ln(tan(rad) + 1.0 / cos(rad)) / PI) / 2.0).toFloat()
     }
 }

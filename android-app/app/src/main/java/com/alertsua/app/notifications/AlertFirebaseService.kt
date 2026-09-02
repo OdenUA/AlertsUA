@@ -17,7 +17,7 @@ class AlertFirebaseService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.i("AlertsUaFirebase", "Новий FCM token: $token")
+        Log.i("AlertsUaFirebase", "Новий FCM token (${token.length} chars)")
         val repo = AlertsRepository(applicationContext)
         repo.saveFcmToken(token)
         CoroutineScope(Dispatchers.IO).launch {

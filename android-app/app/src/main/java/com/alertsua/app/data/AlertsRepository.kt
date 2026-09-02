@@ -75,6 +75,13 @@ data class ActiveAlertGeometry(
     val geometry: List<List<List<Double>>>,
 )
 
+/** Лёгкий статусный снапшот из /map/bundle — без геометрии, для опроса изменений */
+data class MapStatusSnapshot(
+    val stateVersion: Long,
+    val statusLookup: Map<Int, Pair<String, String>>, // uid -> (status, alert_type)
+    val activeAlertUids: Set<Int>,
+)
+
 class AlertsRepository(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -130,7 +137,13 @@ class AlertsRepository(context: Context) {
         preferences.edit().putBoolean(KEY_DARK_MODE_ENABLED, isEnabled).apply()
     }
 
-    fun loadDarkModeEnabled(): Boolean = preferences.getBoolean(KEY_DARK_MODE_ENABLED, false)
+    /** null — тема ещё не задана (первый запуск), иначе сохранённое значение */
+    fun loadDarkModeEnabled(): Boolean? =
+        if (preferences.contains(KEY_DARK_MODE_ENABLED)) {
+            preferences.getBoolean(KEY_DARK_MODE_ENABLED, false)
+        } else {
+            null
+        }
 
     fun saveSimplifiedMapEnabled(isEnabled: Boolean) {
         preferences.edit().putBoolean(KEY_SIMPLIFIED_MAP_ENABLED, isEnabled).apply()
@@ -622,7 +635,23 @@ class AlertsRepository(context: Context) {
     }
 
     suspend fun fetchSimplifiedOblastMap(rawApiBaseUrl: String): List<OblastData> = withContext(Dispatchers.IO) {
+        parseSimplifiedOblastBody(loadSimplifiedOblastBody(rawApiBaseUrl))
+    }
+
+    /**
+     * Геометрия областей статична — кэшируем тело ответа на диске (TTL 24ч).
+     * При ошибке сети используется устаревший кэш, если он есть.
+     */
+    private fun loadSimplifiedOblastBody(rawApiBaseUrl: String): String {
         val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
+        val cachedBody = runCatching {
+            oblastCacheFile.takeIf { it.isFile }?.readText()
+        }.getOrNull()
+        val cacheAge = System.currentTimeMillis() - preferences.getLong(KEY_OBLAST_CACHE_TIMESTAMP, 0L)
+        if (cachedBody != null && cacheAge < OBLAST_CACHE_TTL_MS) {
+            return cachedBody
+        }
+
         val connection = (URL("$apiBaseUrl/map/simplified-oblast").openConnection() as HttpURLConnection)
             .apply {
                 requestMethod = "GET"
@@ -636,31 +665,43 @@ class AlertsRepository(context: Context) {
             val code = connection.responseCode
             val responseText = readResponse(connection)
 
-            android.util.Log.d("SimplifiedMap", "API response code: $code")
-            android.util.Log.d("SimplifiedMap", "Response length: ${responseText.length}")
-
             if (code !in 200..299) {
                 android.util.Log.e("SimplifiedMap", "HTTP error: $code")
                 throw IllegalStateException("Failed to load map data")
             }
 
+            runCatching {
+                oblastCacheFile.writeText(responseText)
+                preferences.edit()
+                    .putLong(KEY_OBLAST_CACHE_TIMESTAMP, System.currentTimeMillis())
+                    .apply()
+            }
+            return responseText
+        } catch (e: Exception) {
+            if (cachedBody != null) {
+                android.util.Log.w("SimplifiedMap", "Network failed, using stale oblast cache", e)
+                return cachedBody
+            }
+            throw e
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private val oblastCacheFile: java.io.File
+        get() = java.io.File(appContext.filesDir, "simplified_oblast_cache.json")
+
+    private fun parseSimplifiedOblastBody(responseText: String): List<OblastData> {
             val json = JSONObject(responseText)
             val oblastsArray = json.getJSONArray("oblasts")
 
-            android.util.Log.d("SimplifiedMap", "Oblasts count: ${oblastsArray.length()}")
-
-            (0 until oblastsArray.length()).map { i ->
+            return (0 until oblastsArray.length()).map { i ->
                 try {
                     val obj = oblastsArray.getJSONObject(i)
                     val geometry = obj.getJSONObject("geometry")
                     val coordinates = geometry.getJSONArray("coordinates")
 
-                    android.util.Log.d("SimplifiedMap", "Processing oblast $i: ${obj.getString("title_uk")}")
-                    android.util.Log.d("SimplifiedMap", "Geometry type: ${geometry.getString("type")}")
-                    android.util.Log.d("SimplifiedMap", "Coordinates length: ${coordinates.length()}")
-
                     val parsedGeometry = parseGeoJsonCoordinates(coordinates)
-                    android.util.Log.d("SimplifiedMap", "Parsed geometry rings: ${parsedGeometry.size}")
 
                     val titleUk = obj.getString("title_uk")
                     val geoCenter = LatLng(
@@ -674,8 +715,6 @@ class AlertsRepository(context: Context) {
                         east = obj.getJSONObject("bounds").getDouble("east"),
                         north = obj.getJSONObject("bounds").getDouble("north")
                     )
-
-                    android.util.Log.d("SimplifiedMap", "Loaded: $titleUk, bounds=$bounds")
 
                     OblastData(
                         uid = obj.getInt("uid"),
@@ -692,12 +731,6 @@ class AlertsRepository(context: Context) {
                     throw e
                 }
             }
-        } catch (e: Exception) {
-            android.util.Log.e("SimplifiedMap", "Error in fetchSimplifiedOblastMap: ${e.message}", e)
-            throw e
-        } finally {
-            connection.disconnect()
-        }
     }
 
     private fun parseGeoJsonCoordinates(coordinates: JSONArray): List<List<List<Double>>> {
@@ -789,6 +822,57 @@ class AlertsRepository(context: Context) {
         }
     }
 
+    /**
+     * Лёгкий опрос статусов без геометрии (~86KB). Полные геометрии активных
+     * регионов имеет смысл перезапрашивать только при смене [MapStatusSnapshot.activeAlertUids].
+     */
+    suspend fun fetchMapStatusSnapshot(rawApiBaseUrl: String): MapStatusSnapshot = withContext(Dispatchers.IO) {
+        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
+        val connection = (URL("$apiBaseUrl/map/bundle").openConnection() as HttpURLConnection)
+            .apply {
+                requestMethod = "GET"
+                doInput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Accept", "application/json")
+            }
+
+        try {
+            val code = connection.responseCode
+            val responseText = readResponse(connection)
+            if (code !in 200..299) throw IllegalStateException("Failed to load status bundle: $code")
+
+            val json = JSONObject(responseText)
+
+            val lookup = mutableMapOf<Int, Pair<String, String>>()
+            json.optJSONObject("status_lookup")?.let { lookupJson ->
+                val keys = lookupJson.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val uid = key.toIntOrNull() ?: continue
+                    val entry = lookupJson.optJSONObject(key) ?: continue
+                    lookup[uid] = entry.optString("status", " ") to
+                        entry.optString("alert_type", "air_raid")
+                }
+            }
+
+            val activeUids = mutableSetOf<Int>()
+            json.optJSONArray("active_alert_uids")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    activeUids.add(arr.getInt(i))
+                }
+            }
+
+            MapStatusSnapshot(
+                stateVersion = json.optLong("state_version", 0L),
+                statusLookup = lookup,
+                activeAlertUids = activeUids,
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private companion object {
         const val LEGACY_EMULATOR_API_BASE_URL = "http://10.0.2.2:43100/api/v1"
         const val PREFERENCES_NAME       = "alerts_ua_preferences"
@@ -798,5 +882,7 @@ class AlertsRepository(context: Context) {
         const val KEY_FCM_TOKEN          = "fcm_token"
         const val KEY_INSTALLATION_TOKEN = "installation_token"
         const val KEY_SUBSCRIPTION_PINS  = "subscription_pins"
+        const val KEY_OBLAST_CACHE_TIMESTAMP = "oblast_cache_timestamp"
+        const val OBLAST_CACHE_TTL_MS    = 24L * 60 * 60 * 1000
     }
 }

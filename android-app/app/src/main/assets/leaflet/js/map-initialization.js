@@ -198,7 +198,7 @@ async function loadUkraineMask() {
 }
 
 window.setMapTheme = function (isDark) {
-    console.log('setMapTheme called with isDark:', isDark);
+    debugLog('setMapTheme called with isDark:', isDark);
     document.body.classList.toggle('dark', isDark);
     if (tileLayer) {
         tileLayer.setOpacity(isDark ? 0.82 : 0.93);
@@ -227,28 +227,17 @@ window.setMapTheme = function (isDark) {
 
     // Принудительное обновление стилей кнопок зума
     const zoomControls = document.querySelectorAll('.leaflet-control-zoom a');
-    console.log('Found zoom controls:', zoomControls.length);
+    debugLog('Found zoom controls:', zoomControls.length);
 
     const computedStyle = getComputedStyle(document.body);
     const zoomBg = computedStyle.getPropertyValue('--zoom-bg').trim();
     const zoomColor = computedStyle.getPropertyValue('--zoom-color').trim();
-    console.log('CSS variables - zoom-bg:', zoomBg, 'zoom-color:', zoomColor);
+    debugLog('CSS variables - zoom-bg:', zoomBg, 'zoom-color:', zoomColor);
 
-    zoomControls.forEach((control, index) => {
-        console.log(`Control ${index}:`, control);
+    zoomControls.forEach((control) => {
         // Прямое применение стилей
         control.style.backgroundColor = zoomBg;
         control.style.color = zoomColor;
-
-        // Сбрасываем инлайновые стили Leaflet
-        const originalBg = control.style.backgroundColor;
-        const originalColor = control.style.color;
-
-        // Даем браузеру время перерисоваться
-        setTimeout(() => {
-            control.style.backgroundColor = originalBg;
-            control.style.color = originalColor;
-        }, 50);
     });
 
     if (mapReady) {

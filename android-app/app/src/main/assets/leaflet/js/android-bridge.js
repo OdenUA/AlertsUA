@@ -66,6 +66,12 @@ async function initializeMap() {
         renderThreatOverlays();
         mapReadyQueue.forEach(function(fn) { fn(); });
         mapReadyQueue = [];
+
+        // Сигнал нативной стороне: страница полностью инициализирована,
+        // можно исполнять очередь исходящих JS-команд
+        if (window.AndroidBridge && typeof window.AndroidBridge.onJsReady === 'function') {
+            window.AndroidBridge.onJsReady();
+        }
     } catch (error) {
         console.error(error);
         setStatus(error.message || 'Не вдалося відкрити мапу.');
@@ -79,24 +85,24 @@ window.isThreatPopupOpen = false;
 map.on('popupopen', function(event) {
     var popup = event.popup;
     var className = popup && popup.options ? popup.options.className : 'none';
-    console.log('[Popup] popupopen - className=' + className);
+    debugLog('[Popup] popupopen - className=' + className);
 
     if (popup && popup.options && popup.options.className &&
         popup.options.className.indexOf('threat-custom-popup') !== -1) {
         window.isThreatPopupOpen = true;
-        console.log('[Popup] Threat popup opened, isThreatPopupOpen=' + window.isThreatPopupOpen);
+        debugLog('[Popup] Threat popup opened, isThreatPopupOpen=' + window.isThreatPopupOpen);
     }
 });
 
 map.on('popupclose', function(event) {
     var popup = event.popup;
     var className = popup && popup.options ? popup.options.className : 'none';
-    console.log('[Popup] popupclose - className=' + className);
+    debugLog('[Popup] popupclose - className=' + className);
 
     if (popup && popup.options && popup.options.className &&
         popup.options.className.indexOf('threat-custom-popup') !== -1) {
         window.isThreatPopupOpen = false;
-        console.log('[Popup] Threat popup closed, isThreatPopupOpen=' + window.isThreatPopupOpen);
+        debugLog('[Popup] Threat popup closed, isThreatPopupOpen=' + window.isThreatPopupOpen);
     }
 });
 
@@ -109,7 +115,7 @@ map.on('mousedown', function(event) {
     var isPopupOpen = popup && popup._map === map;
 
     if (isPopupOpen) {
-        console.log('[MouseDown] Popup is open, setting suppressNextClick=true');
+        debugLog('[MouseDown] Popup is open, setting suppressNextClick=true');
         window.suppressNextClick = true;
         map.closePopup();
 
@@ -127,14 +133,14 @@ map.on('click', function (event) {
         var popupElement = target.closest('.leaflet-popup');
         var popupContent = target.closest('.threat-popup-card');
         if (popupElement || popupContent) {
-            console.log('[Click] Click was on popup element, ignoring');
+            debugLog('[Click] Click was on popup element, ignoring');
             return;
         }
     }
 
     // If we're suppressing this click (because we closed a popup on mousedown)
     if (window.suppressNextClick) {
-        console.log('[Click] Suppressing click because popup was just closed');
+        debugLog('[Click] Suppressing click because popup was just closed');
         window.suppressNextClick = false;
         L.DomEvent.stopPropagation(event);
         L.DomEvent.preventDefault(event);
@@ -149,11 +155,11 @@ map.on('click', function (event) {
         event.latlng.lat >= 50.21 && event.latlng.lat <= 50.59 &&
         event.latlng.lng >= 30.23 && event.latlng.lng <= 30.83;
 
-    console.log('[Click] lat=' + event.latlng.lat + ', lng=' + event.latlng.lng + ', inKyivCity=' + isInsideKyivCity);
+    debugLog('[Click] lat=' + event.latlng.lat + ', lng=' + event.latlng.lng + ', inKyivCity=' + isInsideKyivCity);
 
     if (isInsideKyivCity) {
         // Use Kyiv oblast center point for selection
-        console.log('[Click] Using Kyiv oblast center');
+        debugLog('[Click] Using Kyiv oblast center');
         selectPoint({ lat: 50.45, lng: 30.523 });
     } else {
         selectPoint(event.latlng);
@@ -172,8 +178,12 @@ map.on('zoomend', function () {
 
 window.addEventListener('resize', refreshLayout);
 
-// Auto-refresh alert states every 30 seconds — lightweight: only fetch status bundle (~86KB)
-setInterval(function () {
+// Auto-refresh timers — могут ставиться на паузу из нативной стороны,
+// когда приложение свёрнуто (экономия батареи и трафика).
+var statusPollTimerId = null;
+var threatPollTimerId = null;
+
+function pollAlertStatuses() {
     if (!mapReady) { return; }
     if (typeof loadStatusBundle === 'function') {
         loadStatusBundle()
@@ -186,17 +196,35 @@ setInterval(function () {
     } else if (typeof scheduleOverlayRefresh === 'function') {
         scheduleOverlayRefresh();
     }
-}, 30000);
+}
 
-// Auto-refresh threat overlays every 60 seconds so expired threats disappear
-setInterval(function () {
+function pollThreatOverlays() {
     if (!mapReady) { return; }
     if (typeof loadThreatOverlays === 'function') {
         loadThreatOverlays().catch(function (error) {
             console.warn('Threat refresh failed:', error);
         });
     }
-}, 60000);
+}
+
+window.pauseAlertsUaPolling = function () {
+    if (statusPollTimerId !== null) { clearInterval(statusPollTimerId); statusPollTimerId = null; }
+    if (threatPollTimerId !== null) { clearInterval(threatPollTimerId); threatPollTimerId = null; }
+};
+
+window.resumeAlertsUaPolling = function () {
+    if (statusPollTimerId === null) { statusPollTimerId = setInterval(pollAlertStatuses, 30000); }
+    if (threatPollTimerId === null) { threatPollTimerId = setInterval(pollThreatOverlays, 60000); }
+    // При возвращении на передний план сразу получаем свежие данные
+    pollAlertStatuses();
+    pollThreatOverlays();
+};
+
+// Auto-refresh alert states every 30 seconds — lightweight: only fetch status bundle (~86KB)
+statusPollTimerId = setInterval(pollAlertStatuses, 30000);
+
+// Auto-refresh threat overlays every 60 seconds so expired threats disappear
+threatPollTimerId = setInterval(pollThreatOverlays, 60000);
 
 // Кастомный контрол зума
 let customZoomControls = null;

@@ -1,6 +1,13 @@
 // DOM Elements
 const statusElement = document.getElementById('status');
 
+// Debug logging: console.log в WebView недешёвый — горячие пути идут через debugLog,
+// который активен только при DEBUG = true.
+const DEBUG = false;
+function debugLog() {
+    if (DEBUG) { console.log.apply(console, arguments); }
+}
+
 // Map initialization
 const map = L.map('map', {
     zoomControl: false, // Убираем автоматический контрол

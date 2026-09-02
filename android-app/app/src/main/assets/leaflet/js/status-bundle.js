@@ -10,6 +10,10 @@ var statusBundleCache = {
     updatedAt: 0,
 };
 
+// Версия бандла, уже применённая к слоям карты. Если сервер вернул ту же
+// версию — перерисовка не нужна (таковы ~99% 30-секундных циклов опроса).
+var lastAppliedStateVersion = -1;
+
 function loadStatusBundle() {
     return new Promise(function (resolve, reject) {
         var xhr = new XMLHttpRequest();
@@ -23,7 +27,7 @@ function loadStatusBundle() {
                 statusBundleCache.activeAlertUids = bundle.active_alert_uids || [];
                 statusBundleCache.updatedAt = Date.now();
 
-                console.log('[StatusBundle] Received v' + bundle.state_version +
+                debugLog('[StatusBundle] Received v' + bundle.state_version +
                     ', active:', bundle.active_alerts_count +
                     ', lookup:', Object.keys(statusBundleCache.statusLookup).length);
 
@@ -42,55 +46,6 @@ function loadStatusBundle() {
 }
 
 /**
- * Rebuild the alerts fill layer from current feature statuses.
- */
-function rebuildAlertsLayerFromStatuses() {
-    var allFeatures = [];
-    ['oblast', 'raion', 'hromada'].forEach(function (layerId) {
-        var layer = overlayLayers[layerId];
-        if (!layer) return;
-        layer.eachLayer(function (li) {
-            if (li.feature) allFeatures.push(li.feature);
-        });
-    });
-
-    var activeFeatures = allFeatures.filter(function (f) {
-        return f && f.properties && f.properties.status === 'A';
-    });
-
-    if (alertLayersGroup) map.removeLayer(alertLayersGroup);
-
-    alertLayersGroup = L.geoJSON(activeFeatures, {
-        style: function (feature) {
-            var props = feature && feature.properties;
-            var alertType = props && props.alert_type || 'air_raid';
-            var palette = getAlertPalette(alertType);
-            return { stroke: false, fillColor: palette.fill, fillOpacity: palette.fillOpacity };
-        },
-        onEachFeature: bindFeatureTooltip,
-    }).addTo(map);
-}
-
-/**
- * Rebuild special alert layer from current feature statuses.
- */
-function rebuildSpecialAlertLayer() {
-    var allFeatures = [];
-    var hl = overlayLayers['hromada'];
-    if (hl) hl.eachLayer(function (li) { if (li.feature) allFeatures.push(li.feature); });
-
-    var specialFeatures = allFeatures.filter(function (f) {
-        return f && f.properties && f.properties.status === 'A' && isSpecialAlertType(f.properties.alert_type);
-    });
-
-    if (specialAlertLayer) map.removeLayer(specialAlertLayer);
-    specialAlertLayer = L.geoJSON(specialFeatures, {
-        style: function (f) { return featureStyle(f, 'special'); },
-        onEachFeature: bindFeatureTooltip,
-    }).addTo(map);
-}
-
-/**
  * Bring a layer or layer group to front.
  * L.layerGroup doesn't have bringToFront, so we iterate children.
  */
@@ -106,9 +61,14 @@ function _bringToFront(layer) {
 }
 
 /**
- * Apply cached statuses AND refresh threat overlays.
- * CRITICAL: Threat overlays must be refreshed every cycle — lives depend on timely updates.
+ * Apply cached statuses to the map layers.
  * Used for 30-second auto-refresh when layers are already rendered.
+ *
+ * Skips all work when the bundle state_version has not changed. When it has,
+ * statuses are written into the shared static-geometry feature objects, the
+ * oblast layer (always fully rendered) is restyled in place, and the
+ * raion/hromada fill layers — which contain only active ('A') regions —
+ * are rebuilt so their composition matches the new active set.
  */
 function refreshStatusesFromCache() {
     var statusLookup = statusBundleCache.statusLookup;
@@ -116,56 +76,58 @@ function refreshStatusesFromCache() {
         console.warn('[StatusBundle] No statuses to apply');
         return;
     }
+    if (statusBundleCache.stateVersion === lastAppliedStateVersion) {
+        return;
+    }
+    lastAppliedStateVersion = statusBundleCache.stateVersion;
 
     var appliedCount = 0;
+
+    // Mutate the shared static-geometry features (layers hold the same references)
+    ['oblast', 'raion', 'hromada'].forEach(function (layerKey) {
+        var layerData = staticGeometry[layerKey];
+        if (!layerData || !layerData.features) return;
+
+        layerData.features.forEach(function (feature) {
+            var props = feature && feature.properties;
+            if (!props) return;
+            var uid = props.uid;
+            if (uid === undefined || uid === null) return;
+
+            var statusInfo = statusLookup[String(uid)];
+            var newStatus = statusInfo ? statusInfo.status : ' ';
+            var newAlertType = statusInfo ? statusInfo.alert_type : 'air_raid';
+
+            if (props.status !== newStatus || props.alert_type !== newAlertType) {
+                props.status = newStatus;
+                props.alert_type = newAlertType;
+                appliedCount++;
+            }
+        });
+    });
+
+    if (appliedCount === 0) {
+        return;
+    }
 
     // Apply Kyiv city inherited oblast status BEFORE updating layer styles
     if (typeof window.applyKyivCityInheritedOblastStatus === 'function') {
         window.applyKyivCityInheritedOblastStatus();
     }
 
-    ['oblast', 'raion', 'hromada'].forEach(function (layerId) {
-        var layer = overlayLayers[layerId];
-        if (!layer) return;
-
-        layer.eachLayer(function (layerItem) {
-            var feature = layerItem.feature;
-            if (!feature || !feature.properties) return;
-
-            var uid = feature.properties.uid;
-            if (uid === undefined || uid === null) return;
-
-            var uidStr = String(uid);
-            var statusInfo = statusLookup[uidStr];
-            var newStatus = statusInfo ? statusInfo.status : ' ';
-            var newAlertType = statusInfo ? statusInfo.alert_type : 'air_raid';
-
-            if (feature.properties.status !== newStatus || feature.properties.alert_type !== newAlertType) {
-                feature.properties.status = newStatus;
-                feature.properties.alert_type = newAlertType;
-                appliedCount++;
-                layerItem.setStyle(featureStyle(feature, layerId));
-            }
-        });
-    });
-
-    // Update Kyiv city style specifically — it inherits oblast status
-    if (overlayLayers['oblast']) {
-        overlayLayers['oblast'].eachLayer(function(layerItem) {
-            var feature = layerItem.feature;
-            if (!feature || !feature.properties) return;
-            var title = String(feature.properties.title_uk || '').toLowerCase().replace(/\s+/g, ' ').trim();
-            var isKyivCity = feature.properties.region_type === 'city' &&
-                (title === 'київ' || title === 'м. київ' || title === 'м київ');
-            if (isKyivCity) {
-                layerItem.setStyle(featureStyle(feature, 'oblast'));
-                console.log('[StatusBundle] Kyiv city style updated, status:', feature.properties.status);
+    // Oblast layer always contains all features — restyle in place
+    // (this also covers Kyiv city, which inherits the oblast status)
+    var oblastLayer = overlayLayers['oblast'];
+    if (oblastLayer) {
+        oblastLayer.eachLayer(function (layerItem) {
+            if (layerItem.feature) {
+                layerItem.setStyle(featureStyle(layerItem.feature, 'oblast'));
             }
         });
     }
 
-    rebuildAlertsLayerFromStatuses();
-    rebuildSpecialAlertLayer();
+    // Raion/hromada fill layers contain only active regions — rebuild composition
+    renderActiveFillLayers();
 
     // DO NOT reload threat overlays here — it destroys hitMarkers and their bound popups,
     // breaking the ability to reopen a popup on the same threat after closing it.
@@ -173,16 +135,15 @@ function refreshStatusesFromCache() {
     // via renderThreatOverlays() in threat-engine.js.
 
     // Bring layers to correct z-order
-    // Order: borders(back) → alerts → special → occupied → oblast features → interactive → markers → threats(front)
+    // Order: borders(back) → alerts → special → occupied → oblast features → threats(front)
     if (oblastBordersLayer) oblastBordersLayer.bringToBack();
     if (alertLayersGroup) _bringToFront(alertLayersGroup);
     if (specialAlertLayer) _bringToFront(specialAlertLayer);
     if (occupiedTerritoriesLayer) _bringToFront(occupiedTerritoriesLayer);
     if (overlayLayers['oblast']) overlayLayers['oblast'].bringToFront();
-    if (interactiveRegionsLayer) interactiveRegionsLayer.bringToFront();
     if (threatOverlayLayer) _bringToFront(threatOverlayLayer);
 
-    console.log('[StatusBundle] Applied statuses to', appliedCount, 'features');
+    debugLog('[StatusBundle] Applied statuses to', appliedCount, 'features');
 }
 
 window.loadStatusBundle = loadStatusBundle;

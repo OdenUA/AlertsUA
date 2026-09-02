@@ -99,21 +99,15 @@ fun AlertsUaApp(
     }
     val configuration = LocalConfiguration.current
 
-    // Загружаем тему: если первый запуск - используем системную, иначе используем сохраненную
-    val isFirstLaunch = repository.loadDarkModeEnabled() == null
-
-    // Для отладки
-    android.util.Log.d("ThemeDebug", "isFirstLaunch: $isFirstLaunch, isSystemDark: $isSystemDark")
-
+    // Загружаем тему один раз: при первом запуске подхватываем системную,
+    // иначе используем сохранённую
     var darkMode by rememberSaveable {
-        if (isFirstLaunch) {
-            // Первый запуск - сохраняем системную тему
-            android.util.Log.d("ThemeDebug", "Saving system theme: $isSystemDark")
+        val savedTheme = repository.loadDarkModeEnabled()
+        if (savedTheme == null) {
+            // Первый запуск — сохраняем системную тему
             repository.saveDarkModeEnabled(isSystemDark)
             mutableStateOf(isSystemDark)
         } else {
-            val savedTheme = repository.loadDarkModeEnabled()
-            android.util.Log.d("ThemeDebug", "Loading saved theme: $savedTheme")
             mutableStateOf(savedTheme)
         }
     }
@@ -135,16 +129,20 @@ fun AlertsUaApp(
         Log.d("RatePromptUI", "showRatePrompt=$showRatePrompt (forceShow=$forceShowRatePrompt)")
     }
 
-    val toggleDarkMode: () -> Unit = {
-        val nextValue = !darkMode
-        darkMode = nextValue
-        repository.saveDarkModeEnabled(nextValue)
+    val toggleDarkMode: () -> Unit = remember(repository) {
+        {
+            val nextValue = !darkMode
+            darkMode = nextValue
+            repository.saveDarkModeEnabled(nextValue)
+        }
     }
 
-    val toggleSimplifiedMap: () -> Unit = {
-        val nextValue = !useSimplifiedMap
-        useSimplifiedMap = nextValue
-        repository.saveSimplifiedMapEnabled(nextValue)
+    val toggleSimplifiedMap: () -> Unit = remember(repository) {
+        {
+            val nextValue = !useSimplifiedMap
+            useSimplifiedMap = nextValue
+            repository.saveSimplifiedMapEnabled(nextValue)
+        }
     }
 
     DisposableEffect(activity, view, isFullscreen) {
@@ -188,8 +186,9 @@ fun AlertsUaApp(
         }
     }
 
+    val colorScheme = remember(darkMode) { if (darkMode) darkColorScheme() else lightColorScheme() }
     MaterialTheme(
-        colorScheme = if (darkMode) darkColorScheme() else lightColorScheme(),
+        colorScheme = colorScheme,
     ) {
         if (showSettingsScreen) {
             SettingsScreen(
@@ -199,7 +198,6 @@ fun AlertsUaApp(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
-                Log.d("AdMob", "isLandscape: $isLandscape, isFullscreen: $isFullscreen")
                 if (!isLandscape && !isFullscreen) {
                     androidx.compose.material3.BottomAppBar(
                         modifier = Modifier

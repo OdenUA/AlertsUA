@@ -33,6 +33,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +42,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.alertsua.app.R
 import com.alertsua.app.data.*
 import kotlinx.coroutines.delay
@@ -50,6 +53,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.pow
 
 private enum class SubscriptionLevel(val labelRes: Int, val apiLabel: String) {
     HROMADA(R.string.subscribe_level_hromada, "Громада"),
@@ -132,20 +136,64 @@ fun SimplifiedMapScreen(
 
     var isRefreshing by remember { mutableStateOf(false) }
 
-    // Refresh function
+    // Состояние лёгкого опроса: полные геометрии активных регионов
+    // перезапрашиваются только при смене набора активных uid
+    var lastStateVersion by remember { mutableStateOf(-1L) }
+    var lastActiveUids by remember { mutableStateOf<Set<Int>>(emptySet()) }
+
+    // Применяет статусы из снапшота к областям; пересоздаёт список,
+    // только если что-то реально изменилось (не сбрасывая кэш Path в рендерере)
+    fun applySnapshotStatuses(snapshot: MapStatusSnapshot) {
+        val current = controller.oblasts.value
+        if (current.isEmpty()) return
+        var anyChanged = false
+        val updated = current.map { oblast ->
+            val entry = snapshot.statusLookup[oblast.uid]
+            val newStatus = entry?.first ?: " "
+            val newType = entry?.second ?: "air_raid"
+            if (oblast.status != newStatus || oblast.alertType != newType) {
+                anyChanged = true
+                oblast.copy(status = newStatus, alertType = newType)
+            } else {
+                oblast
+            }
+        }
+        if (anyChanged) {
+            controller.updateOblasts(updated)
+        }
+    }
+
+    // Refresh function — полное обновление статусов и геометрий
     suspend fun refreshData() {
         isRefreshing = true
         android.widget.Toast.makeText(context, "Оновлення...", android.widget.Toast.LENGTH_SHORT).show()
         try {
             val apiBaseUrl = repository.loadApiBaseUrl()
-            // Load active alerts (oblasts geometry doesn't change)
+            val snapshot = repository.fetchMapStatusSnapshot(apiBaseUrl)
+            lastStateVersion = snapshot.stateVersion
+            applySnapshotStatuses(snapshot)
             val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
             controller.updateActiveAlerts(alerts)
+            lastActiveUids = snapshot.activeAlertUids
         } catch (e: Exception) {
             android.util.Log.e("SimplifiedMap", "Refresh failed: ${e.message}", e)
             android.widget.Toast.makeText(context, "Помилка оновлення", android.widget.Toast.LENGTH_SHORT).show()
         } finally {
             isRefreshing = false
+        }
+    }
+
+    // Лёгкий опрос: статусы всегда, геометрия — только при изменении набора активных uid
+    suspend fun pollStatuses() {
+        val apiBaseUrl = repository.loadApiBaseUrl()
+        val snapshot = repository.fetchMapStatusSnapshot(apiBaseUrl)
+        if (snapshot.stateVersion == lastStateVersion) return
+        lastStateVersion = snapshot.stateVersion
+        applySnapshotStatuses(snapshot)
+        if (snapshot.activeAlertUids != lastActiveUids) {
+            val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
+            controller.updateActiveAlerts(alerts)
+            lastActiveUids = snapshot.activeAlertUids
         }
     }
 
@@ -155,12 +203,16 @@ fun SimplifiedMapScreen(
         errorMessage = null
         try {
             val apiBaseUrl = repository.loadApiBaseUrl()
-            // Load oblasts first
+            // Load oblasts first (геометрия кэшируется на диске на 24ч)
             val loadedOblasts = repository.fetchSimplifiedOblastMap(apiBaseUrl)
             controller.updateOblasts(loadedOblasts)
-            // Then load active alerts
+            // Then apply fresh statuses and load active alert geometries
+            val snapshot = repository.fetchMapStatusSnapshot(apiBaseUrl)
+            lastStateVersion = snapshot.stateVersion
+            applySnapshotStatuses(snapshot)
             val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
             controller.updateActiveAlerts(alerts)
+            lastActiveUids = snapshot.activeAlertUids
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load map data"
         } finally {
@@ -168,11 +220,15 @@ fun SimplifiedMapScreen(
         }
     }
 
-    // Auto-refresh every 30 seconds
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(30000L)
-            refreshData()
+    // Auto-refresh every 30 seconds — только пока приложение на переднем плане
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                kotlinx.coroutines.delay(30000L)
+                runCatching { pollStatuses() }
+                    .onFailure { android.util.Log.w("SimplifiedMap", "Status poll failed: ${it.message}") }
+            }
         }
     }
 
@@ -346,9 +402,22 @@ fun SimplifiedMapScreen(
                     controller.geoToScreen(latLng.lat, latLng.lon, canvasWidthPx, canvasHeightPx)
                 }
 
+                // Аффинная матрица «мир → экран» для кэшированных Path:
+                // мировые пиксели = нормализованные координаты * worldPixels
+                val wp = 256.0 * 2.0.pow(controller.zoom)
+                val centerWorldX = SimplifiedMapController.lonToX(controller.centerLon, wp)
+                val centerWorldY = SimplifiedMapController.latToY(controller.centerLat, wp)
+                val pathMatrix = android.graphics.Matrix().apply {
+                    setScale(wp.toFloat(), wp.toFloat())
+                    postTranslate(
+                        (canvasWidthPx / 2f - centerWorldX).toFloat(),
+                        (canvasHeightPx / 2f - centerWorldY).toFloat(),
+                    )
+                }
+
                 with(drawContext.canvas.nativeCanvas) {
-                    renderer.renderOblasts(this, oblasts, projection, darkMode)
-                    renderer.renderActiveAlerts(this, activeAlerts, projection)
+                    renderer.renderOblasts(this, oblasts, pathMatrix, darkMode)
+                    renderer.renderActiveAlerts(this, activeAlerts, pathMatrix)
                     renderer.renderSubscriptionMarkers(this, subscriptionPins, projection)
                     renderer.renderOblastNames(this, oblasts, projection, darkMode)
                     renderer.renderOblastCenters(this, oblasts, projection, darkMode)
@@ -838,10 +907,13 @@ private fun formatAlertStartLabel(start: java.time.ZonedDateTime, now: java.time
     }
 }
 
+private val TZ_OFFSET_HOURS_ONLY = Regex("([+-]\\d{2})$")
+private val TZ_OFFSET_COMPACT = Regex("([+-]\\d{2})(\\d{2})$")
+
 private fun parseBackendInstant(rawTimestamp: String): Instant {
     val normalized = rawTimestamp.trim()
         .replace(' ', 'T')
-        .replace(Regex("([+-]\\d{2})$"), "$1:00")
-        .replace(Regex("([+-]\\d{2})(\\d{2})$"), "$1:$2")
+        .replace(TZ_OFFSET_HOURS_ONLY, "$1:00")
+        .replace(TZ_OFFSET_COMPACT, "$1:$2")
     return java.time.OffsetDateTime.parse(normalized).toInstant()
 }
