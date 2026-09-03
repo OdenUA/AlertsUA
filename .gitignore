@@ -52,3 +52,8 @@ node_modules/
 docs/research/ukr_admin4.geojson
 android-app/*.jks
 backend/data/
+
+# Local junk artifacts
+.tmp-screenshots/
+backend/*.tar.gz
+backend/tmp_*.sql
