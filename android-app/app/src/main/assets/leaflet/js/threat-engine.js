@@ -4,6 +4,81 @@ function getThreatIconSrc(threatKind) {
     return config[mode] || THREAT_TYPE_ICONS.unknown.light;
 }
 
+var THREAT_POPUP_VIEWPORT_PADDING = 12;
+// Зазор между маркером и попапом при перевороте попапа под маркер
+// (чтобы попап не перекрывал иконку угрозы ~28px с якорем по центру).
+var THREAT_POPUP_FLIP_GAP = 16;
+
+// Дополнительный отступ сверху в dp: рекламный баннер в Compose перекрывает
+// верх карты. Выставляется нативной стороной через window.setMapTopInset.
+var mapTopInsetDp = 0;
+window.setMapTopInset = function (topInsetDp) {
+    mapTopInsetDp = Number(topInsetDp) || 0;
+};
+
+/**
+ * Гарантирует, что открытый попап целиком в пределах экрана.
+ * Стандартный autoPan Leaflet здесь ненадёжен: карта ограничена maxBounds
+ * (viscosity 1.0), сдвиг карты у края Украины откатывается назад и попап
+ * остаётся обрезанным. Поэтому карту не двигаем вообще:
+ * - по горизонтали сдвигаем попап через margin-left (у попапа задан left);
+ * - по вертикали меняем bottom (Leaflet якорит попап за НИЗ, поэтому
+ *   margin-top здесь работает наоборот и не используется);
+ * - если сверху места нет — переворачиваем попап ПОД маркер, «носик»
+ *   переносим наверх и обрезаем до верхней половины ромба (треугольник вверх).
+ */
+function clampThreatPopupIntoViewport(popup) {
+    var el = popup && popup.getElement ? popup.getElement() : null;
+    if (!el || !map) return;
+
+    // Сброс поправок прошлого открытия (style.bottom Leaflet перезаписывает
+    // сам при каждом открытии, поэтому его не трогаем).
+    el.style.marginLeft = '';
+    var tipContainer = el.querySelector('.leaflet-popup-tip-container');
+    var tip = tipContainer ? tipContainer.querySelector('.leaflet-popup-tip') : null;
+    if (tipContainer) {
+        tipContainer.style.transform = '';
+        tipContainer.style.top = '';
+        tipContainer.style.height = '';
+    }
+    if (tip) tip.style.marginTop = '';
+
+    var containerRect = map.getContainer().getBoundingClientRect();
+    var pad = THREAT_POPUP_VIEWPORT_PADDING;
+    var topLimit = containerRect.top + pad + mapTopInsetDp;
+    var rect = el.getBoundingClientRect();
+
+    // Горизонтальный кламп: margin-left, «носик» оставляем над маркером
+    var dx = 0;
+    if (rect.left < containerRect.left + pad) dx = containerRect.left + pad - rect.left;
+    else if (rect.right > containerRect.right - pad) dx = containerRect.right - pad - rect.right;
+    if (dx !== 0) {
+        el.style.marginLeft = dx + 'px';
+        if (tipContainer) tipContainer.style.transform = 'translateX(' + (-dx) + 'px)';
+    }
+
+    // Вертикаль: Leaflet позиционирует попап через style.bottom (якорь снизу)
+    var bottomPx = parseFloat(el.style.bottom);
+    if (!Number.isFinite(bottomPx)) return;
+
+    if (rect.top < topLimit) {
+        // Сверху места нет — переворачиваем попап ПОД маркером:
+        // уменьшение bottom сдвигает попап вниз на высоту попапа + зазор
+        var popupHeight = rect.bottom - rect.top;
+        el.style.bottom = (bottomPx - popupHeight - THREAT_POPUP_FLIP_GAP) + 'px';
+        if (tipContainer && tip) {
+            // Контейнер носика над попапом; высота 10px обрезает ромб
+            // до верхней половины — треугольник, указывающий вверх на маркер
+            tipContainer.style.top = '-9px';
+            tipContainer.style.height = '10px';
+            tip.style.marginTop = '1px';
+        }
+    } else if (rect.bottom > containerRect.bottom - pad) {
+        // Снизу не влезает — поднимаем попап выше (bottom растёт)
+        el.style.bottom = (bottomPx + (rect.bottom - (containerRect.bottom - pad))) + 'px';
+    }
+}
+
 function getAlertPalette(alertType) {
     return alertTypePalette[alertType] || alertTypePalette.air_raid;
 }
@@ -463,16 +538,22 @@ function buildThreatOverlayLayer(overlays) {
                 });
                 // Use manual popup instead of bindPopup to avoid Leaflet mobile/WebView
                 // issues where the popup can only be opened once after zoom changes.
+                // autoPan выключен: позиционирование в пределах экрана выполняет
+                // clampThreatPopupIntoViewport (autoPan блокируется maxBounds карты).
                 var popup = L.popup({
                     maxWidth: 300,
                     minWidth: 200,
                     className: 'threat-custom-popup',
-                    autoPan: true,
+                    autoPan: false,
                     closeButton: true,
                 }).setContent(popupContent);
 
                 function openThreatPopup() {
                     popup.setLatLng(hitMarker.getLatLng()).openOn(map);
+                    // Кламп после layout попапа (измерять нужно уже отрендеренный элемент)
+                    requestAnimationFrame(function () {
+                        clampThreatPopupIntoViewport(popup);
+                    });
                 }
 
                 hitMarker.on('click', openThreatPopup);

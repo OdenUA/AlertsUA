@@ -127,6 +127,7 @@ fun AlertMapScreen(
     activeThreatChannel: String? = "@kpszsu",
     locationPermissionGranted: Boolean = false,
     requestLocationPermission: (() -> Unit)? = null,
+    mapTopInsetDp: Int = 0,
 ) {
     val context = LocalContext.current
     val repository = remember(context) { AlertsRepository(context) }
@@ -595,6 +596,7 @@ fun AlertMapScreen(
             mapController = mapController,
             apiBaseUrl = activeApiBaseUrl,
             darkMode = darkMode,
+            mapTopInsetDp = mapTopInsetDp,
         )
 
         SnackbarHost(

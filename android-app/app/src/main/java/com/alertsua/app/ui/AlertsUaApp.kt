@@ -342,6 +342,14 @@ fun AlertsUaApp(
                             refreshTrigger = refreshTrigger,
                         )
                     } else {
+                        // Насколько рекламный баннер перекрывает верх карты:
+                        // баннер занимает 8..58dp от верха; у карты отступ сверху
+                        // 50dp в портрете и 8dp в ландшафте; в fullscreen баннера нет.
+                        val mapTopInsetDp = when {
+                            isFullscreen -> 0
+                            isLandscape -> 50
+                            else -> 8
+                        }
                         AlertMapScreen(
                             modifier = modifierWithPadding.fillMaxSize(),
                             darkMode = darkMode,
@@ -349,6 +357,7 @@ fun AlertsUaApp(
                             activeThreatChannel = activeThreatChannel,
                             locationPermissionGranted = locationPermissionGranted,
                             requestLocationPermission = requestLocationPermission,
+                            mapTopInsetDp = mapTopInsetDp,
                         )
                     }
                 }

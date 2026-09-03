@@ -28,6 +28,7 @@ private class WebViewMapState {
     val pendingScripts = ArrayDeque<String>()
     var appliedDarkMode: Boolean? = null
     var appliedApiBaseUrl: String? = null
+    var appliedTopInsetDp: Int? = null
 
     fun evaluateOrQueue(script: String) {
         val wv = webView
@@ -58,6 +59,7 @@ fun LeafletMapView(
     mapController: MapController,
     apiBaseUrl: String,
     darkMode: Boolean = false,
+    mapTopInsetDp: Int = 0,
 ) {
     val state = remember { WebViewMapState() }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -148,6 +150,11 @@ fun LeafletMapView(
             if (state.appliedDarkMode != darkMode) {
                 state.appliedDarkMode = darkMode
                 state.evaluateOrQueue("window.setMapTheme($darkMode);")
+            }
+            // Отступ сверху под рекламный баннер — попапы угроз не должны под него залезать
+            if (state.appliedTopInsetDp != mapTopInsetDp) {
+                state.appliedTopInsetDp = mapTopInsetDp
+                state.evaluateOrQueue("if(window.setMapTopInset) window.setMapTopInset($mapTopInsetDp);")
             }
         },
         onRelease = { webView ->
