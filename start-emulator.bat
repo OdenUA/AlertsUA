@@ -17,9 +17,10 @@ set "ADB=E:\Dev\Android\SDK\platform-tools\adb.exe"
 rem Change AVD_NAME to Medium_Phone_API_36.1 if you prefer a different device.
 set "AVD_NAME=Pixel_6"
 
-echo [*] Starting emulator: %AVD_NAME%
+echo [*] Starting emulator: %AVD_NAME% (cold boot)
 rem Размер userdata-раздела берется из AVD config.ini (disk.dataPartition.size)
-start "" "%EMULATOR_EXE%" -avd %AVD_NAME%
+rem -no-snapshot-load: всегда холодная загрузка, сохранённый снапшот не используется
+start "" "%EMULATOR_EXE%" -avd %AVD_NAME% -no-snapshot-load
 
 echo [*] Waiting for emulator to boot...
 :wait_loop
