@@ -804,6 +804,18 @@ function renderActiveFillLayers() {
     var specialFeatures = getFeaturesByLayerId('hromada').filter(function (f) {
         return f && f.properties && f.properties.status === 'A' && isSpecialAlertType(f.properties.alert_type);
     });
+
+    // м. Київ — это city-фича в oblast-слое (в hromada-слое её нет), поэтому
+    // в спецслой её нужно добавить отдельно. Статус/тип уже содержат
+    // наследование от Киевской области (applyKyivCityInheritedOblastStatus
+    // вызывается до renderActiveFillLayers в обоих путях обновления).
+    var kyivCityFeature = getFeaturesByLayerId('oblast').find(isKyivCityFeature);
+    if (kyivCityFeature && kyivCityFeature.properties &&
+        kyivCityFeature.properties.status === 'A' &&
+        isSpecialAlertType(kyivCityFeature.properties.alert_type)) {
+        specialFeatures.push(kyivCityFeature);
+    }
+
     if (specialAlertLayer) map.removeLayer(specialAlertLayer);
     specialAlertLayer = L.geoJSON(specialFeatures, {
         style: function (f) { return featureStyle(f, 'special'); },

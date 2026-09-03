@@ -234,6 +234,38 @@ fun AlertMapScreen(
     var resolvedLocationPoint by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var isResolvingLocation by remember { mutableStateOf(false) }
     var subscriptionsLoaded by remember { mutableStateOf(false) }
+    var locateAfterPermissionGrant by remember { mutableStateOf(false) }
+    // Защита от параллельных вызовов resolveLocationAndPrompt: при старте его
+    // могут одновременно запустить оба LaunchedEffect (по subscriptionsLoaded
+    // и по locationPermissionGranted), что дублирует запросы к API.
+    var locationResolveInFlight by remember { mutableStateOf(false) }
+
+    fun locateUserOnMap() {
+        coroutineScope.launch {
+            val location = getCurrentLocation(context)
+            if (location != null) {
+                mapController.setUserLocation(location.latitude, location.longitude, center = true)
+            } else {
+                snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
+            }
+        }
+    }
+
+    // Пассивное обновление маркера текущего местоположения (без центрирования,
+    // без снекбара при ошибке) — маркер должен быть на карте всегда.
+    fun refreshUserLocationMarker() {
+        val hasLocationPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasLocationPermission) return
+        coroutineScope.launch {
+            val location = getCurrentLocation(context)
+            if (location != null) {
+                mapController.setUserLocation(location.latitude, location.longitude)
+            }
+        }
+    }
 
     // Check if user chose "don't ask again"
     val dontAskForLocation = rememberSaveable {
@@ -244,6 +276,9 @@ fun AlertMapScreen(
     }
 
     suspend fun resolveLocationAndPrompt() {
+        // Пропускаем повторный вызов, пока идёт текущий, или если промпт уже показан
+        if (locationResolveInFlight || resolvedHromada != null) return
+        locationResolveInFlight = true
         android.util.Log.d("AlertMapScreen", "resolveLocationAndPrompt called")
         isResolvingLocation = true
         try {
@@ -273,6 +308,7 @@ fun AlertMapScreen(
             snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
         } finally {
             isResolvingLocation = false
+            locationResolveInFlight = false
         }
     }
 
@@ -385,11 +421,20 @@ fun AlertMapScreen(
         }
     }
 
+    // Центрирование по кнопке локации после выдачи разрешения
+    LaunchedEffect(locationPermissionGranted) {
+        if (locationPermissionGranted && locateAfterPermissionGrant) {
+            locateAfterPermissionGrant = false
+            locateUserOnMap()
+        }
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 mapController.refreshAlerts()
+                refreshUserLocationMarker()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -438,6 +483,13 @@ fun AlertMapScreen(
     LaunchedEffect(subscriptionPins.size, mapPageReady) {
         if (mapPageReady && subscriptionPins.isNotEmpty()) {
             mapController.restoreSubscriptionMarkers(subscriptionPins.toList())
+        }
+    }
+
+    // Маркер текущего местоположения показываем сразу, как только карта готова
+    LaunchedEffect(mapPageReady, locationPermissionGranted) {
+        if (mapPageReady && locationPermissionGranted) {
+            refreshUserLocationMarker()
         }
     }
 
@@ -503,9 +555,23 @@ fun AlertMapScreen(
             }
         }
 
+        bridge.locateButtonTappedHandler = {
+            val hasLocationPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (hasLocationPermission) {
+                locateUserOnMap()
+            } else {
+                locateAfterPermissionGrant = true
+                requestLocationPermission?.invoke()
+            }
+        }
+
         onDispose {
             bridge.pointSelectedHandler = { _, _ -> }
             bridge.subscriptionMarkerTappedHandler = { _ -> }
+            bridge.locateButtonTappedHandler = {}
         }
     }
 

@@ -24,9 +24,12 @@ suspend fun getCurrentLocation(context: Context): Location? {
     }
 
     return try {
-        // Try getCurrentLocation first (most accurate)
+        // Try getCurrentLocation first (most accurate).
+        // HIGH_ACCURACY, а не BALANCED: сетевой/fused-провайдер может молча
+        // вернуть null (нет фикса, устаревшие Play Services), а высокий
+        // приоритет принудительно поднимает GPS-провайдер.
         val location = fusedLocationClient.getCurrentLocation(
-            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            Priority.PRIORITY_HIGH_ACCURACY,
             null
         ).await()
         if (location != null) {

@@ -5,6 +5,7 @@ import android.webkit.JavascriptInterface
 class LeafletBridge {
     var pointSelectedHandler: (Double, Double) -> Unit = { _, _ -> }
     var subscriptionMarkerTappedHandler: (String) -> Unit = { _ -> }
+    var locateButtonTappedHandler: () -> Unit = {}
 
     /** Called when the JS side signals that the map page is fully initialized. */
     internal var jsReadyListener: (() -> Unit)? = null
@@ -22,5 +23,10 @@ class LeafletBridge {
     @JavascriptInterface
     fun onJsReady() {
         jsReadyListener?.invoke()
+    }
+
+    @JavascriptInterface
+    fun onLocateButtonTapped() {
+        locateButtonTappedHandler()
     }
 }

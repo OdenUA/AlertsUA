@@ -32,11 +32,11 @@
 
 /* ─── Subscription Pin Markers ───────────────────────── */
 .sub-marker {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     background: #1976d2;
     border-radius: 50%;
-    border: 2.5px solid rgba(255,255,255,0.9);
+    border: 2px solid rgba(255,255,255,0.9);
     box-shadow: 0 2px 6px rgba(0,0,0,0.35);
     position: relative;
     cursor: pointer;
@@ -46,9 +46,41 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     background: white;
     border-radius: 50%;
     transform: translate(-50%, -50%);
+}
+
+/* ─── User Location Marker ───────────────────────────── */
+.user-location-marker {
+    width: 22px;
+    height: 22px;
+    position: relative;
+    pointer-events: none;
+}
+.user-location-marker::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: rgba(66, 133, 244, 0.25);
+    animation: user-location-pulse 2s ease-out infinite;
+}
+.user-location-dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    background: #4285f4;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    transform: translate(-50%, -50%);
+}
+@keyframes user-location-pulse {
+    0%   { transform: scale(0.6); opacity: 0.8; }
+    100% { transform: scale(1.6); opacity: 0; }
 }

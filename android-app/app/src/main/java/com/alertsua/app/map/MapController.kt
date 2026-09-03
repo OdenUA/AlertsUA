@@ -83,6 +83,17 @@ class MapController {
         evaluate("if(window.scheduleOverlayRefresh) window.scheduleOverlayRefresh();")
     }
 
+    /**
+     * Shows/updates the user-location marker.
+     * @param center center the map on the marker (button tap) or just place it (passive display).
+     */
+    fun setUserLocation(lat: Double, lon: Double, center: Boolean = false) {
+        evaluate(
+            "if (typeof window.setUserLocation === 'function') " +
+                "window.setUserLocation($lat, $lon, $center);"
+        )
+    }
+
     /** Selects which threat source channel is shown on the map (null hides all threats). */
     fun setThreatChannel(channelRef: String?) {
         val jsArg = channelRef?.let { JSONObject.quote(it) } ?: "null"

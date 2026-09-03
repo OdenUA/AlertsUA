@@ -100,20 +100,24 @@ body.dark .leaflet-control-zoom a {
 }
 
 /* ─── Custom Zoom Controls ─────────────────────────────── */
-.custom-zoom-control button {
+.custom-zoom-control button,
+.custom-locate-control button {
     transition: all 0.2s ease;
     cursor: pointer;
 }
 
-.custom-zoom-control button:hover {
+.custom-zoom-control button:hover,
+.custom-locate-control button:hover {
     transform: scale(1.05);
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-.custom-zoom-control button:active {
+.custom-zoom-control button:active,
+.custom-locate-control button:active {
     transform: scale(0.95);
 }
 
-body.dark .custom-zoom-control button:hover {
+body.dark .custom-zoom-control button:hover,
+body.dark .custom-locate-control button:hover {
     box-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }

@@ -228,11 +228,17 @@ threatPollTimerId = setInterval(pollThreatOverlays, 60000);
 
 // Кастомный контрол зума
 let customZoomControls = null;
+// Кастомный контрол определения местоположения (правый нижний угол)
+let customLocateControl = null;
 
 function removeCustomZoomControls() {
     if (customZoomControls && map) {
         map.removeControl(customZoomControls);
         customZoomControls = null;
+    }
+    if (customLocateControl && map) {
+        map.removeControl(customLocateControl);
+        customLocateControl = null;
     }
 }
 
@@ -297,30 +303,77 @@ function addCustomZoomControls() {
         }
     }
 
-    // Добавляем контрол на карту
+    // Контрол "Моё местоположение" — отдельная кнопка в правом нижнем углу
+    class CustomLocateControl extends L.Control {
+        constructor() {
+            super({ position: 'bottomright' });
+        }
+
+        onAdd(map) {
+            const isDark = document.body.classList.contains('dark');
+            const container = L.DomUtil.create('div', 'custom-locate-control');
+            container.style.position = 'absolute';
+            container.style.bottom = '20px';
+            container.style.right = '15px';
+            container.style.zIndex = '1000';
+            container.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'rgba(255, 255, 255, 0.9)';
+            container.style.padding = '5px';
+            container.style.borderRadius = '5px';
+            container.style.boxShadow = isDark ? '0 2px 8px rgba(0,0,0,0.4)' : '0 2px 5px rgba(0,0,0,0.2)';
+            container.style.cursor = 'pointer';
+
+            const locateButton = L.DomUtil.create('button', '');
+            locateButton.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">' +
+                '<path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>' +
+                '</svg>';
+            locateButton.style.width = '36px';
+            locateButton.style.height = '36px';
+            locateButton.style.border = '1px solid ' + (isDark ? '#2a4258' : '#ccc');
+            locateButton.style.borderRadius = '3px';
+            locateButton.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'white';
+            locateButton.style.color = isDark ? '#b8cfda' : '#1c3040';
+            locateButton.style.display = 'flex';
+            locateButton.style.alignItems = 'center';
+            locateButton.style.justifyContent = 'center';
+            locateButton.onclick = () => requestUserLocation();
+
+            container.appendChild(locateButton);
+
+            L.DomEvent.disableClickPropagation(container);
+
+            return container;
+        }
+    }
+
+    // Добавляем контролы на карту
     customZoomControls = new CustomZoomControl();
     map.addControl(customZoomControls);
+    customLocateControl = new CustomLocateControl();
+    map.addControl(customLocateControl);
 }
 
-// Функция для обновления темы кастомных кнопок зума
+// Функция для обновления темы кастомных кнопок зума и локации
 function updateCustomZoomTheme() {
-    if (!customZoomControls || !map) return;
-
-    const container = customZoomControls.getContainer();
-    if (!container) return;
+    if (!map) return;
 
     const isDark = document.body.classList.contains('dark');
 
-    // Обновляем контейнер
-    container.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'rgba(255, 255, 255, 0.9)';
-    container.style.boxShadow = isDark ? '0 2px 8px rgba(0,0,0,0.4)' : '0 2px 5px rgba(0,0,0,0.2)';
+    [customZoomControls, customLocateControl].forEach(control => {
+        if (!control) return;
+        const container = control.getContainer();
+        if (!container) return;
 
-    // Обновляем кнопки
-    const buttons = container.querySelectorAll('button');
-    buttons.forEach(button => {
-        button.style.border = '1px solid ' + (isDark ? '#2a4258' : '#ccc');
-        button.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'white';
-        button.style.color = isDark ? '#b8cfda' : '#1c3040';
+        // Обновляем контейнер
+        container.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'rgba(255, 255, 255, 0.9)';
+        container.style.boxShadow = isDark ? '0 2px 8px rgba(0,0,0,0.4)' : '0 2px 5px rgba(0,0,0,0.2)';
+
+        // Обновляем кнопки
+        const buttons = container.querySelectorAll('button');
+        buttons.forEach(button => {
+            button.style.border = '1px solid ' + (isDark ? '#2a4258' : '#ccc');
+            button.style.backgroundColor = isDark ? 'rgba(20, 32, 44, 0.94)' : 'white';
+            button.style.color = isDark ? '#b8cfda' : '#1c3040';
+        });
     });
 }
 
