@@ -7,10 +7,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.alertsua.app.notifications.NotificationSettingsManager
 import com.google.android.gms.ads.MobileAds
+import org.maplibre.android.MapLibre
 
 class AlertApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+
+        MapLibre.getInstance(this)
 
         // Initialize notification channel and clean up old channels
         try {

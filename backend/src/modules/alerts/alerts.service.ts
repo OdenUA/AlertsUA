@@ -12,10 +12,17 @@ import type { AlertsBundleDto } from '../../common/cache/dto/cache-bundle.dto';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
+type AlertLevel = 'red' | 'yellow';
+
+type AlertAttributes = {
+  alert_type: AlertType;
+  alert_level: AlertLevel;
+};
 
 type PollMetadata = {
   last_modified: string | null;
   status_string_hash: string | null;
+  status_string: string | null;
   state_version: number;
 };
 
@@ -25,6 +32,7 @@ type CurrentStateRow = {
   state_version: number;
   active_from: string | null;
   alert_type: AlertType;
+  alert_level: AlertLevel;
   updated_at: string;
 };
 
@@ -32,6 +40,7 @@ type AppliedSnapshot = {
   state_version: number;
   bootstrap_mode: boolean;
   changed_uids: number[];
+  level_changed_uids: number[];
   inserted_events: number;
   queued_dispatches: number;
 };
@@ -49,6 +58,9 @@ const VALID_ALERT_TYPES = new Set<AlertType>([
   'chemical',
   'nuclear',
 ]);
+
+const VALID_ALERT_LEVELS = new Set<AlertLevel>(['red', 'yellow']);
+const DEFAULT_ALERT_LEVEL: AlertLevel = 'red';
 
 const ACTIVE_STATUSES = new Set<AlertStatus>(['A', 'P']);
 const VALID_STATUSES = new Set<AlertStatus>(['A', 'P', 'N', ' ']);
@@ -218,6 +230,7 @@ export class AlertsService {
         if_modified_since_sent: previousMetadata.last_modified,
         last_modified_received: previousMetadata.last_modified,
         status_string_hash: null,
+        status_string: null,
         changed: false,
         error_code: 'FETCH_FAILED',
         error_message: this.stringifyError(error),
@@ -238,37 +251,73 @@ export class AlertsService {
     const responseBody = await response.text();
 
     if (httpStatus === 304) {
+      // The IoT status string did not change, but alert attributes
+      // (alert_type / alert_level) exist only in active.json — check them too.
+      const alertAttributes = await this.fetchActiveAlertAttributes();
+      const attributesHash = this.hashAlertAttributes(alertAttributes);
+      const combinedHash = this.hashStatusWithAttributes(previousMetadata.status_string, attributesHash);
+      const attributesChanged =
+        previousMetadata.status_string !== null &&
+        combinedHash !== null &&
+        previousMetadata.status_string_hash !== combinedHash;
+
+      if (attributesChanged) {
+        const changedCycleId = await this.insertPollCycle({
+          requested_at: requestedAt,
+          finished_at: finishedAt,
+          http_status: httpStatus,
+          if_modified_since_sent: previousMetadata.last_modified,
+          last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+          status_string_hash: combinedHash,
+          status_string: previousMetadata.status_string,
+          changed: true,
+          error_code: null,
+          error_message: null,
+        });
+
+        try {
+          const appliedSnapshot = await this.databaseService.withTransaction((client) =>
+            this.applyStatusSnapshot(client, {
+              cycle_id: changedCycleId,
+              occurred_at: finishedAt,
+              status_string: previousMetadata.status_string as string,
+              alert_attributes: alertAttributes,
+            }),
+          );
+
+          return {
+            cycle_id: changedCycleId,
+            http_status: httpStatus,
+            changed: true,
+            state_version: appliedSnapshot.state_version,
+            bootstrap_mode: appliedSnapshot.bootstrap_mode,
+            changed_uids: appliedSnapshot.changed_uids.length,
+            level_changed_uids: appliedSnapshot.level_changed_uids.length,
+            inserted_events: appliedSnapshot.inserted_events,
+            queued_dispatches: appliedSnapshot.queued_dispatches,
+          };
+        } catch (error) {
+          await this.databaseService.query(
+            `
+              UPDATE alert_poll_cycles
+              SET changed = FALSE,
+                  error_code = $2,
+                  error_message = $3
+              WHERE cycle_id = $1
+            `,
+            [changedCycleId, 'PROCESSING_FAILED', this.stringifyError(error)],
+          );
+          throw error;
+        }
+      }
+
       // Refresh cache even when API returns 304 to prevent expiration
       try {
         await this.databaseService.withTransaction(async (client) => {
           const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
           await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
           this.logger.log(`Alerts cache refreshed (304 response): state_version=${previousMetadata.state_version}`);
-
-          // Rebuild precomputed alert layer even on 304
-          await this.rebuildAlertLayer(client);
-          // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
-          // DO NOT include raions/oblasts — they are parent regions filled by their active children.
-          const activeUidsResult = await client.query<{ uid: number }>(
-            `SELECT arc.uid FROM air_raid_state_current arc
-             JOIN region_catalog rc ON rc.uid = arc.uid
-             WHERE arc.status IN ('A', 'P')
-               AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
-          );
-          const activeUids = activeUidsResult.rows.map((r) => r.uid);
-          await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
-          // Immediately invalidate Redis caches so next request gets fresh data
-          await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
-          // Invalidate all feature caches (geometry bundles with stale status)
-          await this.cacheService.delete([
-            CACHE_KEYS.FEATURES('oblast', 'low'),
-            CACHE_KEYS.FEATURES('oblast', 'medium'),
-            CACHE_KEYS.FEATURES('raion', 'medium'),
-            CACHE_KEYS.FEATURES('raion', 'high'),
-            CACHE_KEYS.FEATURES('hromada', 'medium'),
-            CACHE_KEYS.FEATURES('hromada', 'high'),
-          ]);
-          this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (304 response)`);
+          await this.refreshAlertLayerCaches(client, '304 response');
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache on 304: ${error}`);
@@ -280,7 +329,8 @@ export class AlertsService {
         http_status: httpStatus,
         if_modified_since_sent: previousMetadata.last_modified,
         last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
-        status_string_hash: previousMetadata.status_string_hash,
+        status_string_hash: combinedHash ?? previousMetadata.status_string_hash,
+        status_string: previousMetadata.status_string,
         changed: false,
         error_code: null,
         error_message: null,
@@ -304,6 +354,7 @@ export class AlertsService {
         if_modified_since_sent: previousMetadata.last_modified,
         last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
         status_string_hash: null,
+        status_string: null,
         changed: false,
         error_code: this.mapHttpStatusToErrorCode(httpStatus),
         error_message: this.extractErrorMessage(responseBody),
@@ -319,15 +370,21 @@ export class AlertsService {
     }
 
     const statusString = this.parseStatusString(responseBody);
-    const statusStringHash = createHash('sha256').update(statusString).digest('hex');
-    const sourceChanged = previousMetadata.status_string_hash !== statusStringHash;
+    // Alert attributes (alert_type / alert_level) are not part of the IoT
+    // status string — fetch them from active.json on every 200 response so
+    // level-only changes (e.g. yellow -> red) are detected as well.
+    const alertAttributes = await this.fetchActiveAlertAttributes();
+    const attributesHash = this.hashAlertAttributes(alertAttributes);
+    const combinedHash = this.hashStatusWithAttributes(statusString, attributesHash) as string;
+    const sourceChanged = previousMetadata.status_string_hash !== combinedHash;
     const cycleId = await this.insertPollCycle({
       requested_at: requestedAt,
       finished_at: finishedAt,
       http_status: httpStatus,
       if_modified_since_sent: previousMetadata.last_modified,
       last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
-      status_string_hash: statusStringHash,
+      status_string_hash: combinedHash,
+      status_string: statusString,
       changed: sourceChanged,
       error_code: null,
       error_message: null,
@@ -340,31 +397,7 @@ export class AlertsService {
           const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
           await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
           this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousMetadata.state_version}`);
-
-          // Rebuild precomputed alert layer even when no changes
-          await this.rebuildAlertLayer(client);
-          // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
-          // DO NOT include raions/oblasts — they are parent regions filled by their active children.
-          const activeUidsResult = await client.query<{ uid: number }>(
-            `SELECT arc.uid FROM air_raid_state_current arc
-             JOIN region_catalog rc ON rc.uid = arc.uid
-             WHERE arc.status IN ('A', 'P')
-               AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
-          );
-          const activeUids = activeUidsResult.rows.map((r) => r.uid);
-          await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
-          // Immediately invalidate Redis caches so next request gets fresh data
-          await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
-          // Invalidate all feature caches (geometry bundles with stale status)
-          await this.cacheService.delete([
-            CACHE_KEYS.FEATURES('oblast', 'low'),
-            CACHE_KEYS.FEATURES('oblast', 'medium'),
-            CACHE_KEYS.FEATURES('raion', 'medium'),
-            CACHE_KEYS.FEATURES('raion', 'high'),
-            CACHE_KEYS.FEATURES('hromada', 'medium'),
-            CACHE_KEYS.FEATURES('hromada', 'high'),
-          ]);
-          this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (no changes)`);
+          await this.refreshAlertLayerCaches(client, 'no changes');
         });
       } catch (error) {
         this.logger.error(`Failed to refresh alerts cache: ${error}`);
@@ -381,13 +414,12 @@ export class AlertsService {
     }
 
     try {
-      const alertTypeMap = await this.fetchAlertTypeMap();
       const appliedSnapshot = await this.databaseService.withTransaction((client) =>
         this.applyStatusSnapshot(client, {
           cycle_id: cycleId,
           occurred_at: finishedAt,
           status_string: statusString,
-          alert_type_map: alertTypeMap,
+          alert_attributes: alertAttributes,
         }),
       );
 
@@ -398,6 +430,7 @@ export class AlertsService {
         state_version: appliedSnapshot.state_version,
         bootstrap_mode: appliedSnapshot.bootstrap_mode,
         changed_uids: appliedSnapshot.changed_uids.length,
+        level_changed_uids: appliedSnapshot.level_changed_uids.length,
         inserted_events: appliedSnapshot.inserted_events,
         queued_dispatches: appliedSnapshot.queued_dispatches,
       };
@@ -417,7 +450,7 @@ export class AlertsService {
   }
 
   private async getLatestPollMetadata(): Promise<PollMetadata> {
-    const [lastCycleResult, stateVersionResult] = await Promise.all([
+    const [lastCycleResult, lastStatusStringResult, stateVersionResult] = await Promise.all([
       this.databaseService.query<{
         last_modified: string | null;
         status_string_hash: string | null;
@@ -430,6 +463,17 @@ export class AlertsService {
           LIMIT 1
         `,
       ),
+      // Latest known raw IoT status string — needed to apply attribute-only
+      // changes (alert_type / alert_level) when the IoT endpoint returns 304.
+      this.databaseService.query<{ status_string: string | null }>(
+        `
+          SELECT status_string
+          FROM alert_poll_cycles
+          WHERE status_string IS NOT NULL
+          ORDER BY cycle_id DESC
+          LIMIT 1
+        `,
+      ),
       this.databaseService.query<{ state_version: number }>(
         'SELECT COALESCE(MAX(state_version), 0) AS state_version FROM air_raid_state_current',
       ),
@@ -438,6 +482,7 @@ export class AlertsService {
     return {
       last_modified: lastCycleResult.rows[0]?.last_modified ?? null,
       status_string_hash: lastCycleResult.rows[0]?.status_string_hash ?? null,
+      status_string: lastStatusStringResult.rows[0]?.status_string ?? null,
       state_version: Number(stateVersionResult.rows[0]?.state_version ?? 0),
     };
   }
@@ -449,6 +494,7 @@ export class AlertsService {
     if_modified_since_sent: string | null;
     last_modified_received: string | null;
     status_string_hash: string | null;
+    status_string: string | null;
     changed: boolean;
     error_code: string | null;
     error_message: string | null;
@@ -462,10 +508,11 @@ export class AlertsService {
           if_modified_since_sent,
           last_modified_received,
           status_string_hash,
+          status_string,
           changed,
           error_code,
           error_message
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING cycle_id
       `,
       [
@@ -475,6 +522,7 @@ export class AlertsService {
         input.if_modified_since_sent,
         input.last_modified_received,
         input.status_string_hash,
+        input.status_string,
         input.changed,
         input.error_code,
         input.error_message,
@@ -484,7 +532,7 @@ export class AlertsService {
     return Number(result.rows[0].cycle_id);
   }
 
-  private async fetchAlertTypeMap(): Promise<Map<number, AlertType>> {
+  private async fetchActiveAlertAttributes(): Promise<Map<number, AlertAttributes>> {
     const apiToken = this.configService.get<string>('ALERTS_IN_UA_TOKEN');
     if (!apiToken) {
       return new Map();
@@ -504,25 +552,58 @@ export class AlertsService {
       }
 
       const body = await response.json() as {
-        alerts?: Array<{ location_uid?: string; alert_type?: string }>;
+        alerts?: Array<{ location_uid?: string; alert_type?: string; alert_level?: string }>;
       };
-      const map = new Map<number, AlertType>();
+      const map = new Map<number, AlertAttributes>();
 
       for (const alert of body.alerts ?? []) {
         const uid = Number(alert.location_uid);
         const alertType = alert.alert_type;
-        if (Number.isFinite(uid) && uid > 0 && alertType && VALID_ALERT_TYPES.has(alertType as AlertType)) {
-          // air_raid takes priority over other types for the same region
-          if (!map.has(uid) || map.get(uid) !== 'air_raid') {
-            map.set(uid, alertType as AlertType);
-          }
+        if (!Number.isFinite(uid) || uid <= 0 || !alertType || !VALID_ALERT_TYPES.has(alertType as AlertType)) {
+          continue;
         }
+
+        const alertLevel = VALID_ALERT_LEVELS.has(alert.alert_level as AlertLevel)
+          ? alert.alert_level as AlertLevel
+          : DEFAULT_ALERT_LEVEL;
+
+        const existing = map.get(uid);
+        if (!existing) {
+          map.set(uid, { alert_type: alertType as AlertType, alert_level: alertLevel });
+          continue;
+        }
+
+        // A region can have several concurrent alerts: air_raid takes priority
+        // over other types, red takes priority over yellow.
+        map.set(uid, {
+          alert_type: existing.alert_type === 'air_raid' || alertType !== 'air_raid'
+            ? existing.alert_type
+            : alertType as AlertType,
+          alert_level: existing.alert_level === 'red' || alertLevel === 'red' ? 'red' : 'yellow',
+        });
       }
 
       return map;
     } catch {
       return new Map();
     }
+  }
+
+  private hashAlertAttributes(attributes: Map<number, AlertAttributes>): string {
+    const serialized = [...attributes.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([uid, attr]) => `${uid}:${attr.alert_type}:${attr.alert_level}`)
+      .join(',');
+    return createHash('sha256').update(serialized).digest('hex');
+  }
+
+  private hashStatusWithAttributes(statusString: string | null, attributesHash: string): string | null {
+    if (statusString === null) {
+      return null;
+    }
+
+    const statusHash = createHash('sha256').update(statusString).digest('hex');
+    return createHash('sha256').update(`${statusHash}|${attributesHash}`).digest('hex');
   }
 
   private async buildAlertsBundle(
@@ -535,11 +616,12 @@ export class AlertsService {
         title_uk: string;
         region_type: string;
         alert_type: string;
+        alert_level: string;
         geometry_json: string;
       }>(
         `
           -- Get subscription_leaf regions with alerts (hromadas, cities)
-          SELECT rc.uid, rc.title_uk, rc.region_type, arc.alert_type,
+          SELECT rc.uid, rc.title_uk, rc.region_type, arc.alert_type, arc.alert_level,
                  COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
           FROM air_raid_state_current arc
           JOIN region_catalog rc ON rc.uid = arc.uid AND rc.is_subscription_leaf = TRUE
@@ -552,6 +634,7 @@ export class AlertsService {
           -- Get raions that have children with alerts
           SELECT DISTINCT rc.uid, rc.title_uk, rc.region_type,
                  COALESCE(par.alert_type, 'air_raid') AS alert_type,
+                 COALESCE(par.alert_level, 'red') AS alert_level,
                  COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
           FROM air_raid_state_current arc
           JOIN region_catalog child ON child.uid = arc.uid AND child.is_subscription_leaf = TRUE
@@ -594,6 +677,7 @@ export class AlertsService {
       title_uk: row.title_uk,
       region_type: row.region_type,
       alert_type: row.alert_type,
+      alert_level: row.alert_level,
       geometry: JSON.parse(row.geometry_json),
     }));
     this.logger.log(`buildAlertsBundle: activeAlerts contains ${activeAlerts.length} features (raions: ${activeAlerts.filter(a => a.region_type === 'raion').length}, hromadas: ${activeAlerts.filter(a => a.region_type === 'hromada').length})`);
@@ -624,12 +708,12 @@ export class AlertsService {
       cycle_id: number;
       occurred_at: Date;
       status_string: string;
-      alert_type_map: Map<number, AlertType>;
+      alert_attributes: Map<number, AlertAttributes>;
     },
   ): Promise<AppliedSnapshot> {
     const [regionRowsResult, currentRowsResult, stateVersionResult] = await Promise.all([
       client.query<{ uid: number }>(
-        'SELECT uid, oblast_uid FROM region_catalog WHERE is_active = TRUE ORDER BY uid ASC',
+        'SELECT uid, oblast_uid, parent_uid, region_type FROM region_catalog WHERE is_active = TRUE ORDER BY uid ASC',
       ),
       client.query<{
         uid: number;
@@ -637,9 +721,10 @@ export class AlertsService {
         state_version: number;
         active_from: string | null;
         alert_type: AlertType;
+        alert_level: AlertLevel;
       }>(
         `
-          SELECT uid, status, state_version, active_from::text, alert_type
+          SELECT uid, status, state_version, active_from::text, alert_type, alert_level
           FROM air_raid_state_current
           FOR UPDATE
         `,
@@ -653,7 +738,7 @@ export class AlertsService {
       throw new Error('region_catalog is empty. Import regions before running the poller.');
     }
 
-    const currentAlertTypeMap = input.alert_type_map;
+    const alertAttributes = input.alert_attributes;
 
     const previousStates = new Map(
       currentRowsResult.rows.map((row) => [row.uid, row]),
@@ -667,15 +752,24 @@ export class AlertsService {
       active_from: string | null;
       alert_type: AlertType;
     }> = [];
+    // Regions whose alert level (red/yellow) changed while the status stayed
+    // the same — they do not produce events/pushes, but must bump state_version
+    // so map clients re-render the fill color.
+    const levelChangedUids: number[] = [];
 
-    const nextRows = (regionRowsResult.rows as Array<{ uid: number; oblast_uid: number | null }>).map(({ uid }) => {
+    const nextRows = (regionRowsResult.rows as Array<{
+      uid: number;
+      oblast_uid: number | null;
+      parent_uid: number | null;
+      region_type: string;
+    }>).map(({ uid, oblast_uid, parent_uid, region_type }) => {
       const previousState = previousStates.get(uid);
       const previousStatus = previousState?.status ?? ' ';
       let newStatus = this.statusAtUid(input.status_string, uid);
 
       // The IoT string only tracks air_raid status. For other alert types
       // we trust the active alerts endpoint only for the same uid.
-      if (newStatus !== 'A' && currentAlertTypeMap.has(uid)) {
+      if (newStatus !== 'A' && alertAttributes.has(uid)) {
         newStatus = 'A';
       }
 
@@ -687,7 +781,7 @@ export class AlertsService {
       );
 
       if (previousStatus !== newStatus) {
-        const changedAlertType = currentAlertTypeMap.get(uid)
+        const changedAlertType = alertAttributes.get(uid)?.alert_type
           ?? previousState?.alert_type
           ?? 'air_raid';
         changedRows.push({
@@ -699,19 +793,93 @@ export class AlertsService {
         });
       }
 
-      const alertType = currentAlertTypeMap.get(uid)
+      const alertType = alertAttributes.get(uid)?.alert_type
         ?? previousState?.alert_type
         ?? 'air_raid';
+      const hasOwnAttributes = alertAttributes.has(uid);
+      const alertLevel = ACTIVE_STATUSES.has(newStatus)
+        ? alertAttributes.get(uid)?.alert_level
+          ?? previousState?.alert_level
+          ?? DEFAULT_ALERT_LEVEL
+        : previousState?.alert_level ?? DEFAULT_ALERT_LEVEL;
 
       return {
         uid,
+        oblast_uid,
+        parent_uid,
+        region_type,
         status: newStatus,
         active_from: activeFrom,
         alert_type: alertType,
+        alert_level: alertLevel,
+        hasOwnAttributes,
+        levelInherited: false,
       };
     });
 
-    if (!bootstrapMode && changedRows.length === 0) {
+    // Resolve alert level for regions without their own entry in active.json.
+    // alerts.in.ua reports yellow-level threats mostly at raion/city level while
+    // the IoT string marks every hromada in them as active ('A'), so levels are
+    // resolved hierarchically:
+    // 1) inherit from the nearest ancestor that has an own entry (raion entry
+    //    covers its hromadas, oblast entry covers its raions/hromadas);
+    // 2) parents (oblast/raion) still without an entry derive from active
+    //    descendants — red wins, yellow only when ALL descendants are yellow.
+    const rowsByUid = new Map(nextRows.map((row) => [row.uid, row]));
+
+    for (const row of nextRows) {
+      if (row.hasOwnAttributes || !ACTIVE_STATUSES.has(row.status)) {
+        continue;
+      }
+
+      let ancestor = row.parent_uid !== null ? rowsByUid.get(row.parent_uid) : undefined;
+      while (ancestor) {
+        if (ancestor.hasOwnAttributes) {
+          row.alert_level = ancestor.alert_level;
+          row.levelInherited = true;
+          break;
+        }
+        ancestor = ancestor.parent_uid !== null ? rowsByUid.get(ancestor.parent_uid) : undefined;
+      }
+    }
+
+    for (const row of nextRows) {
+      if (row.hasOwnAttributes || row.levelInherited || !ACTIVE_STATUSES.has(row.status)) {
+        continue;
+      }
+      if (row.region_type !== 'oblast' && row.region_type !== 'raion') {
+        continue;
+      }
+
+      const activeDescendants = nextRows.filter((candidate) =>
+        candidate.uid !== row.uid &&
+        ACTIVE_STATUSES.has(candidate.status) &&
+        (row.region_type === 'oblast'
+          ? candidate.oblast_uid === row.uid
+          : candidate.parent_uid === row.uid),
+      );
+      if (activeDescendants.length === 0) {
+        continue;
+      }
+
+      row.alert_level = activeDescendants.some((candidate) => candidate.alert_level === 'red')
+        ? 'red'
+        : 'yellow';
+    }
+
+    for (const row of nextRows) {
+      const previousState = previousStates.get(row.uid);
+      if (
+        previousState &&
+        previousState.status === row.status &&
+        ACTIVE_STATUSES.has(row.status) &&
+        previousState.alert_level !== row.alert_level
+      ) {
+        levelChangedUids.push(row.uid);
+      }
+    }
+
+    if (!bootstrapMode && changedRows.length === 0 && levelChangedUids.length === 0) {
       // Even if no changes, always update the cache to prevent it from expiring
       try {
         const bundle = await this.buildAlertsBundle(client, previousStateVersion);
@@ -725,6 +893,7 @@ export class AlertsService {
         state_version: previousStateVersion,
         bootstrap_mode: false,
         changed_uids: [],
+        level_changed_uids: [],
         inserted_events: 0,
         queued_dispatches: 0,
       };
@@ -741,15 +910,17 @@ export class AlertsService {
             active_from,
             updated_at,
             source_cycle_id,
-            alert_type
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            alert_type,
+            alert_level
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (uid) DO UPDATE SET
             status = EXCLUDED.status,
             state_version = EXCLUDED.state_version,
             active_from = EXCLUDED.active_from,
             updated_at = EXCLUDED.updated_at,
             source_cycle_id = EXCLUDED.source_cycle_id,
-            alert_type = EXCLUDED.alert_type
+            alert_type = EXCLUDED.alert_type,
+            alert_level = EXCLUDED.alert_level
         `,
         [
           row.uid,
@@ -759,6 +930,7 @@ export class AlertsService {
           input.occurred_at.toISOString(),
           input.cycle_id,
           row.alert_type,
+          row.alert_level,
         ],
       );
     }
@@ -843,33 +1015,7 @@ export class AlertsService {
 
     // Rebuild precomputed alert layer for fast map rendering
     try {
-      await this.rebuildAlertLayer(client);
-
-      // Build lightweight active UIDs list for subscription_leaf regions only (hromadas + cities).
-      // DO NOT include raions/oblasts — they are parent regions filled by their active children.
-      // Including them would cause entire oblasts to be painted when only some hromadas are active.
-      const activeUidsResult = await client.query<{ uid: number }>(
-        `SELECT arc.uid FROM air_raid_state_current arc
-         JOIN region_catalog rc ON rc.uid = arc.uid
-         WHERE arc.status IN ('A', 'P')
-           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
-      );
-      const activeUids = activeUidsResult.rows.map((r) => r.uid);
-      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids }, CACHE_TTL.ALERTS);
-
-      // Immediately invalidate full alert caches so next request gets fresh data
-      await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
-      // Invalidate all feature caches (geometry bundles have stale status lookup)
-      await this.cacheService.delete([
-        CACHE_KEYS.FEATURES('oblast', 'low'),
-        CACHE_KEYS.FEATURES('oblast', 'medium'),
-        CACHE_KEYS.FEATURES('raion', 'medium'),
-        CACHE_KEYS.FEATURES('raion', 'high'),
-        CACHE_KEYS.FEATURES('hromada', 'medium'),
-        CACHE_KEYS.FEATURES('hromada', 'high'),
-      ]);
-
-      this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached, ALL caches invalidated: state_version=${nextStateVersion}`);
+      await this.refreshAlertLayerCaches(client, `state_version=${nextStateVersion}`);
     } catch (error) {
       this.logger.error(`Failed to rebuild alert layer: ${error}`);
     }
@@ -878,6 +1024,7 @@ export class AlertsService {
       state_version: nextStateVersion,
       bootstrap_mode: bootstrapMode,
       changed_uids: changedRows.map((row) => row.uid),
+      level_changed_uids: levelChangedUids,
       inserted_events: insertedEvents,
       queued_dispatches: runtimeResult.queued_dispatches,
     };
@@ -1014,13 +1161,15 @@ export class AlertsService {
       uid: number;
       region_type: string;
       alert_type: string;
+      alert_level: string;
       geometry_json: string;
     }>(
       `
-        INSERT INTO alert_layer_features (uid, region_type, alert_type, geometry_json)
+        INSERT INTO alert_layer_features (uid, region_type, alert_type, alert_level, geometry_json)
         SELECT rc.uid,
                rc.region_type,
                arc.alert_type,
+               arc.alert_level,
                ST_AsGeoJSON(
                  COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.01))
                ) AS geometry_json
@@ -1040,11 +1189,50 @@ export class AlertsService {
           uid = EXCLUDED.uid,
           region_type = EXCLUDED.region_type,
           alert_type = EXCLUDED.alert_type,
+          alert_level = EXCLUDED.alert_level,
           geometry_json = EXCLUDED.geometry_json,
           updated_at = NOW();
       `,
     );
 
     this.logger.debug(`Rebuilt alert layer: ${result.rowCount} features`);
+  }
+
+  /**
+   * Rebuilds the precomputed alert layer and refreshes the lightweight
+   * active-UIDs cache (with per-region alert_type / alert_level details),
+   * then invalidates all alert/feature caches so clients pick up fresh data.
+   */
+  private async refreshAlertLayerCaches(client: PoolClient, logContext: string): Promise<void> {
+    await this.rebuildAlertLayer(client);
+
+    // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
+    // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+    const activeUidsResult = await client.query<{ uid: number; alert_type: string; alert_level: string }>(
+      `SELECT arc.uid, arc.alert_type, arc.alert_level FROM air_raid_state_current arc
+       JOIN region_catalog rc ON rc.uid = arc.uid
+       WHERE arc.status IN ('A', 'P')
+         AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+    );
+    const activeUids = activeUidsResult.rows.map((r) => r.uid);
+    const details: Record<number, { alert_type: string; alert_level: string }> = {};
+    for (const row of activeUidsResult.rows) {
+      details[row.uid] = { alert_type: row.alert_type, alert_level: row.alert_level };
+    }
+    await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids, details }, CACHE_TTL.ALERTS);
+
+    // Immediately invalidate full alert caches so next request gets fresh data
+    await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
+    // Invalidate all feature caches (geometry bundles with stale status)
+    await this.cacheService.delete([
+      CACHE_KEYS.FEATURES('oblast', 'low'),
+      CACHE_KEYS.FEATURES('oblast', 'medium'),
+      CACHE_KEYS.FEATURES('raion', 'medium'),
+      CACHE_KEYS.FEATURES('raion', 'high'),
+      CACHE_KEYS.FEATURES('hromada', 'medium'),
+      CACHE_KEYS.FEATURES('hromada', 'high'),
+    ]);
+
+    this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (${logContext})`);
   }
 }

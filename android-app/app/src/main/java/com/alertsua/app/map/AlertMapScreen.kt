@@ -22,11 +22,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
@@ -38,6 +41,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
@@ -50,6 +54,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,13 +73,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
@@ -148,6 +158,9 @@ fun AlertMapScreen(
     var activeSubscriptionId by remember { mutableStateOf<String?>(null) }
     var isActionInProgress by remember { mutableStateOf(false) }
     var retrySubscribeAfterPermissionGrant by remember { mutableStateOf(false) }
+
+    // ── Threat popup state ──────────────────────────────────────────────────
+    var selectedThreat by remember { mutableStateOf<ThreatInfo?>(null) }
 
     // ── Subscription pin list (persisted) ────────────────────────────────────
     val subscriptionPins = remember {
@@ -405,6 +418,7 @@ fun AlertMapScreen(
 
     LaunchedEffect(refreshTrigger) {
         if (refreshTrigger > 0) {
+            android.widget.Toast.makeText(context, "Оновлення...", android.widget.Toast.LENGTH_SHORT).show()
             mapController.refreshAlerts()
         }
     }
@@ -444,7 +458,7 @@ fun AlertMapScreen(
         }
     }
 
-    // Track when the WebView map page is ready so we can place markers reactively
+    // Track when the native map is ready so we can place markers reactively
     var mapPageReady by remember { mutableStateOf(false) }
     DisposableEffect(mapController) {
         mapController.onMapPageReady = { mapPageReady = true }
@@ -496,11 +510,9 @@ fun AlertMapScreen(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val bridge = remember { LeafletBridge() }
-
-    // Обработчики моста назначаются один раз, а не при каждой рекомпозиции
-    DisposableEffect(bridge) {
-        bridge.pointSelectedHandler = { latitude, longitude ->
+    // Обработчики карты назначаются один раз, а не при каждой рекомпозиции
+    DisposableEffect(mapController) {
+        mapController.onPointSelected = { latitude, longitude ->
             selectedLat = latitude
             selectedLon = longitude
             retrySubscribeAfterPermissionGrant = false
@@ -526,7 +538,7 @@ fun AlertMapScreen(
             }
         }
 
-        bridge.subscriptionMarkerTappedHandler = { markerId ->
+        mapController.onSubscriptionMarkerTapped = { markerId ->
             val tappedPin = subscriptionPins.find { it.subscriptionId == markerId }
             if (tappedPin == null) {
                 coroutineScope.launch {
@@ -556,7 +568,7 @@ fun AlertMapScreen(
             }
         }
 
-        bridge.locateButtonTappedHandler = {
+        mapController.onLocateButtonTapped = {
             val hasLocationPermission = ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -569,10 +581,22 @@ fun AlertMapScreen(
             }
         }
 
+        // Тосты из автообновления статусов — уже на главном потоке
+        mapController.onToast = { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        // Тап по иконке угрозы → Compose-попап (вместо Leaflet popup)
+        mapController.onThreatTapped = { threat ->
+            selectedThreat = threat
+        }
+
         onDispose {
-            bridge.pointSelectedHandler = { _, _ -> }
-            bridge.subscriptionMarkerTappedHandler = { _ -> }
-            bridge.locateButtonTappedHandler = {}
+            mapController.onPointSelected = { _, _ -> }
+            mapController.onSubscriptionMarkerTapped = { _ -> }
+            mapController.onLocateButtonTapped = {}
+            mapController.onToast = {}
+            mapController.onThreatTapped = {}
         }
     }
 
@@ -588,15 +612,32 @@ fun AlertMapScreen(
         )
     }
 
+    // ── Threat popup dialog ─────────────────────────────────────────────────
+    // AlertDialog рендерится в отдельном окне поверх карты: пока он открыт,
+    // тапы не достаются MapView и onPointSelected не вызывается
+    // (аналог isThreatPopupOpen/suppressNextClick из Leaflet-версии).
+    selectedThreat?.let { threat ->
+        ThreatPopupDialog(
+            threat = threat,
+            onDismiss = { selectedThreat = null },
+        )
+    }
+
     // ─── Map ───────────────────────────────────────────────────────────────────
     Box(modifier = modifier.fillMaxSize()) {
-        LeafletMapView(
+        NativeMapView(
             modifier = Modifier.fillMaxSize(),
-            bridge = bridge,
             mapController = mapController,
             apiBaseUrl = activeApiBaseUrl,
             darkMode = darkMode,
             mapTopInsetDp = mapTopInsetDp,
+        )
+
+        MapControlsOverlay(
+            darkMode = darkMode,
+            onZoomIn = { mapController.zoomIn() },
+            onZoomOut = { mapController.zoomOut() },
+            onLocate = { mapController.onLocateButtonTapped() },
         )
 
         SnackbarHost(
@@ -643,6 +684,80 @@ fun AlertMapScreen(
             }
         }
 
+    }
+}
+
+// ─── Map controls (zoom / locate) ─────────────────────────────────────────────
+
+@Composable
+private fun MapControlsOverlay(
+    darkMode: Boolean,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onLocate: () -> Unit,
+) {
+    val containerColor = if (darkMode) Color(0xF014202C) else Color(0xE6FFFFFF)
+    val contentColor = if (darkMode) Color(0xFFB8CFDA) else Color(0xFF1C3040)
+    val borderColor = if (darkMode) Color(0xFF2A4258) else Color(0xFFCCCCCC)
+    val buttonShape = RoundedCornerShape(3.dp)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 15.dp, bottom = 20.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(containerColor)
+                .padding(5.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            MapControlButton(darkMode = darkMode, borderColor = borderColor, contentColor = contentColor, shape = buttonShape, onClick = onZoomIn) {
+                Text(text = "+", color = contentColor, fontSize = 20.sp)
+            }
+            MapControlButton(darkMode = darkMode, borderColor = borderColor, contentColor = contentColor, shape = buttonShape, onClick = onZoomOut) {
+                Text(text = "−", color = contentColor, fontSize = 20.sp)
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 15.dp, bottom = 20.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(containerColor)
+                .padding(5.dp),
+        ) {
+            MapControlButton(darkMode = darkMode, borderColor = borderColor, contentColor = contentColor, shape = buttonShape, onClick = onLocate) {
+                Icon(
+                    imageVector = Icons.Filled.MyLocation,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MapControlButton(
+    darkMode: Boolean,
+    borderColor: Color,
+    contentColor: Color,
+    shape: RoundedCornerShape,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(shape)
+            .background(if (darkMode) Color(0xF014202C) else Color.White)
+            .border(1.dp, borderColor, shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 
@@ -1061,10 +1176,10 @@ private fun AggregatedRaionCard(
 private fun AlertTypeIcon(alertType: String) {
     val context = LocalContext.current
     val assetPath = when (alertType) {
-        "air_raid"           -> "leaflet/icons/air-raid.png"
-        "artillery_shelling" -> "leaflet/icons/artillery-shelling.png"
-        "urban_fights"       -> "leaflet/icons/urban-fights.png"
-        else                  -> "leaflet/icons/air-raid.png"
+        "air_raid"           -> "map/icons/air-raid.png"
+        "artillery_shelling" -> "map/icons/artillery-shelling.png"
+        "urban_fights"       -> "map/icons/urban-fights.png"
+        else                  -> "map/icons/air-raid.png"
     }
     val label = when (alertType) {
         "air_raid"           -> "Повітряна тривога"
@@ -1363,6 +1478,163 @@ private fun LocationSubscriptionDialog(
         },
         dismissButton = null
     )
+}
+
+// ─── Threat popup dialog (порт buildThreatPopupContent из utils.js) ──────────
+
+@Composable
+private fun ThreatPopupDialog(
+    threat: ThreatInfo,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    // Аватар канала: @kpszsu — векторный порт THREAT_LAYER_TELEGRAM_ICON_MARKUP,
+    // @war_monitor — PNG из assets (как в THREAT_CHANNEL_CONFIG).
+    val warMonitorAvatar = remember(threat.channelRef) {
+        if (threat.channelRef == ThreatLayersManager.CHANNEL_WAR_MONITOR) {
+            runCatching { decodeSampledAsset(context, "map/icons/war-monitor.png", 40) }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth(0.92f),
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val avatarModifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                if (warMonitorAvatar != null) {
+                    Image(
+                        bitmap = warMonitorAvatar.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = avatarModifier,
+                        contentScale = ContentScale.Fit,
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(R.drawable.ic_threat_channel_kpszsu),
+                        contentDescription = null,
+                        modifier = avatarModifier,
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+                Column {
+                    Text(
+                        text = threat.sender,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(R.string.threat_popup_label),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (threat.messageText.isNotBlank()) {
+                    Text(
+                        text = threat.messageText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                // Footer: жизненный цикл слева, источник + время справа
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val elapsedMs = (System.currentTimeMillis() - threat.occurredAtMs).coerceAtLeast(0L)
+                    val fraction = if (threat.totalLifetimeMs > 0) {
+                        (elapsedMs.toFloat() / threat.totalLifetimeMs).coerceIn(0f, 1f)
+                    } else {
+                        1f
+                    }
+                    ThreatLifetimeIcon(fraction = fraction)
+                    Text(
+                        text = formatThreatLifetimeText(elapsedMs),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    val timeLabel = formatThreatPopupTime(threat.messageTimeMs)
+                    Text(
+                        text = if (timeLabel.isNotEmpty()) "Telegram · $timeLabel" else "Telegram",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.threat_popup_close))
+            }
+        },
+    )
+}
+
+// Порт buildThreatLifetimeMarkup: круг с затемнённым сектором по доле
+// прожитого времени угрозы.
+@Composable
+private fun ThreatLifetimeIcon(fraction: Float) {
+    val trackColor = MaterialTheme.colorScheme.outlineVariant
+    val sectorColor = MaterialTheme.colorScheme.onSurfaceVariant
+    Canvas(modifier = Modifier.size(12.dp)) {
+        val strokeWidth = 1.dp.toPx()
+        val radius = (size.minDimension - strokeWidth) / 2f
+        drawCircle(color = trackColor, radius = radius, style = Stroke(width = strokeWidth))
+        when {
+            fraction >= 0.999f -> drawCircle(color = sectorColor, radius = radius)
+            fraction > 0.001f -> drawArc(
+                color = sectorColor,
+                startAngle = -90f,
+                sweepAngle = 360f * fraction,
+                useCenter = true,
+                topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
+                size = Size(size.width - strokeWidth, size.height - strokeWidth),
+            )
+        }
+    }
+}
+
+// Порт formatThreatPopupTime: всегда Europe/Kyiv, uk-UA, HH:mm
+private fun formatThreatPopupTime(epochMs: Long): String {
+    if (epochMs <= 0) return ""
+    return try {
+        DateTimeFormatter.ofPattern("HH:mm", Locale.forLanguageTag("uk-UA"))
+            .withZone(ZoneId.of("Europe/Kyiv"))
+            .format(Instant.ofEpochMilli(epochMs))
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+// Порт formatThreatLifetimeText: "45хв" / "1год 20хв"
+private fun formatThreatLifetimeText(elapsedMs: Long): String {
+    val totalMinutes = maxOf(1L, Math.round(elapsedMs / 60000.0))
+    if (totalMinutes < 60) return "${totalMinutes}хв"
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return if (minutes > 0) "${hours}год ${minutes}хв" else "${hours}год"
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

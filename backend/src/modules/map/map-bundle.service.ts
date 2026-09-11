@@ -23,12 +23,15 @@ type StatusRow = {
   uid: number;
   status: 'A' | 'P' | 'N' | ' ';
   alert_type: string;
+  alert_level: string;
+  state_version: number;
 };
 
 type AlertLayerUidRow = {
   uid: number;
   region_type: string;
   alert_type: string;
+  alert_level: string;
 };
 
 const OCCUPIED_TERRITORIES_FILE = path.join(__dirname, '../../../data/occupied-territories.geojson');
@@ -103,11 +106,12 @@ export class MapBundleService {
   mergeAlertsStatus(bundle: FeaturesBundleDto, alertsBundle: any): void {
     if (!alertsBundle?.active_alerts?.features) return;
 
-    const statusMap: Record<number, { status: string; alert_type: string }> = {};
+    const statusMap: Record<number, { status: string; alert_type: string; alert_level: string }> = {};
     for (const alert of alertsBundle.active_alerts.features) {
       statusMap[alert.uid] = {
         status: 'A',
         alert_type: alert.alert_type,
+        alert_level: alert.alert_level ?? 'red',
       };
     }
 
@@ -126,12 +130,12 @@ export class MapBundleService {
 
     // 1. All statuses — single lightweight query
     const statusResult = await this.databaseService.query<StatusRow>(
-      `SELECT uid, status, alert_type FROM air_raid_state_current ORDER BY uid ASC`,
+      `SELECT uid, status, alert_type, alert_level, state_version FROM air_raid_state_current ORDER BY uid ASC`,
     );
 
     // 2. Alerts layer UIDs only (no geometry)
     const alertsLayerResult = await this.databaseService.query<AlertLayerUidRow>(
-      `SELECT uid, region_type, alert_type FROM alert_layer_features ORDER BY uid ASC`,
+      `SELECT uid, region_type, alert_type, alert_level FROM alert_layer_features ORDER BY uid ASC`,
     );
 
     // 3. Layer counts — lightweight COUNT queries
@@ -175,7 +179,7 @@ export class MapBundleService {
     );
 
     // Build status_lookup — only for regions with non-default status
-    const statusLookup: Record<number, { status: string; alert_type: string }> = {};
+    const statusLookup: Record<number, { status: string; alert_type: string; alert_level: string }> = {};
     const activeAlertUids: number[] = [];
 
     for (const row of statusResult.rows) {
@@ -187,6 +191,7 @@ export class MapBundleService {
         statusLookup[row.uid] = {
           status: row.status,
           alert_type: row.alert_type,
+          alert_level: row.alert_level,
         };
       }
     }
@@ -196,6 +201,7 @@ export class MapBundleService {
       uid: row.uid,
       region_type: row.region_type,
       alert_type: row.alert_type,
+      alert_level: row.alert_level,
     }));
 
     // Build layer_counts map
@@ -217,7 +223,7 @@ export class MapBundleService {
 
     const currentStateVersion =
       stateVersion ??
-      statusResult.rows.reduce((max) => max, 0);
+      statusResult.rows.reduce((max, row) => Math.max(max, Number(row.state_version)), 0);
 
     return {
       state_version: currentStateVersion,

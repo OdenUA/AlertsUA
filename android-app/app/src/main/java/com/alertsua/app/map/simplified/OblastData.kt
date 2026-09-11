@@ -14,6 +14,7 @@ data class OblastData(
     val titleUk: String,
     val status: String,
     val alertType: String,
+    val alertLevel: String = "red",
     val geometry: List<List<List<Double>>>,
     val center: LatLng,      // Geographic center for label position
     val cityCenter: LatLng,  // Oblast capital city for marker position

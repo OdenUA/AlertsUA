@@ -23,7 +23,13 @@ type ActiveAlertRow = {
   title_uk: string;
   region_type: string;
   alert_type: string;
+  alert_level: string;
   geometry_json: string;
+};
+
+type ActiveUidsCacheEntry = {
+  uids: number[];
+  details?: Record<number, { alert_type: string; alert_level: string }>;
 };
 
 type RegionIndexRow = {
@@ -301,28 +307,7 @@ export class MapService {
     const cached = await this.cacheService.get<FeaturesBundleDto>(cacheKey);
     if (cached) {
       this.logger.debug(`Cache hit for features: ${cacheKey}`);
-      // Read active UIDs from Redis cache (< 1KB) instead of DB query
-      // Fallback: query DB directly if cache hasn't been populated yet (before first poll cycle)
-      let activeUidsData = await this.cacheService.get<{ uids: number[] }>(CACHE_KEYS.ALERTS_ACTIVE_UIDS);
-      if (!activeUidsData) {
-        this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
-        const dbResult = await this.databaseService.query<{ uid: number }>(
-          `SELECT arc.uid FROM air_raid_state_current arc
-           JOIN region_catalog rc ON rc.uid = arc.uid
-           WHERE arc.status IN ('A', 'P')
-             AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
-        );
-        activeUidsData = { uids: dbResult.rows.map((r) => r.uid) };
-        // Populate cache for subsequent requests
-        await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, activeUidsData, CACHE_TTL.ALERTS);
-      }
-      const statusLookup: Record<number, { status: string; alert_type: string }> = {};
-      if (activeUidsData.uids) {
-        for (const uid of activeUidsData.uids) {
-          statusLookup[uid] = { status: 'A', alert_type: 'air_raid' };
-        }
-      }
-      cached.features.status_lookup = statusLookup;
+      cached.features.status_lookup = await this.loadActiveStatusLookup();
       return {
         layer,
         bbox: bbox ?? null,
@@ -336,28 +321,7 @@ export class MapService {
     this.logger.debug(`Cache miss for features: ${cacheKey}`);
     const bundle = await this.mapBundleService.buildFeaturesBundle(layer, selectedLod, parsedBbox ?? undefined);
 
-    // Read active UIDs from Redis cache (< 1KB) instead of DB query
-    // Fallback: query DB directly if cache hasn't been populated yet (before first poll cycle)
-    let activeUidsData = await this.cacheService.get<{ uids: number[] }>(CACHE_KEYS.ALERTS_ACTIVE_UIDS);
-    if (!activeUidsData) {
-      this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
-      const dbResult = await this.databaseService.query<{ uid: number }>(
-        `SELECT arc.uid FROM air_raid_state_current arc
-         JOIN region_catalog rc ON rc.uid = arc.uid
-         WHERE arc.status IN ('A', 'P')
-           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
-      );
-      activeUidsData = { uids: dbResult.rows.map((r) => r.uid) };
-      // Populate cache for subsequent requests
-      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, activeUidsData, CACHE_TTL.ALERTS);
-    }
-    const statusLookup: Record<number, { status: string; alert_type: string }> = {};
-    if (activeUidsData.uids) {
-      for (const uid of activeUidsData.uids) {
-        statusLookup[uid] = { status: 'A', alert_type: 'air_raid' };
-      }
-    }
-    bundle.features.status_lookup = statusLookup;
+    bundle.features.status_lookup = await this.loadActiveStatusLookup();
 
     // Cache the bundle
     await this.cacheService.set(cacheKey, bundle, CACHE_TTL.FEATURES);
@@ -369,6 +333,44 @@ export class MapService {
       pack_version: packVersion ?? GEOMETRY_PACK_VERSION,
       features: this.buildFeaturesFromBundle(bundle),
     };
+  }
+
+  /**
+   * Builds a uid -> status lookup for active regions from the lightweight
+   * Redis cache. Falls back to a DB query when the cache is not populated yet
+   * (before the first poll cycle).
+   */
+  private async loadActiveStatusLookup(): Promise<
+    Record<number, { status: string; alert_type: string; alert_level: string }>
+  > {
+    let activeUidsData = await this.cacheService.get<ActiveUidsCacheEntry>(CACHE_KEYS.ALERTS_ACTIVE_UIDS);
+    if (!activeUidsData) {
+      this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
+      const dbResult = await this.databaseService.query<{ uid: number; alert_type: string; alert_level: string }>(
+        `SELECT arc.uid, arc.alert_type, arc.alert_level FROM air_raid_state_current arc
+         JOIN region_catalog rc ON rc.uid = arc.uid
+         WHERE arc.status IN ('A', 'P')
+           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+      );
+      const details: Record<number, { alert_type: string; alert_level: string }> = {};
+      for (const row of dbResult.rows) {
+        details[row.uid] = { alert_type: row.alert_type, alert_level: row.alert_level };
+      }
+      activeUidsData = { uids: dbResult.rows.map((r) => r.uid), details };
+      // Populate cache for subsequent requests
+      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, activeUidsData, CACHE_TTL.ALERTS);
+    }
+
+    const statusLookup: Record<number, { status: string; alert_type: string; alert_level: string }> = {};
+    for (const uid of activeUidsData.uids ?? []) {
+      const detail = activeUidsData.details?.[uid];
+      statusLookup[uid] = {
+        status: 'A',
+        alert_type: detail?.alert_type ?? 'air_raid',
+        alert_level: detail?.alert_level ?? 'red',
+      };
+    }
+    return statusLookup;
   }
 
   private buildFeaturesFromBundle(bundle: FeaturesBundleDto) {
@@ -385,6 +387,7 @@ export class MapService {
           oblast_uid: geom.oblast_uid,
           status: status?.status ?? ' ',
           alert_type: status?.alert_type ?? 'air_raid',
+          alert_level: status?.alert_level ?? 'red',
         },
       };
     });
@@ -413,6 +416,7 @@ export class MapService {
             title_uk: f.title_uk,
             region_type: f.region_type,
             alert_type: f.alert_type,
+            alert_level: f.alert_level ?? 'red',
           },
         })),
       };
@@ -426,6 +430,7 @@ export class MapService {
                rc.title_uk,
                rc.region_type,
                COALESCE(arc.alert_type, 'air_raid') AS alert_type,
+               COALESCE(arc.alert_level, 'red') AS alert_level,
                ST_AsGeoJSON(
                  COALESCE(
                    rgl.geom,
@@ -453,6 +458,7 @@ export class MapService {
           title_uk: row.title_uk,
           region_type: row.region_type,
           alert_type: row.alert_type,
+          alert_level: row.alert_level,
         },
       })),
     };
@@ -474,6 +480,7 @@ export class MapService {
       title_uk: string;
       region_type: string;
       alert_type: string;
+      alert_level: string;
       geometry_json: string;
     }>(
       `
@@ -481,6 +488,7 @@ export class MapService {
                rc.title_uk,
                rc.region_type,
                COALESCE(arc.alert_type, 'air_raid') AS alert_type,
+               COALESCE(arc.alert_level, 'red') AS alert_level,
                ST_AsGeoJSON(COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.005))) AS geometry_json
         FROM region_catalog rc
         JOIN region_geometry rg ON rg.uid = rc.uid
@@ -503,6 +511,7 @@ export class MapService {
           title_uk: row.title_uk,
           region_type: row.region_type,
           alert_type: row.alert_type,
+          alert_level: row.alert_level,
         },
       })),
     };
@@ -530,6 +539,7 @@ export class MapService {
       uid: number;
       region_type: string;
       alert_type: string;
+      alert_level: string;
       geometry_json: string;
       updated_at: string;
     }>(
@@ -537,6 +547,7 @@ export class MapService {
         SELECT uid,
                region_type,
                alert_type,
+               alert_level,
                geometry_json,
                updated_at
         FROM alert_layer_features
@@ -562,6 +573,7 @@ export class MapService {
           region_type: row.region_type,
           status: 'A',
           alert_type: row.alert_type,
+          alert_level: row.alert_level,
         },
       })),
       updated_at: result.rows[0]?.updated_at,
@@ -809,6 +821,7 @@ export class MapService {
       title_uk: string;
       status: 'A' | 'P' | 'N' | ' ';
       alert_type: string;
+      alert_level: string;
       geometry_json: string;
       center_lon: number;
       center_lat: number;
@@ -822,6 +835,7 @@ export class MapService {
                rc.title_uk,
                COALESCE(arc.status, 'N') AS status,
                COALESCE(arc.alert_type, 'air_raid') AS alert_type,
+               COALESCE(arc.alert_level, 'red') AS alert_level,
                ST_AsGeoJSON(ST_SimplifyPreserveTopology(rg.geom, 0.01)) AS geometry_json,
                ST_X(rg.centroid) AS center_lon,
                ST_Y(rg.centroid) AS center_lat,
@@ -845,6 +859,7 @@ export class MapService {
         title_uk: row.title_uk,
         status: row.status,
         alert_type: row.alert_type,
+        alert_level: row.alert_level,
         geometry: JSON.parse(row.geometry_json),
         center: { lat: row.center_lat, lon: row.center_lon },
         bounds: {

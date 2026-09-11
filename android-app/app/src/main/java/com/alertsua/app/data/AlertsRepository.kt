@@ -72,13 +72,14 @@ data class ActiveAlertGeometry(
     val titleUk: String,
     val regionType: String,
     val alertType: String,
+    val alertLevel: String = "red",
     val geometry: List<List<List<Double>>>,
 )
 
 /** Лёгкий статусный снапшот из /map/bundle — без геометрии, для опроса изменений */
 data class MapStatusSnapshot(
     val stateVersion: Long,
-    val statusLookup: Map<Int, Pair<String, String>>, // uid -> (status, alert_type)
+    val statusLookup: Map<Int, Triple<String, String, String>>, // uid -> (status, alert_type, alert_level)
     val activeAlertUids: Set<Int>,
 )
 
@@ -721,6 +722,7 @@ class AlertsRepository(context: Context) {
                         titleUk = titleUk,
                         status = obj.getString("status"),
                         alertType = obj.getString("alert_type"),
+                        alertLevel = obj.optString("alert_level", "red"),
                         geometry = parsedGeometry,
                         center = geoCenter,
                         cityCenter = getOblastCenter(titleUk),
@@ -813,6 +815,7 @@ class AlertsRepository(context: Context) {
                         titleUk = props.getString("title_uk"),
                         regionType = props.getString("region_type"),
                         alertType = props.optString("alert_type", "air_raid"),
+                        alertLevel = props.optString("alert_level", "red"),
                         geometry = parseGeoJsonCoordinates(coordinates),
                     )
                 } catch (_: Exception) { null }
@@ -844,15 +847,18 @@ class AlertsRepository(context: Context) {
 
             val json = JSONObject(responseText)
 
-            val lookup = mutableMapOf<Int, Pair<String, String>>()
+            val lookup = mutableMapOf<Int, Triple<String, String, String>>()
             json.optJSONObject("status_lookup")?.let { lookupJson ->
                 val keys = lookupJson.keys()
                 while (keys.hasNext()) {
                     val key = keys.next()
                     val uid = key.toIntOrNull() ?: continue
                     val entry = lookupJson.optJSONObject(key) ?: continue
-                    lookup[uid] = entry.optString("status", " ") to
-                        entry.optString("alert_type", "air_raid")
+                    lookup[uid] = Triple(
+                        entry.optString("status", " "),
+                        entry.optString("alert_type", "air_raid"),
+                        entry.optString("alert_level", "red"),
+                    )
                 }
             }
 

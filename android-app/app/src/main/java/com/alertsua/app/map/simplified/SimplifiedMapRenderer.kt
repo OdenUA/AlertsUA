@@ -20,10 +20,26 @@ class SimplifiedMapRenderer {
         isAntiAlias = true
     }
 
+    // Active alert (full oblast threat) - yellow level fill
+    private val activeFillPaintYellow = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFB6994F.toInt()
+        alpha = 180
+        isAntiAlias = true
+    }
+
     // Active alert sub-region fill (leaf geometries from active-alerts-simplified)
     private val alertRegionFillPaint = Paint().apply {
         style = Paint.Style.FILL
         color = 0xFFD7263D.toInt()
+        alpha = 160
+        isAntiAlias = true
+    }
+
+    // Active alert sub-region fill - yellow level
+    private val alertRegionFillPaintYellow = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0xFFB6994F.toInt()
         alpha = 160
         isAntiAlias = true
     }
@@ -168,10 +184,10 @@ class SimplifiedMapRenderer {
                 val oblast = oblasts[i]
                 val path = transformedPath(oblastPaths[i], matrix)
 
-                // 'A' = full alert (red fill), 'P'/'N' = normal (theme-based fill)
+                // 'A' = full alert (fill by threat level), 'P'/'N' = normal (theme-based fill)
                 // Partial alerts ('P') show only sub-regions with active alerts via renderActiveAlerts()
                 val paint = when (oblast.status.first()) {
-                    'A' -> activeFillPaint
+                    'A' -> if (oblast.alertLevel == "yellow") activeFillPaintYellow else activeFillPaint
                     else -> normalFillPaint
                 }
 
@@ -193,9 +209,10 @@ class SimplifiedMapRenderer {
             alertsSource = alerts
         }
 
-        for (path in alertPaths) {
+        for (i in alertPaths.indices) {
             try {
-                canvas.drawPath(transformedPath(path, matrix), alertRegionFillPaint)
+                val paint = if (alerts[i].alertLevel == "yellow") alertRegionFillPaintYellow else alertRegionFillPaint
+                canvas.drawPath(transformedPath(alertPaths[i], matrix), paint)
             } catch (_: Exception) { }
         }
     }

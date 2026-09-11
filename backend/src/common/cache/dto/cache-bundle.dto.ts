@@ -7,6 +7,7 @@ export interface AlertsBundleDto {
       title_uk: string;
       region_type: string;
       alert_type: string;
+      alert_level: string;
       geometry: any;
     }>;
     meta: { count: number };
@@ -53,7 +54,7 @@ export interface FeaturesBundleDto {
       oblast_uid: number | null;
       geometry: any;
     }>;
-    status_lookup: Record<number, { status: string; alert_type: string }>;
+    status_lookup: Record<number, { status: string; alert_type: string; alert_level: string }>;
   };
 }
 
@@ -61,12 +62,13 @@ export interface MapBundleDto {
   state_version: number;
   generated_at: string;
   active_alert_uids: number[];
-  status_lookup: Record<number, { status: string; alert_type: string }>;
+  status_lookup: Record<number, { status: string; alert_type: string; alert_level: string }>;
   alerts_layer: {
     features: Array<{
       uid: number;
       region_type: string;
       alert_type: string;
+      alert_level: string;
     }>;
   };
   layer_counts: {
@@ -95,6 +97,7 @@ export interface FeatureSubset {
       oblast_uid: number | null;
       status: string;
       alert_type: string;
+      alert_level: string;
     };
   }>;
 }

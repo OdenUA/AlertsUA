@@ -32,11 +32,17 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 37
-        versionName = "0.7.1"
+        versionCode = 38
+        versionName = "0.7.2"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // GeoJSON-геометрия (~2.3MB) читается целиком на холодном старте —
+    // не сжимаем в APK, чтобы чтение шло через mmap без inflate.
+    aaptOptions {
+        noCompress += listOf("geojson", "json")
     }
 
     signingConfigs {
@@ -110,7 +116,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.fragment:fragment-ktx:1.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("org.maplibre.gl:android-sdk:13.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
     implementation("com.google.firebase:firebase-analytics-ktx:22.1.0")

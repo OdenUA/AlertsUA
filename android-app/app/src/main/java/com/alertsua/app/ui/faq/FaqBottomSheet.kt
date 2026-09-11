@@ -1,5 +1,6 @@
 package com.alertsua.app.ui.faq
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -10,11 +11,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +31,8 @@ import com.alertsua.app.BuildConfig
 import com.alertsua.app.R
 import com.alertsua.app.admob.AdManager
 import kotlinx.coroutines.delay
+
+private const val DONATE_URL = "https://send.monobank.ua/jar/L8aAoUYy2"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +55,14 @@ fun FaqBottomSheet(
             answer = "Канал \"Повітряна тривога\", Офіційне API \"Повітряна тривога\" \nОфіційний канал, що повідомляє про повітряні тривоги та інші загрози."
         ),
         FAQItem(
+            question = "Що означають жовтий та червоний рівні тривоги?",
+            answer = "Існує два рівні загрози. Показники для оголошення рівнів небезпеки щотижня визначатимуть Генеральний штаб і Повітряні Сили ЗСУ разом з урядом, Міністерством оборони, МВС та ДСНС України.\n" +
+                    "Жовтий рівень тривоги\n" +
+                    "Базово оголошується під час нальоту безпілотників. Передбачає можливість продовження роботи бізнесу, транспорту та соціальних об'єктів за визначеними безпековими критеріями.\n" +
+                    "Червоний рівень тривоги\n" +
+                    "Ракетна небезпека, загроза застосування балістичних атак, а також масовані удари. Сигнал вимагає обов'язкового та негайного переходу в укриття."
+        ),
+        FAQItem(
             question = "Як отримувати сповіщення щодо повітряних тривог",
             answer = "Для отримання сповіщень щодо повітряних тривог, необхідно натиснути на потрібне місце на карті та натиснути кнопку \"Підписатися\""
         ),
@@ -69,6 +83,12 @@ fun FaqBottomSheet(
                     "![map.png](map.png) - Перехід на спрощену мапу. Спрощений варіант відображає лише повітряні тривоги на рівні районів, проте значно швидше працює і сумісний з більшою кількістю телефонів.\n" +
                     "![theme.png](theme.png) - Зміна теми додатку: Світла/Темна\n" +
                     "![fullscreen.png](fullscreen.png) - Повноекранний режим"
+        ),
+        FAQItem(
+            question = "Подякувати розробнику",
+            answer = "Додаток розробляється та підтримується незалежним розробником на власному ентузіазмі.\n" +
+                    "Якщо хочете подякувати та підтримати проєкт, можете задонатити будь-яку суму в «банку» Monobank — це сервіс українського банку monobank для збору коштів.\n" +
+                    "Зібрані кошти підуть на оплату серверів та розвиток додатку."
         ),
         FAQItem(
             question = "Написати нам",
@@ -198,6 +218,8 @@ private fun FAQItemView(
     onToggle: () -> Unit,
     onEmailClick: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -249,6 +271,12 @@ private fun FAQItemView(
                     imageVector = Icons.Outlined.Email,
                     contentDescription = "Написати лист",
                     tint = MaterialTheme.colorScheme.primary
+                )
+            } else if (item.question == "Подякувати розробнику") {
+                Icon(
+                    imageVector = Icons.Outlined.FavoriteBorder,
+                    contentDescription = "Підтримати проєкт",
+                    tint = Color(0xFFE91E63)
                 )
             }
             // Прибираємо кнопку розгортання
@@ -388,6 +416,26 @@ private fun FAQItemView(
                                     )
                                 }
                             }
+                            line == "Жовтий рівень тривоги" -> {
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF8f7838),
+                                    lineHeight = 24.sp,
+                                    modifier = Modifier.padding(start = 36.dp, top = 8.dp)
+                                )
+                            }
+                            line == "Червоний рівень тривоги" -> {
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD7263D),
+                                    lineHeight = 24.sp,
+                                    modifier = Modifier.padding(start = 36.dp, top = 8.dp)
+                                )
+                            }
                             else -> {
                                 Text(
                                     text = line,
@@ -400,9 +448,56 @@ private fun FAQItemView(
                         }
                     }
                 }
+
+                // Donation section: jar link button + QR code
+                if (item.question == "Подякувати розробнику") {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { openDonateUrl(context) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Text("Відкрити банку monobank")
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Image(
+                        painter = painterResource(R.drawable.qr_mono_jar),
+                        contentDescription = "QR-код для поповнення банки monobank",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { openDonateUrl(context) }
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+}
+
+// Opens the monobank jar link in a browser
+private fun openDonateUrl(context: android.content.Context) {
+    val intent = android.content.Intent(
+        android.content.Intent.ACTION_VIEW,
+        android.net.Uri.parse(DONATE_URL)
+    )
+
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(
+            context,
+            "Не вдалося відкрити посилання",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
     }
 }
 

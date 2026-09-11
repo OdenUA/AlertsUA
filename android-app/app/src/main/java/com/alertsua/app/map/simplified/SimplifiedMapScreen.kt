@@ -139,21 +139,22 @@ fun SimplifiedMapScreen(
     // Состояние лёгкого опроса: полные геометрии активных регионов
     // перезапрашиваются только при смене набора активных uid
     var lastStateVersion by remember { mutableStateOf(-1L) }
-    var lastActiveUids by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var lastActiveSignature by remember { mutableStateOf("") }
 
     // Применяет статусы из снапшота к областям; пересоздаёт список,
     // только если что-то реально изменилось (не сбрасывая кэш Path в рендерере)
-    fun applySnapshotStatuses(snapshot: MapStatusSnapshot) {
+    fun applySnapshotStatuses(snapshot: MapStatusSnapshot): Boolean {
         val current = controller.oblasts.value
-        if (current.isEmpty()) return
+        if (current.isEmpty()) return false
         var anyChanged = false
         val updated = current.map { oblast ->
             val entry = snapshot.statusLookup[oblast.uid]
             val newStatus = entry?.first ?: " "
             val newType = entry?.second ?: "air_raid"
-            if (oblast.status != newStatus || oblast.alertType != newType) {
+            val newLevel = entry?.third ?: "red"
+            if (oblast.status != newStatus || oblast.alertType != newType || oblast.alertLevel != newLevel) {
                 anyChanged = true
-                oblast.copy(status = newStatus, alertType = newType)
+                oblast.copy(status = newStatus, alertType = newType, alertLevel = newLevel)
             } else {
                 oblast
             }
@@ -161,7 +162,17 @@ fun SimplifiedMapScreen(
         if (anyChanged) {
             controller.updateOblasts(updated)
         }
+        return anyChanged
     }
+
+    // Сигнатура активных тревог (uid + уровень): геометрии перезапрашиваются
+    // и при смене набора активных uid, и при смене цвета угрозы (red/yellow)
+    fun activeAlertsSignature(snapshot: MapStatusSnapshot): String =
+        snapshot.statusLookup
+            .filter { it.value.first == "A" }
+            .toSortedMap()
+            .entries
+            .joinToString(",") { "${it.key}:${it.value.third}" }
 
     // Refresh function — полное обновление статусов и геометрий
     suspend fun refreshData() {
@@ -174,7 +185,7 @@ fun SimplifiedMapScreen(
             applySnapshotStatuses(snapshot)
             val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
             controller.updateActiveAlerts(alerts)
-            lastActiveUids = snapshot.activeAlertUids
+            lastActiveSignature = activeAlertsSignature(snapshot)
         } catch (e: Exception) {
             android.util.Log.e("SimplifiedMap", "Refresh failed: ${e.message}", e)
             android.widget.Toast.makeText(context, "Помилка оновлення", android.widget.Toast.LENGTH_SHORT).show()
@@ -183,17 +194,21 @@ fun SimplifiedMapScreen(
         }
     }
 
-    // Лёгкий опрос: статусы всегда, геометрия — только при изменении набора активных uid
+    // Лёгкий опрос: статусы всегда, геометрия — только при изменении набора активных uid или уровня угрозы
     suspend fun pollStatuses() {
         val apiBaseUrl = repository.loadApiBaseUrl()
         val snapshot = repository.fetchMapStatusSnapshot(apiBaseUrl)
         if (snapshot.stateVersion == lastStateVersion) return
         lastStateVersion = snapshot.stateVersion
-        applySnapshotStatuses(snapshot)
-        if (snapshot.activeAlertUids != lastActiveUids) {
+        val statusesChanged = applySnapshotStatuses(snapshot)
+        if (statusesChanged) {
+            android.widget.Toast.makeText(context, "Статуси тривог оновлено", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        val signature = activeAlertsSignature(snapshot)
+        if (signature != lastActiveSignature) {
             val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
             controller.updateActiveAlerts(alerts)
-            lastActiveUids = snapshot.activeAlertUids
+            lastActiveSignature = signature
         }
     }
 
@@ -212,7 +227,7 @@ fun SimplifiedMapScreen(
             applySnapshotStatuses(snapshot)
             val alerts = repository.fetchActiveAlertGeometries(apiBaseUrl)
             controller.updateActiveAlerts(alerts)
-            lastActiveUids = snapshot.activeAlertUids
+            lastActiveSignature = activeAlertsSignature(snapshot)
         } catch (e: Exception) {
             errorMessage = e.message ?: "Failed to load map data"
         } finally {
@@ -780,9 +795,9 @@ private fun AggregatedRaionCard(item: OblastAlertHistoryItem) {
 private fun AlertTypeIcon(alertType: String) {
     val context = LocalContext.current
     val assetPath = when (alertType) {
-        "artillery_shelling" -> "leaflet/icons/artillery-shelling.png"
-        "urban_fights" -> "leaflet/icons/urban-fights.png"
-        else -> "leaflet/icons/air-raid.png"
+        "artillery_shelling" -> "map/icons/artillery-shelling.png"
+        "urban_fights" -> "map/icons/urban-fights.png"
+        else -> "map/icons/air-raid.png"
     }
     val label = when (alertType) {
         "artillery_shelling" -> "Загроза артобстрілу"
