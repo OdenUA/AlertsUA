@@ -13,8 +13,9 @@ type DispatchRow = {
   subscription_id: string;
   installation_id: string;
   token_id: string;
-  event_id: string;
-  dispatch_kind: 'start' | 'end';
+  event_id: string | null;
+  dispatch_kind: 'start' | 'end' | 'level_changed';
+  alert_level: string;
   title_uk: string;
   body_uk: string;
   attempt_no: number;
@@ -88,6 +89,7 @@ export class PushService {
                nd.token_id,
                nd.event_id,
                nd.dispatch_kind,
+               nd.alert_level,
                nd.title_uk,
                nd.body_uk,
                nd.attempt_no,
@@ -162,8 +164,9 @@ export class PushService {
           },
           data: {
             subscription_id: dispatch.subscription_id,
-            event_id: dispatch.event_id,
+            event_id: dispatch.event_id ?? '',
             dispatch_kind: dispatch.dispatch_kind,
+            alert_level: dispatch.alert_level,
             sent_at: sentAt,
           },
           android: {

@@ -48,6 +48,8 @@ type StateRow = {
   status: AlertStatus;
   active_from: string | null;
   state_version: number;
+  alert_type: string;
+  alert_level: string;
 };
 
 type AggregateStatusRow = {
@@ -61,6 +63,7 @@ type RuntimeRow = {
   effective_status: AlertStatus;
   effective_uid: number | null;
   effective_started_at: string | null;
+  effective_alert_level: string;
   last_transition_at: string;
   last_evaluated_state_version: number;
   last_start_event_id: string | null;
@@ -109,6 +112,8 @@ type EffectiveState = {
   effective_status: AlertStatus;
   effective_uid: number | null;
   effective_started_at: string | null;
+  effective_alert_type: string;
+  effective_alert_level: string;
 };
 
 type OblastActiveHistoryRow = {
@@ -312,17 +317,19 @@ export class SubscriptionsService {
             effective_status,
             effective_uid,
             effective_started_at,
+            effective_alert_level,
             last_transition_at,
             last_evaluated_state_version,
             last_start_event_id,
             last_end_event_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL)
         `,
         [
           subscriptionId,
           effectiveState.effective_status,
           effectiveState.effective_uid,
           effectiveState.effective_started_at,
+          effectiveState.effective_alert_level,
           now,
           stateContext.stateVersion,
         ],
@@ -525,6 +532,7 @@ export class SubscriptionsService {
                    effective_status,
                    effective_uid,
                    effective_started_at::text,
+                   COALESCE(effective_alert_level, 'red') AS effective_alert_level,
                    last_transition_at::text,
                    last_evaluated_state_version,
                    last_start_event_id,
@@ -535,7 +543,9 @@ export class SubscriptionsService {
         ),
         client.query<StateRow>(
           `
-            SELECT uid, status, active_from::text, state_version
+            SELECT uid, status, active_from::text, state_version,
+                   COALESCE(alert_type, 'air_raid') AS alert_type,
+                   COALESCE(alert_level, 'red') AS alert_level
             FROM air_raid_state_current
           `,
         ),
@@ -588,6 +598,7 @@ export class SubscriptionsService {
         effective_status: ' ' as AlertStatus,
         effective_uid: null,
         effective_started_at: null,
+        effective_alert_level: 'red',
         last_transition_at: transitionAt,
         last_evaluated_state_version: 0,
         last_start_event_id: null,
@@ -616,6 +627,7 @@ export class SubscriptionsService {
           subscription,
           dispatch_kind: 'start',
           event_id: lastStartEventId,
+          alert_level: nextRuntime.effective_alert_level,
           occurred_at: transitionAt,
           tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
         });
@@ -624,13 +636,37 @@ export class SubscriptionsService {
       if (previousWasActive && !nextIsActive && previousRuntime.effective_uid !== null) {
         lastEndEventId =
           eventsByKey.get(`${previousRuntime.effective_uid}:ended`) ?? previousRuntimeRaw.last_end_event_id;
+        // Resolve previous alert level for end message
+        const previousAlertLevel = previousRuntime.effective_uid
+          ? (statesByUid.get(previousRuntime.effective_uid)?.alert_level ?? 'red')
+          : 'red';
         queuedDispatches += await this.queueDispatchesForTransition(client, {
           subscription,
           dispatch_kind: 'end',
           event_id: lastEndEventId,
+          alert_level: previousAlertLevel,
           occurred_at: transitionAt,
           tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
         });
+      }
+
+      // Level-only change while alert stays active (e.g., red → yellow)
+      if (previousWasActive && nextIsActive) {
+        const previousLevel = previousRuntime.effective_uid
+          ? (statesByUid.get(previousRuntime.effective_uid)?.alert_level ?? 'red')
+          : 'red';
+        const nextLevel = nextRuntime.effective_alert_level;
+        if (previousLevel !== nextLevel) {
+          queuedDispatches += await this.queueDispatchesForTransition(client, {
+            subscription,
+            dispatch_kind: 'level_changed',
+            event_id: null,
+            alert_level: nextLevel,
+            previous_alert_level: previousLevel,
+            occurred_at: transitionAt,
+            tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
+          });
+        }
       }
 
       await client.query(
@@ -640,15 +676,17 @@ export class SubscriptionsService {
             effective_status,
             effective_uid,
             effective_started_at,
+            effective_alert_level,
             last_transition_at,
             last_evaluated_state_version,
             last_start_event_id,
             last_end_event_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           ON CONFLICT (subscription_id) DO UPDATE SET
             effective_status = EXCLUDED.effective_status,
             effective_uid = EXCLUDED.effective_uid,
             effective_started_at = EXCLUDED.effective_started_at,
+            effective_alert_level = EXCLUDED.effective_alert_level,
             last_transition_at = EXCLUDED.last_transition_at,
             last_evaluated_state_version = EXCLUDED.last_evaluated_state_version,
             last_start_event_id = EXCLUDED.last_start_event_id,
@@ -659,6 +697,7 @@ export class SubscriptionsService {
           nextRuntime.effective_status,
           nextRuntime.effective_uid,
           nextRuntime.effective_started_at,
+          nextRuntime.effective_alert_level,
           stateChanged ? transitionAt : previousRuntimeRaw.last_transition_at,
           input.state_version,
           lastStartEventId,
@@ -678,13 +717,15 @@ export class SubscriptionsService {
     client: PoolClient,
     input: {
       subscription: SubscriptionRuntimeSourceRow;
-      dispatch_kind: 'start' | 'end';
+      dispatch_kind: 'start' | 'end' | 'level_changed';
       event_id: string | null;
+      alert_level: string;
+      previous_alert_level?: string;
       occurred_at: string;
       tokens: PushTokenRow[];
     },
   ) {
-    if (!input.event_id) {
+    if (input.dispatch_kind !== 'level_changed' && !input.event_id) {
       return 0;
     }
 
@@ -706,11 +747,32 @@ export class SubscriptionsService {
 
     const { title_uk, body_uk } = this.buildDispatchText(
       input.dispatch_kind,
+      input.alert_level,
+      input.previous_alert_level,
       input.subscription.label_user,
       input.subscription.leaf_title_uk,
       input.subscription.raion_title_uk,
       input.subscription.oblast_title_uk,
     );
+
+    // Dedup level_changed: skip if a queued/sent dispatch for same subscription+level exists today
+    if (input.dispatch_kind === 'level_changed') {
+      const existing = await client.query(
+        `
+          SELECT 1 FROM notification_dispatches
+          WHERE subscription_id = $1
+            AND dispatch_kind = 'level_changed'
+            AND alert_level = $2
+            AND status IN ('queued', 'sent')
+            AND queued_at::date = $3::date
+          LIMIT 1
+        `,
+        [input.subscription.subscription_id, input.alert_level, input.occurred_at],
+      );
+      if ((existing.rowCount ?? 0) > 0) {
+        return 0;
+      }
+    }
 
     let inserted = 0;
     for (const token of input.tokens) {
@@ -724,6 +786,7 @@ export class SubscriptionsService {
             token_id,
             event_id,
             dispatch_kind,
+            alert_level,
             title_uk,
             body_uk,
             status,
@@ -733,10 +796,10 @@ export class SubscriptionsService {
             queued_at,
             sent_at
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8,
-            'queued', 1, NULL, NULL, $9, NULL
+            $1, $2, $3, $4, $5, $6, $7, $8, $9,
+            'queued', 1, NULL, NULL, $10, NULL
           )
-          ON CONFLICT (subscription_id, event_id, dispatch_kind) DO NOTHING
+          ON CONFLICT DO NOTHING
         `,
         [
           dispatchId,
@@ -745,6 +808,7 @@ export class SubscriptionsService {
           token.token_id,
           input.event_id,
           input.dispatch_kind,
+          input.alert_level,
           title_uk,
           body_uk,
           input.occurred_at,
@@ -1325,7 +1389,9 @@ export class SubscriptionsService {
   }
 
   private buildDispatchText(
-    dispatchKind: 'start' | 'end',
+    dispatchKind: 'start' | 'end' | 'level_changed',
+    alertLevel: string,
+    previousAlertLevel: string | undefined,
     labelUser: string | null,
     leafTitleUk: string | null,
     raionTitleUk: string | null,
@@ -1333,17 +1399,37 @@ export class SubscriptionsService {
   ) {
     const regionName = this.resolveRegionName(labelUser, leafTitleUk, raionTitleUk, oblastTitleUk);
     const regionLine = regionName ? `${regionName}` : 'вибрана точка';
+    const isRed = alertLevel === 'red';
+    const emoji = isRed ? '🔴' : '🟡';
 
     if (dispatchKind === 'start') {
+      const levelLabel = isRed ? 'Червоний рівень' : 'Жовтий рівень';
       return {
-        title_uk: '🚨 Повітряна тривога!',
-        body_uk: `${regionLine} — оголошено повітряну тривогу.`,
+        title_uk: `${emoji} ${levelLabel} тривоги!`,
+        body_uk: `${regionLine} — прямуйте в укриття!`,
       };
     }
 
+    if (dispatchKind === 'end') {
+      return {
+        title_uk: '✅ Відбій тривоги',
+        body_uk: `${regionLine} — тривога скасована.`,
+      };
+    }
+
+    // level_changed: red → yellow or yellow → red while alert is still active
+    const prevIsRed = previousAlertLevel === 'red';
+    if (prevIsRed && !isRed) {
+      return {
+        title_uk: `${emoji} Зміна рівня тривоги`,
+        body_uk: `${regionLine} — відбій червоної тривоги, жовта тривога ще триває. Будьте обережні!`,
+      };
+    }
+
+    // yellow → red upgrade
     return {
-      title_uk: '✅ Відбій тривоги',
-      body_uk: `${regionLine} — повітряна тривога скасована.`,
+      title_uk: `${emoji} Підвищення рівня тривоги!`,
+      body_uk: `${regionLine} — рівень тривоги підвищено до червоного. Прямуйте в укриття!`,
     };
   }
 
@@ -1500,7 +1586,9 @@ export class SubscriptionsService {
       this.queryWithExecutor<StateRow>(
         executor,
         `
-          SELECT uid, status, active_from::text, state_version
+          SELECT uid, status, active_from::text, state_version,
+                 COALESCE(alert_type, 'air_raid') AS alert_type,
+                 COALESCE(alert_level, 'red') AS alert_level
           FROM air_raid_state_current
           WHERE uid = ANY($1::int[])
         `,
@@ -1615,12 +1703,13 @@ export class SubscriptionsService {
       effective_status: nextRuntime.effective_status,
       effective_uid: nextRuntime.effective_uid,
       effective_started_at: nextRuntime.effective_started_at,
+      effective_alert_level: nextRuntime.effective_alert_level,
     };
   }
 
   private evaluateEffectiveState(
     source: ScopedSubscriptionSource,
-    statesByUid: Map<number, Pick<StateRow, 'status' | 'active_from'>>,
+    statesByUid: Map<number, Pick<StateRow, 'status' | 'active_from' | 'alert_type' | 'alert_level'>>,
   ): EffectiveState {
     const targetUid = this.resolveScopeTargetUid(source);
     if (targetUid === null) {
@@ -1628,6 +1717,8 @@ export class SubscriptionsService {
         effective_status: ' ',
         effective_uid: null,
         effective_started_at: null,
+        effective_alert_type: 'air_raid',
+        effective_alert_level: 'red',
       };
     }
 
@@ -1637,6 +1728,8 @@ export class SubscriptionsService {
         effective_status: ' ',
         effective_uid: null,
         effective_started_at: null,
+        effective_alert_type: 'air_raid',
+        effective_alert_level: 'red',
       };
     }
 
@@ -1645,6 +1738,8 @@ export class SubscriptionsService {
         effective_status: state.status,
         effective_uid: targetUid,
         effective_started_at: state.active_from,
+        effective_alert_type: state.alert_type ?? 'air_raid',
+        effective_alert_level: state.alert_level ?? 'red',
       };
     }
 
@@ -1653,6 +1748,8 @@ export class SubscriptionsService {
         effective_status: state.status,
         effective_uid: null,
         effective_started_at: null,
+        effective_alert_type: 'air_raid',
+        effective_alert_level: 'red',
       };
     }
 
@@ -1660,6 +1757,8 @@ export class SubscriptionsService {
       effective_status: ' ',
       effective_uid: null,
       effective_started_at: null,
+      effective_alert_type: 'air_raid',
+      effective_alert_level: 'red',
     };
   }
 
