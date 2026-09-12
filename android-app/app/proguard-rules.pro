@@ -1,6 +1,5 @@
-# Правила ProGuard/R8 для Тривога UA
-# Цель: не допустить удаления/обфускации классов, которые используются рефлексией,
-# системными сервисами, JavaScript-интерфейсом WebView и Compose Runtime.
+# R8 ProGuard rules — Тривога UA
+# Минимально необходимые правила: R8 сам обрабатывает всё остальное.
 
 # --- Аннотации и метаданные ---
 -keepattributes *Annotation*
@@ -10,18 +9,10 @@
 -keepattributes RuntimeVisibleAnnotations
 -keepattributes KotlinMetadata
 
-# --- Собственные классы приложения ---
-# Сохраняем все классы в пакете com.alertsua.app, чтобы R8 не обфусцировал/удалил
-# DTO, репозитории, UI-состояния и методы, используемые через рефлексию.
--keep class com.alertsua.app.** { *; }
--keepclassmembers class com.alertsua.app.** { *; }
-
-# --- Компоненты Android ---
--keep class * extends android.app.Activity
--keep class * extends android.app.Application
--keep class * extends android.app.Service
--keep class * extends android.content.BroadcastReceiver
--keep class * extends android.content.ContentProvider
+# --- Manifest-компоненты ---
+-keep class com.alertsua.app.AlertApplication
+-keep class com.alertsua.app.MainActivity
+-keep class com.alertsua.app.notifications.AlertFirebaseService
 
 # --- Parcelable / Serializable ---
 -keep class * implements android.os.Parcelable { *; }
@@ -32,8 +23,7 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# --- Compose ---
-# Сохраняем аннотированные @Composable функции и связанные с ними состояния.
+# --- Compose Runtime ---
 -keepclassmembers class * {
     @androidx.compose.runtime.Composable <methods>;
 }
@@ -41,25 +31,11 @@
     @androidx.compose.runtime.ReadOnlyComposable <methods>;
 }
 
-# --- Kotlin Coroutines ---
--keepclassmembers class kotlinx.coroutines.** { *; }
--keepclassmembers class kotlin.coroutines.** { *; }
--dontwarn kotlinx.coroutines.**
+# --- MapLibre Native (JNI / native методы) ---
+-keep class org.maplibre.** { *; }
+-dontwarn org.maplibre.**
 
-# --- Firebase и Play Services ---
-# Библиотеки уже содержат consumer ProGuard rules, но добавляем явно на всякий случай.
--keep class com.google.firebase.** { *; }
--keepclassmembers class com.google.firebase.** { *; }
--keep class com.google.android.gms.** { *; }
--keepclassmembers class com.google.android.gms.** { *; }
-
-# --- AndroidX ---
--keep class androidx.core.** { *; }
--keep class androidx.fragment.** { *; }
--keep class androidx.lifecycle.** { *; }
--keep class androidx.webkit.** { *; }
-
-# --- Логирование: вырезаем android.util.Log из release ---
+# --- Логирование: вырезаем из release ---
 -assumenosideeffects class android.util.Log {
     public static *** v(...);
     public static *** d(...);

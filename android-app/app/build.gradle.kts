@@ -32,18 +32,13 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40
+        versionCode = 41
         versionName = "0.8.1"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // GeoJSON-геометрия (~2.3MB) читается целиком на холодном старте —
-    // не сжимаем в APK, чтобы чтение шло через mmap без inflate.
-    aaptOptions {
-        noCompress += listOf("geojson", "json")
-    }
 
     signingConfigs {
         if (hasReleaseSigning) {

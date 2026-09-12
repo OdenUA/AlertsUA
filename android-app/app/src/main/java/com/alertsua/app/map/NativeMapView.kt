@@ -144,7 +144,7 @@ fun NativeMapView(
                     val ukraineBounds = LatLngBounds.from(52.4, 40.2, 44.3, 22.1)
                     map.moveCamera(CameraUpdateFactory.newLatLngBounds(ukraineBounds, 24))
                     map.setMinZoomPreference(3.0)
-                    map.setMaxZoomPreference(9.0)
+                    map.setMaxZoomPreference(11.0)
                     map.setLatLngBoundsForCameraTarget(ukraineBounds)
 
                     configureUiSettings(map, viewContext, mapTopInsetDp)
