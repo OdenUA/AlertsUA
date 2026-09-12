@@ -106,6 +106,7 @@ class ThreatLayersManager(
         // Окно видимости (renderThreatOverlays / buildThreatLifetimeMarkup)
         private const val UAV_VISIBLE_MS = 45 * 60 * 1000L
         private const val DEFAULT_VISIBLE_MS = 30 * 60 * 1000L
+        private const val BALLISTIC_VISIBLE_MS = 20 * 60 * 1000L
 
         // Порт THREAT_DIRECTION_* из constants.js
         private const val DIRECTION_MIN_DISTANCE_METERS = 10_000.0
@@ -131,6 +132,8 @@ class ThreatLayersManager(
 
         // Максимальная широта Web-Mercator (как в Leaflet SphericalMercator)
         private const val MAX_MERCATOR_LAT = 85.05112878
+
+        private val CRITICAL_THREAT_KINDS = setOf("ballistic", "tactical_aviation")
     }
 
     var apiBaseUrl: String = ""
@@ -333,7 +336,11 @@ class ThreatLayersManager(
         val totalMs = if (expiresAtMs > occurredAtMs) {
             expiresAtMs - occurredAtMs
         } else {
-            if (threatKind == "uav") UAV_VISIBLE_MS else DEFAULT_VISIBLE_MS
+            when (threatKind) {
+                "uav", "tactical_aviation" -> UAV_VISIBLE_MS
+                "ballistic" -> BALLISTIC_VISIBLE_MS
+                else -> DEFAULT_VISIBLE_MS
+            }
         }
         return ThreatInfo(
             overlayId = overlayId,
@@ -473,7 +480,11 @@ class ThreatLayersManager(
     private fun isVisibleByTime(o: ThreatOverlay, now: Long): Boolean {
         if (o.occurredAtMs <= 0) return false
         if (o.expiresAtMs > 0 && now < o.expiresAtMs) return true
-        val maxVisibleMs = if (o.threatKind == "uav") UAV_VISIBLE_MS else DEFAULT_VISIBLE_MS
+        val maxVisibleMs = when (o.threatKind) {
+            "uav", "tactical_aviation" -> UAV_VISIBLE_MS
+            "ballistic" -> BALLISTIC_VISIBLE_MS
+            else -> DEFAULT_VISIBLE_MS
+        }
         return now < o.occurredAtMs + maxVisibleMs
     }
 
@@ -542,6 +553,7 @@ class ThreatLayersManager(
 
         layersInstalled = true
         MapPerf.log("ThreatLayers", "threat layers installed (visible=${data.visible.size})")
+        notifyCriticalThreats(data.visible)
     }
 
     private fun renderFromCache() {
@@ -558,6 +570,21 @@ class ThreatLayersManager(
             ?.setGeoJson(FeatureCollection.fromFeatures(data.arrowFeatures))
         style.getSourceAs<GeoJsonSource>(SOURCE_ICONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(data.iconFeatures))
+        notifyCriticalThreats(data.visible)
+    }
+
+    private var lastCriticalThreatIds: Set<String> = emptySet()
+
+    private fun notifyCriticalThreats(visible: List<ThreatOverlay>) {
+        val critical = visible
+            .filter { it.effectiveKind in CRITICAL_THREAT_KINDS && it.hasPopup }
+            .sortedByDescending { it.occurredAtMs }
+        val currentIds = critical.map { it.overlayId }.toSet()
+        if (currentIds == lastCriticalThreatIds) return
+        lastCriticalThreatIds = currentIds
+        mapController.onCriticalThreatsChanged(
+            critical.map { it.toThreatInfo() }
+        )
     }
 
     // Толщина линии направления: getThreatDirectionStyle →
@@ -704,6 +731,8 @@ class ThreatLayersManager(
 
     private fun iconVariantKey(kind: String): String = when (kind) {
         "uav", "kab", "missile" -> kind
+        "ballistic" -> "missile"
+        "tactical_aviation" -> "unknown"
         else -> "unknown"
     }
 

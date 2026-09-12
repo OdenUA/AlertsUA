@@ -30,6 +30,7 @@ class MapController {
     var onLocateButtonTapped: () -> Unit = {}
     var onToast: (String) -> Unit = {}
     var onThreatTapped: (List<ThreatInfo>) -> Unit = {}
+    var onCriticalThreatsChanged: (List<ThreatInfo>) -> Unit = {}
 
     internal var alertLayersManager: AlertLayersManager? = null
     internal var threatLayersManager: ThreatLayersManager? = null

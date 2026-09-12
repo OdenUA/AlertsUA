@@ -12,7 +12,7 @@ type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical'
 
 type ParseCandidate = {
   action: 'new' | 'update' | 'clear';
-  threat_kind: 'uav' | 'kab' | 'missile' | 'unknown';
+  threat_kind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown';
   confidence: number;
   region_hint: string | null;
   origin_hint: string | null;
@@ -185,6 +185,13 @@ TERMINOLOGY (monitoring channel slang):
 - "дорозвідка" = reconnaissance UAV activity → threat_kind "uav"
 - "мгКР" / "КР" / "крилаті ракети" / "крилата ракета" = cruise missile(s) → threat_kind "missile"
 - "Увага по крилатим ракетам" = cruise missile warning for the named place → threat_kind "missile"
+- "балістична ракета" / "балістика" / "загроза балістичного удару" / "пуски балістики" = ballistic missile → threat_kind "ballistic"
+- "Іскандер" / "Кинджал" / "Циркон" / "KN-23" = specific ballistic missile types → threat_kind "ballistic"
+- "тактична авіація" / "активність тактичної авіації" = tactical aviation activity → threat_kind "tactical_aviation"
+- "МіГ-31К" / "МіГ-31" / "зліт МіГ" = MiG-31K interceptor takeoff (often carries Kinzhal) → threat_kind "tactical_aviation"
+- "Ту-22М3" / "Ту-95" / "Ту-160" / "зліт стратегічної авіації" = strategic bomber activity → threat_kind "tactical_aviation"
+- "Су-34" / "Су-25" / "Су-35" / "зліт винищувача" = fighter jet takeoff → threat_kind "tactical_aviation"
+- "ракета-носій" / "авіаційна ракета" when the launch platform is an aircraft → threat_kind "tactical_aviation"
 - Emoji "🅿️" marks a threat position/update, "🔄" marks maneuvering — treat them as formatting, not content
 - "Уважно до відбою" / "дорозвідка до відбою" = the threat remains active until all-clear — it is NOT a cancellation
 - "зараз чисто" / "чисто" = all-clear → action "clear"
@@ -266,7 +273,7 @@ SOURCE EXCERPT (per-threat quote):
 - Do not translate, rephrase or summarize — quote the original text
 
 Return strict JSON only with this schema:
-{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
+{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|ballistic|tactical_aviation|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
 No markdown, no comments, no extra keys.`;
 
   return `${promptText}\n\nText: ${messageText}`;
@@ -294,11 +301,14 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
     .digest('hex');
 }
 
-export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'unknown', hasTarget: boolean) {
-  // Threat visibility windows: UAVs are slow-moving and stay on the map
-  // longer; missiles/KABs are short-lived.
-  if (threatKind === 'uav') {
+export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown', hasTarget: boolean) {
+  // Threat visibility windows: UAVs and tactical aviation are slow-moving and
+  // stay on the map longer; missiles/KABs are short-lived; ballistic is very fast.
+  if (threatKind === 'uav' || threatKind === 'tactical_aviation') {
     return 45;
+  }
+  if (threatKind === 'ballistic') {
+    return 20;
   }
   return 30; // kab, missile, unknown
 }
@@ -1423,6 +1433,13 @@ export class GeminiThreatParserService {
 
   private normalizeThreatKind(value: string | null | undefined): ParseCandidate['threat_kind'] {
     const normalized = (value ?? '').toLowerCase();
+    if (normalized.includes('ballistic') || normalized.includes('балістичн')) {
+      return 'ballistic';
+    }
+    if (normalized.includes('tactical_aviation') || normalized.includes('tactical aviation') ||
+        (normalized.includes('тактичн') && normalized.includes('авіац'))) {
+      return 'tactical_aviation';
+    }
     if (normalized.includes('uav') || normalized.includes('drone') || normalized.includes('бпла')) {
       return 'uav';
     }
@@ -1577,6 +1594,8 @@ export class GeminiThreatParserService {
       case 'kab':
         return 'artillery_shelling';
       case 'missile':
+      case 'ballistic':
+      case 'tactical_aviation':
       case 'uav':
       case 'unknown':
       default:
@@ -1591,7 +1610,10 @@ export class GeminiThreatParserService {
       case 'kab':
         return 'bomb';
       case 'missile':
+      case 'ballistic':
         return 'missile';
+      case 'tactical_aviation':
+        return 'aviation';
       default:
         return 'warning';
     }
@@ -1604,7 +1626,10 @@ export class GeminiThreatParserService {
       case 'kab':
         return '#ef4444';
       case 'missile':
+      case 'ballistic':
         return '#dc2626';
+      case 'tactical_aviation':
+        return '#ef4444';
       default:
         return '#6b7280';
     }
@@ -1612,6 +1637,10 @@ export class GeminiThreatParserService {
 
   private toPriority(threatKind: ParseCandidate['threat_kind']) {
     switch (threatKind) {
+      case 'ballistic':
+        return 5;
+      case 'tactical_aviation':
+        return 8;
       case 'missile':
         return 10;
       case 'kab':

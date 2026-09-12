@@ -24,6 +24,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.EaseInOut
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
@@ -77,7 +83,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -162,6 +170,9 @@ fun AlertMapScreen(
 
     // ── Threat popup state ──────────────────────────────────────────────────
     var selectedThreat by remember { mutableStateOf<List<ThreatInfo>?>(null) }
+
+    // ── Critical threat indicator state (ballistic / tactical aviation) ────
+    var criticalThreats by remember { mutableStateOf<List<ThreatInfo>>(emptyList()) }
 
     // ── Subscription pin list (persisted) ────────────────────────────────────
     val subscriptionPins = remember {
@@ -592,12 +603,18 @@ fun AlertMapScreen(
             selectedThreat = threats
         }
 
+        // Критические угрозы (баллистика / тактическая авіація)
+        mapController.onCriticalThreatsChanged = { threats ->
+            criticalThreats = threats
+        }
+
         onDispose {
             mapController.onPointSelected = { _, _ -> }
             mapController.onSubscriptionMarkerTapped = { _ -> }
             mapController.onLocateButtonTapped = {}
             mapController.onToast = {}
             mapController.onThreatTapped = {}
+            mapController.onCriticalThreatsChanged = {}
         }
     }
 
@@ -633,6 +650,14 @@ fun AlertMapScreen(
             darkMode = darkMode,
             mapTopInsetDp = mapTopInsetDp,
         )
+
+        // Пульсирующая иконка критической угрозы (баллистика / тактическая авіація)
+        if (criticalThreats.isNotEmpty()) {
+            CriticalThreatIndicator(
+                modifier = Modifier.align(Alignment.TopStart),
+                onTap = { selectedThreat = criticalThreats },
+            )
+        }
 
         MapControlsOverlay(
             darkMode = darkMode,
@@ -759,6 +784,76 @@ private fun MapControlButton(
         contentAlignment = Alignment.Center,
     ) {
         content()
+    }
+}
+
+// ─── Pulsating critical threat indicator ─────────────────────────────────────
+
+@Composable
+private fun CriticalThreatIndicator(
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "critical-pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 0.88f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulse-scale",
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.65f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulse-alpha",
+    )
+
+    Box(
+        modifier = modifier
+            .padding(start = 12.dp, top = 56.dp)
+            .size(52.dp)
+            .clickable(onClick = onTap),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .size(46.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    this.alpha = alpha
+                },
+        ) {
+            val w = size.width
+            val h = size.height
+            val triangle = Path().apply {
+                moveTo(w / 2f, h * 0.06f)
+                lineTo(w * 0.94f, h * 0.92f)
+                lineTo(w * 0.06f, h * 0.92f)
+                close()
+            }
+            drawPath(triangle, color = Color(0xFFD7263D))
+            drawPath(triangle, color = Color.White, style = Stroke(width = 2.dp.toPx()))
+        }
+        Text(
+            text = "!",
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier
+                .padding(bottom = 2.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    this.alpha = alpha
+                },
+        )
     }
 }
 
