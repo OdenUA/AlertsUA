@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -160,7 +161,7 @@ fun AlertMapScreen(
     var retrySubscribeAfterPermissionGrant by remember { mutableStateOf(false) }
 
     // ── Threat popup state ──────────────────────────────────────────────────
-    var selectedThreat by remember { mutableStateOf<ThreatInfo?>(null) }
+    var selectedThreat by remember { mutableStateOf<List<ThreatInfo>?>(null) }
 
     // ── Subscription pin list (persisted) ────────────────────────────────────
     val subscriptionPins = remember {
@@ -587,8 +588,8 @@ fun AlertMapScreen(
         }
 
         // Тап по иконке угрозы → Compose-попап (вместо Leaflet popup)
-        mapController.onThreatTapped = { threat ->
-            selectedThreat = threat
+        mapController.onThreatTapped = { threats ->
+            selectedThreat = threats
         }
 
         onDispose {
@@ -616,9 +617,9 @@ fun AlertMapScreen(
     // AlertDialog рендерится в отдельном окне поверх карты: пока он открыт,
     // тапы не достаются MapView и onPointSelected не вызывается
     // (аналог isThreatPopupOpen/suppressNextClick из Leaflet-версии).
-    selectedThreat?.let { threat ->
+    selectedThreat?.let { threats ->
         ThreatPopupDialog(
-            threat = threat,
+            threats = threats,
             onDismiss = { selectedThreat = null },
         )
     }
@@ -1484,14 +1485,16 @@ private fun LocationSubscriptionDialog(
 
 @Composable
 private fun ThreatPopupDialog(
-    threat: ThreatInfo,
+    threats: List<ThreatInfo>,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    // Первый элемент — самый свежий (hitTest сортирует по occurredAtMs desc)
+    val primary = threats.first()
     // Аватар канала: @kpszsu — векторный порт THREAT_LAYER_TELEGRAM_ICON_MARKUP,
     // @UkraineAlarmSignal — PNG из assets (как в THREAT_CHANNEL_CONFIG).
-    val uaAlarmSignalAvatar = remember(threat.channelRef) {
-        if (threat.channelRef == ThreatLayersManager.CHANNEL_UA_ALARM_SIGNAL) {
+    val uaAlarmSignalAvatar = remember(primary.channelRef) {
+        if (primary.channelRef == ThreatLayersManager.CHANNEL_UA_ALARM_SIGNAL) {
             runCatching { decodeSampledAsset(context, "map/icons/ua-alarm-signal.png", 40) }.getOrNull()
         } else {
             null
@@ -1531,7 +1534,7 @@ private fun ThreatPopupDialog(
                 }
                 Column {
                     Text(
-                        text = threat.sender,
+                        text = primary.sender,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1546,41 +1549,53 @@ private fun ThreatPopupDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (threat.messageText.isNotBlank()) {
-                    Text(
-                        text = threat.messageText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                // Footer: жизненный цикл слева, источник + время справа
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    val elapsedMs = (System.currentTimeMillis() - threat.occurredAtMs).coerceAtLeast(0L)
-                    val fraction = if (threat.totalLifetimeMs > 0) {
-                        (elapsedMs.toFloat() / threat.totalLifetimeMs).coerceIn(0f, 1f)
-                    } else {
-                        1f
+                threats.forEachIndexed { index, threat ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
                     }
-                    ThreatLifetimeIcon(fraction = fraction)
-                    Text(
-                        text = formatThreatLifetimeText(elapsedMs),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    val timeLabel = formatThreatPopupTime(threat.messageTimeMs)
-                    Text(
-                        text = if (timeLabel.isNotEmpty()) "Telegram · $timeLabel" else "Telegram",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // Текст сообщения
+                    if (threat.messageText.isNotBlank()) {
+                        Text(
+                            text = threat.messageText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    // Footer: жизненный цикл слева, источник + время справа
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val elapsedMs = (System.currentTimeMillis() - threat.occurredAtMs).coerceAtLeast(0L)
+                        val fraction = if (threat.totalLifetimeMs > 0) {
+                            (elapsedMs.toFloat() / threat.totalLifetimeMs).coerceIn(0f, 1f)
+                        } else {
+                            1f
+                        }
+                        ThreatLifetimeIcon(fraction = fraction)
+                        Text(
+                            text = formatThreatLifetimeText(elapsedMs),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        val timeLabel = formatThreatPopupTime(threat.messageTimeMs)
+                        Text(
+                            text = if (timeLabel.isNotEmpty()) "Telegram · $timeLabel" else "Telegram",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         },

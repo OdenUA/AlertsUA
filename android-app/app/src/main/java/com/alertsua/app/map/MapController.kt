@@ -29,7 +29,7 @@ class MapController {
     var onSubscriptionMarkerTapped: (String) -> Unit = {}
     var onLocateButtonTapped: () -> Unit = {}
     var onToast: (String) -> Unit = {}
-    var onThreatTapped: (ThreatInfo) -> Unit = {}
+    var onThreatTapped: (List<ThreatInfo>) -> Unit = {}
 
     internal var alertLayersManager: AlertLayersManager? = null
     internal var threatLayersManager: ThreatLayersManager? = null
@@ -163,9 +163,9 @@ class MapController {
         val map = this.map ?: return false
 
         // Тап по угрозе — приоритет над пинами подписок и выбором точки
-        val threat = threatLayersManager?.hitTest(latLng)
-        if (threat != null) {
-            onThreatTapped(threat)
+        val threats = threatLayersManager?.hitTest(latLng)
+        if (!threats.isNullOrEmpty()) {
+            onThreatTapped(threats)
             return true
         }
 

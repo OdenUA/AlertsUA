@@ -122,6 +122,11 @@ class ThreatLayersManager(
         private const val TAP_TOLERANCE_DP = 20f
         private const val THREAT_ICON_SIZE_DP = 28f
 
+        // Кластеризация иконок: если расстояние между маркерами меньше
+        // CLUSTER_MIN_SEP_FACTOR * размерИконки — объединяем в одну иконку.
+        // 0.3 = только иконки, которые визуально накладываются друг на друга
+        private const val CLUSTER_MIN_SEP_FACTOR = 0.3f
+
         private val COLOR_DIRECTION = Color.parseColor("#4285f4")
 
         // Максимальная широта Web-Mercator (как в Leaflet SphericalMercator)
@@ -151,6 +156,8 @@ class ThreatLayersManager(
     private var overlays: List<ThreatOverlay> = emptyList()
     private var visibleOverlays: List<ThreatOverlay> = emptyList()
     private var activeChannel: String? = CHANNEL_DEFAULT
+    // Кластер: representative overlayId → список оверлеев в кластере
+    private var clusterMap: Map<String, List<ThreatOverlay>> = emptyMap()
 
     private data class ThreatOverlay(
         val overlayId: String,
@@ -268,25 +275,37 @@ class ThreatLayersManager(
         val style = this.style ?: return
         if (!layersInstalled) return
         if (style.getSource(SOURCE_DIRECTIONS) == null) return
+
+        // Пересчитываем кластеры при новом зуме (minSepPx зависит от iconScale)
+        val clusters = computeClusters(visibleOverlays)
+        clusterMap = clusters.associateBy({ it.first().overlayId }, { it })
+
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
+        val iconFeatures = ArrayList<Feature>()
+        clusters.forEach { cluster ->
+            buildClusterIconFeature(cluster)?.let(iconFeatures::add)
+        }
         visibleOverlays.forEach { buildDirection(it, directionFeatures, arrowFeatures) }
+
         style.getSourceAs<GeoJsonSource>(SOURCE_DIRECTIONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(directionFeatures))
         style.getSourceAs<GeoJsonSource>(SOURCE_ARROWS)
             ?.setGeoJson(FeatureCollection.fromFeatures(arrowFeatures))
-        Log.d("ThreatLayers", "camera idle: directions rebuilt at zoom=${currentZoom()} " +
-            "(dirs=${directionFeatures.size}, arrows=${arrowFeatures.size})")
+        style.getSourceAs<GeoJsonSource>(SOURCE_ICONS)
+            ?.setGeoJson(FeatureCollection.fromFeatures(iconFeatures))
+        Log.d("ThreatLayers", "camera idle: rebuilt at zoom=${currentZoom()} " +
+            "(clusters=${clusters.size}, dirs=${directionFeatures.size}, arrows=${arrowFeatures.size})")
     }
 
     // ── Hit test (тап по угрозе) ─────────────────────────────────────────────
 
-    /** Возвращает ThreatInfo при попадании в иконку угрозы, иначе null. */
-    fun hitTest(latLng: LatLng): ThreatInfo? {
-        val map = this.map ?: return null
-        val style = this.style ?: return null
-        if (activeChannel == null) return null
-        if (style.getLayer(LAYER_ICONS) == null) return null
+    /** Возвращает список ThreatInfo при попадании в иконку угрозы (кластер), иначе пустой список. */
+    fun hitTest(latLng: LatLng): List<ThreatInfo> {
+        val map = this.map ?: return emptyList()
+        val style = this.style ?: return emptyList()
+        if (activeChannel == null) return emptyList()
+        if (style.getLayer(LAYER_ICONS) == null) return emptyList()
 
         val density = appContext.resources.displayMetrics.density
         val screen = map.projection.toScreenLocation(latLng)
@@ -294,10 +313,18 @@ class ThreatLayersManager(
         val rect = RectF(screen.x - r, screen.y - r, screen.x + r, screen.y + r)
         val hits = map.queryRenderedFeatures(rect, LAYER_ICONS)
         // Интерактивны только угрозы с попапом (как hitMarker в JS)
-        val hit = hits.firstOrNull { it.getBooleanProperty("has_popup") } ?: return null
-        val overlayId = hit.getStringProperty("overlay_id") ?: return null
-        val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId } ?: return null
-        return overlay.toThreatInfo()
+        val hit = hits.firstOrNull { it.getBooleanProperty("has_popup") } ?: return emptyList()
+        val overlayId = hit.getStringProperty("overlay_id") ?: return emptyList()
+        // Ищем кластер по representative overlayId
+        val cluster = clusterMap[overlayId]
+        if (cluster != null) {
+            return cluster
+                .sortedByDescending { it.occurredAtMs }
+                .map { it.toThreatInfo() }
+        }
+        // Фолбэк: одиночный оверлей
+        val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId } ?: return emptyList()
+        return listOf(overlay.toThreatInfo())
     }
 
     private fun ThreatOverlay.toThreatInfo(): ThreatInfo {
@@ -587,27 +614,92 @@ class ThreatLayersManager(
 
     private fun buildRenderData(now: Long): RenderData {
         val visible = filterVisible(now)
+        val clusters = computeClusters(visible)
+        clusterMap = clusters.associateBy({ it.first().overlayId }, { it })
+
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
         val iconFeatures = ArrayList<Feature>()
 
+        // Одна иконка на кластер (representative = самый свежий)
+        clusters.forEach { cluster ->
+            buildClusterIconFeature(cluster)?.let(iconFeatures::add)
+        }
+
+        // Линии направления — для каждого оверлея (включая все в кластере)
         visible.forEach { o ->
-            buildIconFeature(o)?.let(iconFeatures::add)
             buildDirection(o, directionFeatures, arrowFeatures)
         }
 
         return RenderData(visible, directionFeatures, arrowFeatures, iconFeatures)
     }
 
-    private fun buildIconFeature(o: ThreatOverlay): Feature? {
-        if (!o.hasMarker) return null
-        val props = JsonObject().apply {
-            addProperty("icon", IMAGE_THREAT_PREFIX + iconVariantKey(o.effectiveKind))
-            addProperty("bearing", resolveIconBearing(o) ?: 0.0)
-            addProperty("overlay_id", o.overlayId)
-            addProperty("has_popup", o.hasPopup)
+    /**
+     * Группирует иконки которые визуально накладываются.
+     * Сравнение — с якорем (первой иконкой) кластера, без дрейфа центроида.
+     * Только иконки в пределах minSepPx от якоря попадают в кластер.
+     */
+    private fun computeClusters(overlays: List<ThreatOverlay>): List<List<ThreatOverlay>> {
+        val withMarker = overlays.filter { it.hasMarker }
+        if (withMarker.isEmpty()) return emptyList()
+
+        val zoom = currentZoom()
+        val worldSize = 256.0 * 2.0.pow(zoom)
+        val density = appContext.resources.displayMetrics.density
+        val iconScale = when {
+            zoom <= 5.0 -> 0.6f
+            zoom <= 6.0 -> 0.78f
+            else -> 1.0f
         }
-        return Feature.fromGeometry(Point.fromLngLat(o.markerLng, o.markerLat), props)
+        val minSepPx = (THREAT_ICON_SIZE_DP * density * iconScale * CLUSTER_MIN_SEP_FACTOR).toDouble()
+
+        data class Cluster(
+            val members: MutableList<ThreatOverlay>,
+            val anchorPx: Double,
+            val anchorPy: Double,
+        )
+        val clusters = mutableListOf<Cluster>()
+
+        for (o in withMarker) {
+            val p = projectToPx(o.markerLat, o.markerLng, worldSize)
+            val px = p[0]
+            val py = p[1]
+
+            // Ищем ближайший якорь в пределах minSepPx
+            var best: Cluster? = null
+            var bestDist = Double.MAX_VALUE
+            for (c in clusters) {
+                val dist = hypot(px - c.anchorPx, py - c.anchorPy)
+                if (dist < minSepPx && dist < bestDist) {
+                    bestDist = dist
+                    best = c
+                }
+            }
+
+            if (best != null) {
+                best.members.add(o)
+            } else {
+                clusters.add(Cluster(mutableListOf(o), px, py))
+            }
+        }
+
+        return clusters.map { c ->
+            c.members.sortByDescending { it.occurredAtMs }
+            c.members
+        }
+    }
+
+    /** Одна иконка на кластер: representative = самый свежий оверлей */
+    private fun buildClusterIconFeature(cluster: List<ThreatOverlay>): Feature? {
+        val rep = cluster.first()
+        if (!rep.hasMarker) return null
+        val props = JsonObject().apply {
+            addProperty("icon", IMAGE_THREAT_PREFIX + iconVariantKey(rep.effectiveKind))
+            addProperty("bearing", resolveIconBearing(rep) ?: 0.0)
+            addProperty("overlay_id", rep.overlayId)
+            addProperty("has_popup", cluster.any { it.hasPopup })
+        }
+        return Feature.fromGeometry(Point.fromLngLat(rep.markerLng, rep.markerLat), props)
     }
 
     private fun iconVariantKey(kind: String): String = when (kind) {
