@@ -27,7 +27,6 @@ import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Help
 import androidx.compose.material.icons.outlined.LightMode
-import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,7 +67,6 @@ import com.alertsua.app.R
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.admob.AdMobBanner as AdMobComposableBanner
 import com.alertsua.app.map.AlertMapScreen
-import com.alertsua.app.map.simplified.SimplifiedMapScreen
 import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.faq.FaqBottomSheet
 import com.alertsua.app.ui.rateprompt.RatePromptCard
@@ -114,7 +112,6 @@ fun AlertsUaApp(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var activeThreatChannel by rememberSaveable { mutableStateOf<String?>(THREAT_CHANNEL_KPSZSU) }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
-    var useSimplifiedMap by rememberSaveable { mutableStateOf(repository.loadSimplifiedMapEnabled()) }
     var showFaqDialog by remember { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -134,14 +131,6 @@ fun AlertsUaApp(
             val nextValue = !darkMode
             darkMode = nextValue
             repository.saveDarkModeEnabled(nextValue)
-        }
-    }
-
-    val toggleSimplifiedMap: () -> Unit = remember(repository) {
-        {
-            val nextValue = !useSimplifiedMap
-            useSimplifiedMap = nextValue
-            repository.saveSimplifiedMapEnabled(nextValue)
         }
     }
 
@@ -213,64 +202,55 @@ fun AlertsUaApp(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             // All buttons centered horizontally
-                            if (!useSimplifiedMap) {
-                                IconButton(onClick = {
-                                    activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
-                                }) {
-                                    Icon(
-                                        painter = painterResource(
-                                            id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                                R.drawable.ic_threat_layers_telegram_active
-                                            } else {
-                                                R.drawable.ic_threat_layers_telegram_inactive
-                                            },
-                                        ),
-                                        contentDescription = stringResource(
-                                            id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                                R.string.threat_layers_hide_telegram
-                                            } else {
-                                                R.string.threat_layers_show_telegram
-                                            },
-                                        ),
-                                        tint = Color.Unspecified,
-                                    )
-                                }
-                                val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
-                                IconButton(onClick = {
-                                    activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
-                                }) {
-                                    Image(
-                                        painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
-                                        contentDescription = stringResource(
-                                            id = if (uaAlarmSignalActive) {
-                                                R.string.threat_layers_hide_ua_alarm_signal
-                                            } else {
-                                                R.string.threat_layers_show_ua_alarm_signal
-                                            },
-                                        ),
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
-                                        colorFilter = if (uaAlarmSignalActive) {
-                                            null
+                            IconButton(onClick = {
+                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
+                            }) {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                            R.drawable.ic_threat_layers_telegram_active
                                         } else {
-                                            ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                            R.drawable.ic_threat_layers_telegram_inactive
                                         },
-                                    )
-                                }
+                                    ),
+                                    contentDescription = stringResource(
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                            R.string.threat_layers_hide_telegram
+                                        } else {
+                                            R.string.threat_layers_show_telegram
+                                        },
+                                    ),
+                                    tint = Color.Unspecified,
+                                )
+                            }
+                            val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
+                            IconButton(onClick = {
+                                activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
+                            }) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
+                                    contentDescription = stringResource(
+                                        id = if (uaAlarmSignalActive) {
+                                            R.string.threat_layers_hide_ua_alarm_signal
+                                        } else {
+                                            R.string.threat_layers_show_ua_alarm_signal
+                                        },
+                                    ),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
+                                    colorFilter = if (uaAlarmSignalActive) {
+                                        null
+                                    } else {
+                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                    },
+                                )
                             }
 
                             IconButton(onClick = { refreshTrigger++ }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Refresh,
                                     contentDescription = "Manual Refresh"
-                                )
-                            }
-
-                            IconButton(onClick = toggleSimplifiedMap) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Map,
-                                    contentDescription = if (useSimplifiedMap) "Стандартна карта" else "Спрощена карта",
                                 )
                             }
 
@@ -335,31 +315,23 @@ fun AlertsUaApp(
                         else -> Modifier
                     }
 
-                    if (useSimplifiedMap) {
-                        SimplifiedMapScreen(
-                            modifier = modifierWithPadding.fillMaxSize(),
-                            darkMode = darkMode,
-                            refreshTrigger = refreshTrigger,
-                        )
-                    } else {
-                        // Насколько рекламный баннер перекрывает верх карты:
-                        // баннер занимает 8..58dp от верха; у карты отступ сверху
-                        // 50dp в портрете и 8dp в ландшафте; в fullscreen баннера нет.
-                        val mapTopInsetDp = when {
-                            isFullscreen -> 0
-                            isLandscape -> 50
-                            else -> 8
-                        }
-                        AlertMapScreen(
-                            modifier = modifierWithPadding.fillMaxSize(),
-                            darkMode = darkMode,
-                            refreshTrigger = refreshTrigger,
-                            activeThreatChannel = activeThreatChannel,
-                            locationPermissionGranted = locationPermissionGranted,
-                            requestLocationPermission = requestLocationPermission,
-                            mapTopInsetDp = mapTopInsetDp,
-                        )
+                    // Насколько рекламный баннер перекрывает верх карты:
+                    // баннер занимает 8..58dp от верха; у карты отступ сверху
+                    // 50dp в портрете и 8dp в ландшафте; в fullscreen баннера нет.
+                    val mapTopInsetDp = when {
+                        isFullscreen -> 0
+                        isLandscape -> 50
+                        else -> 8
                     }
+                    AlertMapScreen(
+                        modifier = modifierWithPadding.fillMaxSize(),
+                        darkMode = darkMode,
+                        refreshTrigger = refreshTrigger,
+                        activeThreatChannel = activeThreatChannel,
+                        locationPermissionGranted = locationPermissionGranted,
+                        requestLocationPermission = requestLocationPermission,
+                        mapTopInsetDp = mapTopInsetDp,
+                    )
                 }
 
                 // AdMob Banner - поверх карты (не зависит от обновления карты)
@@ -393,51 +365,49 @@ fun AlertsUaApp(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         // Top: Telegram threats
-                        if (!useSimplifiedMap) {
-                            IconButton(onClick = {
-                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
-                            }) {
-                                Icon(
-                                    painter = painterResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                            R.drawable.ic_threat_layers_telegram_active
-                                        } else {
-                                            R.drawable.ic_threat_layers_telegram_inactive
-                                        },
-                                    ),
-                                    contentDescription = stringResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                            R.string.threat_layers_hide_telegram
-                                        } else {
-                                            R.string.threat_layers_show_telegram
-                                        },
-                                    ),
-                                    tint = Color.Unspecified,
-                                )
-                            }
-                            val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
-                            IconButton(onClick = {
-                                activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
-                            }) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
-                                    contentDescription = stringResource(
-                                        id = if (uaAlarmSignalActive) {
-                                            R.string.threat_layers_hide_ua_alarm_signal
-                                        } else {
-                                            R.string.threat_layers_show_ua_alarm_signal
-                                        },
-                                    ),
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
-                                    colorFilter = if (uaAlarmSignalActive) {
-                                        null
+                        IconButton(onClick = {
+                            activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
+                        }) {
+                            Icon(
+                                painter = painterResource(
+                                    id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        R.drawable.ic_threat_layers_telegram_active
                                     } else {
-                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                        R.drawable.ic_threat_layers_telegram_inactive
                                     },
-                                )
-                            }
+                                ),
+                                contentDescription = stringResource(
+                                    id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        R.string.threat_layers_hide_telegram
+                                    } else {
+                                        R.string.threat_layers_show_telegram
+                                    },
+                                ),
+                                tint = Color.Unspecified,
+                            )
+                        }
+                        val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
+                        IconButton(onClick = {
+                            activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
+                        }) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
+                                contentDescription = stringResource(
+                                    id = if (uaAlarmSignalActive) {
+                                        R.string.threat_layers_hide_ua_alarm_signal
+                                    } else {
+                                        R.string.threat_layers_show_ua_alarm_signal
+                                    },
+                                ),
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
+                                colorFilter = if (uaAlarmSignalActive) {
+                                    null
+                                } else {
+                                    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                },
+                            )
                         }
 
                         // Middle: Refresh button
@@ -448,13 +418,6 @@ fun AlertsUaApp(
                             )
                         }
 
-                        // Bottom: Simplified mode, Theme
-                        IconButton(onClick = toggleSimplifiedMap) {
-                            Icon(
-                                imageVector = Icons.Outlined.Map,
-                                contentDescription = if (useSimplifiedMap) "Стандартна карта" else "Спрощена карта",
-                            )
-                        }
                         IconButton(onClick = toggleDarkMode) {
                             Icon(
                                 imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,

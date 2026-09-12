@@ -17,7 +17,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.maplibre.android.camera.CameraUpdateFactory
-import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
@@ -141,10 +140,11 @@ fun NativeMapView(
                     layersManager.onMapReady(map)
                     threatLayersManager.onMapReady(map)
 
-                    map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(49.0, 31.0), 5.0))
-                    map.setMinZoomPreference(5.0)
+                    val ukraineBounds = LatLngBounds.from(52.4, 40.2, 44.3, 22.1)
+                    map.moveCamera(CameraUpdateFactory.newLatLngBounds(ukraineBounds, 24))
+                    map.setMinZoomPreference(3.0)
                     map.setMaxZoomPreference(9.0)
-                    map.setLatLngBoundsForCameraTarget(LatLngBounds.from(52.4, 40.2, 44.3, 22.1))
+                    map.setLatLngBoundsForCameraTarget(ukraineBounds)
 
                     configureUiSettings(map, viewContext, mapTopInsetDp)
                     state.appliedTopInsetDp = mapTopInsetDp

@@ -24,7 +24,6 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -91,13 +90,10 @@ class ThreatLayersManager(
             CHANNEL_UA_ALARM_SIGNAL to "єТривога",
         )
 
-        private const val LAYER_AREA_FILL = "threat-area-fill"
-        private const val LAYER_AREA_LINE = "threat-area-line"
         private const val LAYER_DIRECTION_LINE = "threat-direction-line"
         private const val LAYER_DIRECTION_ARROW = "threat-direction-arrow"
         private const val LAYER_ICONS = "threat-icons"
 
-        private const val SOURCE_AREAS = "src-threat-areas"
         private const val SOURCE_DIRECTIONS = "src-threat-directions"
         private const val SOURCE_ARROWS = "src-threat-arrows"
         private const val SOURCE_ICONS = "src-threat-icons"
@@ -127,7 +123,6 @@ class ThreatLayersManager(
         private const val THREAT_ICON_SIZE_DP = 28f
 
         private val COLOR_DIRECTION = Color.parseColor("#4285f4")
-        private const val COLOR_AREA_FALLBACK = "#d7263d"
 
         // Максимальная широта Web-Mercator (как в Leaflet SphericalMercator)
         private const val MAX_MERCATOR_LAT = 85.05112878
@@ -161,7 +156,6 @@ class ThreatLayersManager(
         val overlayId: String,
         val threatKind: String,
         val iconType: String,
-        val colorHex: String,
         val occurredAtMs: Long,
         val expiresAtMs: Long,
         val messageText: String?,
@@ -172,7 +166,6 @@ class ThreatLayersManager(
         val markerLat: Double,
         val markerLng: Double,
         val corridor: List<Point>?,
-        val areaJson: String?,
     ) {
         val hasMarker: Boolean get() = !markerLat.isNaN() && !markerLng.isNaN()
 
@@ -386,7 +379,6 @@ class ThreatLayersManager(
                 overlayId = o.optString("overlay_id"),
                 threatKind = o.optString("threat_kind"),
                 iconType = o.optString("icon_type"),
-                colorHex = o.optString("color_hex").takeIf { it.isNotBlank() } ?: COLOR_AREA_FALLBACK,
                 occurredAtMs = parseBackendTimeMs(o.optString("occurred_at")),
                 expiresAtMs = parseBackendTimeMs(o.optString("expires_at")),
                 messageText = o.optString("message_text").takeIf { it.isNotBlank() },
@@ -397,7 +389,6 @@ class ThreatLayersManager(
                 markerLat = marker?.first ?: Double.NaN,
                 markerLng = marker?.second ?: Double.NaN,
                 corridor = parseCorridor(o.optJSONObject("corridor")),
-                areaJson = o.optJSONObject("area")?.toString(),
             )
         }
         return result
@@ -480,9 +471,9 @@ class ThreatLayersManager(
     }
 
     private fun removeLayers(style: Style) {
-        listOf(LAYER_AREA_FILL, LAYER_AREA_LINE, LAYER_DIRECTION_LINE, LAYER_DIRECTION_ARROW, LAYER_ICONS)
+        listOf(LAYER_DIRECTION_LINE, LAYER_DIRECTION_ARROW, LAYER_ICONS)
             .forEach { if (style.getLayer(it) != null) style.removeLayer(it) }
-        listOf(SOURCE_AREAS, SOURCE_DIRECTIONS, SOURCE_ARROWS, SOURCE_ICONS)
+        listOf(SOURCE_DIRECTIONS, SOURCE_ARROWS, SOURCE_ICONS)
             .forEach { if (style.getSource(it) != null) style.removeSource(it) }
     }
 
@@ -494,17 +485,6 @@ class ThreatLayersManager(
 
         val data = buildRenderData(System.currentTimeMillis())
         visibleOverlays = data.visible
-
-        style.addSource(GeoJsonSource(SOURCE_AREAS, FeatureCollection.fromFeatures(data.areaFeatures)))
-        style.addLayer(FillLayer(LAYER_AREA_FILL, SOURCE_AREAS).withProperties(
-            PropertyFactory.fillColor(Expression.toColor(Expression.get("color"))),
-            PropertyFactory.fillOpacity(0.16f),
-        ))
-        style.addLayer(LineLayer(LAYER_AREA_LINE, SOURCE_AREAS).withProperties(
-            PropertyFactory.lineColor(Expression.toColor(Expression.get("color"))),
-            PropertyFactory.lineWidth(1.4f),
-            PropertyFactory.lineOpacity(0.7f),
-        ))
 
         style.addSource(GeoJsonSource(SOURCE_DIRECTIONS, FeatureCollection.fromFeatures(data.directionFeatures)))
         style.addLayer(LineLayer(LAYER_DIRECTION_LINE, SOURCE_DIRECTIONS).withProperties(
@@ -545,8 +525,6 @@ class ThreatLayersManager(
         }
         val data = buildRenderData(System.currentTimeMillis())
         visibleOverlays = data.visible
-        style.getSourceAs<GeoJsonSource>(SOURCE_AREAS)
-            ?.setGeoJson(FeatureCollection.fromFeatures(data.areaFeatures))
         style.getSourceAs<GeoJsonSource>(SOURCE_DIRECTIONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(data.directionFeatures))
         style.getSourceAs<GeoJsonSource>(SOURCE_ARROWS)
@@ -602,7 +580,6 @@ class ThreatLayersManager(
 
     private class RenderData(
         val visible: List<ThreatOverlay>,
-        val areaFeatures: List<Feature>,
         val directionFeatures: List<Feature>,
         val arrowFeatures: List<Feature>,
         val iconFeatures: List<Feature>,
@@ -610,28 +587,16 @@ class ThreatLayersManager(
 
     private fun buildRenderData(now: Long): RenderData {
         val visible = filterVisible(now)
-        val areaFeatures = ArrayList<Feature>()
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
         val iconFeatures = ArrayList<Feature>()
 
         visible.forEach { o ->
-            o.areaJson?.let { area ->
-                runCatching {
-                    Feature.fromJson(
-                        JSONObject()
-                            .put("type", "Feature")
-                            .put("properties", JSONObject().put("color", o.colorHex))
-                            .put("geometry", JSONObject(area))
-                            .toString()
-                    )
-                }.getOrNull()?.let(areaFeatures::add)
-            }
             buildIconFeature(o)?.let(iconFeatures::add)
             buildDirection(o, directionFeatures, arrowFeatures)
         }
 
-        return RenderData(visible, areaFeatures, directionFeatures, arrowFeatures, iconFeatures)
+        return RenderData(visible, directionFeatures, arrowFeatures, iconFeatures)
     }
 
     private fun buildIconFeature(o: ThreatOverlay): Feature? {
