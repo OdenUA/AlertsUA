@@ -22,6 +22,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 
@@ -153,6 +154,7 @@ fun NativeMapView(
                         MapPerf.log("NativeMap", "style loaded: ${styleUri(darkMode)}")
                         state.appliedDarkMode = darkMode
                         localizeLabelsToUkrainian(style)
+                        hideHeavyBaseLayers(style)
                         layersManager.onStyleLoaded(style)
                         threatLayersManager.onStyleLoaded(style)
                         mapController.onStyleLoaded(style)
@@ -173,6 +175,7 @@ fun NativeMapView(
                 map.setStyle(Style.Builder().fromUri(styleUri(darkMode))) { style ->
                     MapPerf.log("NativeMap", "style reloaded: ${styleUri(darkMode)}")
                     localizeLabelsToUkrainian(style)
+                    hideHeavyBaseLayers(style)
                     layersManager.onStyleLoaded(style)
                     threatLayersManager.onStyleLoaded(style)
                     mapController.onStyleLoaded(style)
@@ -225,6 +228,33 @@ private fun expressionReadsNameField(node: Any?): Boolean = when (node) {
         node.any { expressionReadsNameField(it) }
     }
     else -> false
+}
+
+/**
+ * Скрываем тяжёлые слои подложки (здания, landuse, hillshade) для ускорения
+ * рендеринга. В OpenMapTiles/OpenFreeMap liberty все они рисуются поверх
+ * дорог, поэтому после скрытия карта остаётся читаемой: дороги, границы,
+ * водоймы и подписи — на месте.
+ */
+private val HEAVY_LAYER_IDS = setOf(
+    "building", "building-3d",
+    "landuse_residential", "landuse_pitch", "landuse_track",
+    "landuse_cemetery", "landuse_hospital", "landuse_school",
+    "landcover_wood", "landcover_grass", "landcover_ice",
+    "landcover_wetland", "landcover_sand",
+    "park", "park_outline",
+)
+
+private fun hideHeavyBaseLayers(style: Style) {
+    var hidden = 0
+    for (layer in style.layers) {
+        val id = layer.id
+        if (id in HEAVY_LAYER_IDS || id.contains("hillshade", ignoreCase = true)) {
+            layer.setProperties(PropertyFactory.visibility(Property.NONE))
+            hidden++
+        }
+    }
+    MapPerf.log("NativeMap", "hidden heavy base layers: $hidden")
 }
 
 private fun localizeLabelsToUkrainian(style: Style) {
