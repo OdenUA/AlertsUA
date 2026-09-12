@@ -240,9 +240,7 @@ class AlertLayersManager(
         }
         val bundleDeferred = scope.async(Dispatchers.IO) {
             if (!awaitApiBase()) return@async null
-            runCatching { fetchBundle() }
-                .onFailure { Log.w("AlertLayers", "Status bundle fetch failed: ${it.message}") }
-                .getOrNull()
+            fetchBundleWithRetry()
         }
 
         geometryDeferred.await()
@@ -254,6 +252,25 @@ class AlertLayersManager(
             applyStatusBundle(stateVersion, lookup, notifyOnChange = false)
         }
         installLayersIfReady()
+    }
+
+    private suspend fun fetchBundleWithRetry(
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 1_000,
+    ): Pair<Long, Map<String, StatusInfo>>? {
+        var delayMs = initialDelayMs
+        repeat(maxAttempts) { attempt ->
+            runCatching { fetchBundle() }
+                .onSuccess { return it }
+                .onFailure {
+                    Log.w("AlertLayers", "Bundle fetch attempt ${attempt + 1}/$maxAttempts failed: ${it.message}")
+                    if (attempt < maxAttempts - 1) {
+                        delay(delayMs)
+                        delayMs = (delayMs * 2).coerceAtMost(8_000)
+                    }
+                }
+        }
+        return null
     }
 
     // apiBaseUrl приходит из SideEffect чуть позже конструктора — ждём его
