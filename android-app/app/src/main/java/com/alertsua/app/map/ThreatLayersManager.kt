@@ -125,7 +125,7 @@ class ThreatLayersManager(
         // Кластеризация иконок: если расстояние между маркерами меньше
         // CLUSTER_MIN_SEP_FACTOR * размерИконки — объединяем в одну иконку.
         // 0.3 = только иконки, которые визуально накладываются друг на друга
-        private const val CLUSTER_MIN_SEP_FACTOR = 0.3f
+        private const val CLUSTER_MIN_SEP_FACTOR = 0.1f
 
         private val COLOR_DIRECTION = Color.parseColor("#4285f4")
 
