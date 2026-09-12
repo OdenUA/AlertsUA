@@ -16,6 +16,14 @@
     <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION"
         tools:node="merge"/>
 
+    <!-- Override MapLibre SDK's Vulkan requirement: mark as optional so Google Play
+         doesn't filter out devices without Vulkan. MapLibre may still fail at runtime
+         on such devices — the simplified map serves as fallback. -->
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:required="false"
+        android:version="0x400003" />
+
     <!-- Allow querying email apps for ACTION_SEND intents -->
     <queries>
         <intent>
