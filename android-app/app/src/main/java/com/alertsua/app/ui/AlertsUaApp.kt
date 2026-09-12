@@ -74,7 +74,7 @@ import com.alertsua.app.ui.settings.SettingsScreen
 
 // Telegram-каналы — источники угроз. Одновременно показываются угрозы только одного канала.
 private const val THREAT_CHANNEL_KPSZSU = "@kpszsu"
-private const val THREAT_CHANNEL_UA_ALARM_SIGNAL = "@UkraineAlarmSignal"
+private const val THREAT_CHANNEL_WAR_MONITOR = "@war_monitor"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -223,23 +223,23 @@ fun AlertsUaApp(
                                     tint = Color.Unspecified,
                                 )
                             }
-                            val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
+                            val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
                             IconButton(onClick = {
-                                activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
+                                activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
                             }) {
                                 Image(
-                                    painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
                                     contentDescription = stringResource(
-                                        id = if (uaAlarmSignalActive) {
-                                            R.string.threat_layers_hide_ua_alarm_signal
+                                        id = if (warMonitorActive) {
+                                            R.string.threat_layers_hide_war_monitor
                                         } else {
-                                            R.string.threat_layers_show_ua_alarm_signal
+                                            R.string.threat_layers_show_war_monitor
                                         },
                                     ),
                                     modifier = Modifier
                                         .size(24.dp)
-                                        .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
-                                    colorFilter = if (uaAlarmSignalActive) {
+                                        .alpha(if (warMonitorActive) 1f else 0.45f),
+                                    colorFilter = if (warMonitorActive) {
                                         null
                                     } else {
                                         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
@@ -386,23 +386,23 @@ fun AlertsUaApp(
                                 tint = Color.Unspecified,
                             )
                         }
-                        val uaAlarmSignalActive = activeThreatChannel == THREAT_CHANNEL_UA_ALARM_SIGNAL
+                        val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
                         IconButton(onClick = {
-                            activeThreatChannel = if (uaAlarmSignalActive) null else THREAT_CHANNEL_UA_ALARM_SIGNAL
+                            activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
                         }) {
                             Image(
-                                painter = painterResource(id = R.drawable.ic_threat_layers_ua_alarm_signal),
+                                painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
                                 contentDescription = stringResource(
-                                    id = if (uaAlarmSignalActive) {
-                                        R.string.threat_layers_hide_ua_alarm_signal
+                                    id = if (warMonitorActive) {
+                                        R.string.threat_layers_hide_war_monitor
                                     } else {
-                                        R.string.threat_layers_show_ua_alarm_signal
+                                        R.string.threat_layers_show_war_monitor
                                     },
                                 ),
                                 modifier = Modifier
                                     .size(24.dp)
-                                    .alpha(if (uaAlarmSignalActive) 1f else 0.45f),
-                                colorFilter = if (uaAlarmSignalActive) {
+                                    .alpha(if (warMonitorActive) 1f else 0.45f),
+                                colorFilter = if (warMonitorActive) {
                                     null
                                 } else {
                                     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })

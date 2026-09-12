@@ -1492,10 +1492,10 @@ private fun ThreatPopupDialog(
     // Первый элемент — самый свежий (hitTest сортирует по occurredAtMs desc)
     val primary = threats.first()
     // Аватар канала: @kpszsu — векторный порт THREAT_LAYER_TELEGRAM_ICON_MARKUP,
-    // @UkraineAlarmSignal — PNG из assets (как в THREAT_CHANNEL_CONFIG).
-    val uaAlarmSignalAvatar = remember(primary.channelRef) {
-        if (primary.channelRef == ThreatLayersManager.CHANNEL_UA_ALARM_SIGNAL) {
-            runCatching { decodeSampledAsset(context, "map/icons/ua-alarm-signal.png", 40) }.getOrNull()
+    // @war_monitor — PNG из assets (как в THREAT_CHANNEL_CONFIG).
+    val warMonitorAvatar = remember(primary.channelRef) {
+        if (primary.channelRef == ThreatLayersManager.CHANNEL_WAR_MONITOR) {
+            runCatching { decodeSampledAsset(context, "map/icons/war-monitor.png", 40) }.getOrNull()
         } else {
             null
         }
@@ -1517,9 +1517,9 @@ private fun ThreatPopupDialog(
                 val avatarModifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(8.dp))
-                if (uaAlarmSignalAvatar != null) {
+                if (warMonitorAvatar != null) {
                     Image(
-                        bitmap = uaAlarmSignalAvatar.asImageBitmap(),
+                        bitmap = warMonitorAvatar.asImageBitmap(),
                         contentDescription = null,
                         modifier = avatarModifier,
                         contentScale = ContentScale.Fit,
