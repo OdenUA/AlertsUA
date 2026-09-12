@@ -347,10 +347,16 @@ export class MapService {
     if (!activeUidsData) {
       this.logger.debug('Active UIDs cache miss, querying DB directly (fallback)');
       const dbResult = await this.databaseService.query<{ uid: number; alert_type: string; alert_level: string }>(
-        `SELECT arc.uid, arc.alert_type, arc.alert_level FROM air_raid_state_current arc
-         JOIN region_catalog rc ON rc.uid = arc.uid
-         WHERE arc.status IN ('A', 'P')
-           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+        `SELECT rc.uid,
+                COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
+                COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level
+         FROM region_catalog rc
+         LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+         LEFT JOIN air_raid_state_current arc_parent
+           ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
+         WHERE rc.is_active = TRUE
+           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')
+           AND (arc.status IN ('A', 'P') OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL))`,
       );
       const details: Record<number, { alert_type: string; alert_level: string }> = {};
       for (const row of dbResult.rows) {

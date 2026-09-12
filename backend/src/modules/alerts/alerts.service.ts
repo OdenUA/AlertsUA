@@ -867,6 +867,26 @@ export class AlertsService {
         : 'yellow';
     }
 
+    // Inherit status from parent oblast: if the oblast is active ('A'), upgrade
+    // all child cities/hromadas to 'A' as well.  Without this, cities like
+    // м. Київ whose UID is absent from the IoT status string (or marked 'P')
+    // stay inactive even when the surrounding oblast is fully active — breaking
+    // both the map overlay and the bottom-sheet status display.
+    for (const row of nextRows) {
+      if (ACTIVE_STATUSES.has(row.status) || !row.oblast_uid) continue;
+      const oblast = rowsByUid.get(row.oblast_uid);
+      if (oblast && oblast.status === 'A') {
+        row.status = 'A';
+        if (!row.alert_type || row.alert_type === 'air_raid') {
+          row.alert_type = oblast.alert_type;
+        }
+        if (!row.hasOwnAttributes) {
+          row.alert_level = oblast.alert_level;
+          row.levelInherited = true;
+        }
+      }
+    }
+
     for (const row of nextRows) {
       const previousState = previousStates.get(row.uid);
       if (
@@ -1168,18 +1188,23 @@ export class AlertsService {
         INSERT INTO alert_layer_features (uid, region_type, alert_type, alert_level, geometry_json)
         SELECT rc.uid,
                rc.region_type,
-               arc.alert_type,
-               arc.alert_level,
+               COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
+               COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level,
                ST_AsGeoJSON(
                  COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.01))
                ) AS geometry_json
-        FROM air_raid_state_current arc
-        JOIN region_catalog rc ON rc.uid = arc.uid
+        FROM region_catalog rc
         JOIN region_geometry rg ON rg.uid = rc.uid
         LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
-        WHERE arc.status = 'A'
+        LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+        LEFT JOIN air_raid_state_current arc_parent
+          ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
+        WHERE (
+            arc.status = 'A'
+            OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL)
+          )
           AND (
-            -- Include cities with direct alerts (but not oblasts, their children are included)
+            -- Include cities with direct or inherited alerts (but not oblasts)
             rc.region_type = 'city'
             OR
             -- Include subscription_leaf regions (hromadas, some raions)
@@ -1208,11 +1233,18 @@ export class AlertsService {
 
     // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
     // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+    // Cities inherit active status from their parent oblast (e.g. м. Київ from Київська область).
     const activeUidsResult = await client.query<{ uid: number; alert_type: string; alert_level: string }>(
-      `SELECT arc.uid, arc.alert_type, arc.alert_level FROM air_raid_state_current arc
-       JOIN region_catalog rc ON rc.uid = arc.uid
-       WHERE arc.status IN ('A', 'P')
-         AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')`,
+      `SELECT rc.uid,
+              COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
+              COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level
+       FROM region_catalog rc
+       LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+       LEFT JOIN air_raid_state_current arc_parent
+         ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
+       WHERE rc.is_active = TRUE
+         AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')
+         AND (arc.status IN ('A', 'P') OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL))`,
     );
     const activeUids = activeUidsResult.rows.map((r) => r.uid);
     const details: Record<number, { alert_type: string; alert_level: string }> = {};

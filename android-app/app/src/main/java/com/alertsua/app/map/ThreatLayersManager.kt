@@ -83,12 +83,12 @@ class ThreatLayersManager(
 ) {
     companion object {
         const val CHANNEL_DEFAULT = "@kpszsu"
-        const val CHANNEL_WAR_MONITOR = "@war_monitor"
+        const val CHANNEL_UA_ALARM_SIGNAL = "@UkraineAlarmSignal"
 
         // Порт THREAT_CHANNEL_CONFIG из constants.js (sender per channel)
         val CHANNEL_SENDERS = mapOf(
             CHANNEL_DEFAULT to "Повітряні Сили ЗС України",
-            CHANNEL_WAR_MONITOR to "War Monitor",
+            CHANNEL_UA_ALARM_SIGNAL to "єТривога",
         )
 
         private const val LAYER_AREA_FILL = "threat-area-fill"

@@ -1540,7 +1540,8 @@ export class SubscriptionsService {
             t.level,
             t.uid,
             COUNT(leaf.uid)::int AS total_leaf_count,
-            COUNT(*) FILTER (WHERE leaf_state.status = 'A')::int AS active_leaf_count
+            COUNT(*) FILTER (WHERE leaf_state.status = 'A')::int AS active_leaf_count,
+            MAX(CASE WHEN direct.status = 'A' THEN 1 ELSE 0 END)::int AS direct_active
           FROM targets t
           JOIN region_catalog leaf ON leaf.is_active = TRUE
             AND leaf.is_subscription_leaf = TRUE
@@ -1550,12 +1551,14 @@ export class SubscriptionsService {
               (t.level = 'oblast' AND leaf.oblast_uid = t.uid)
             )
           LEFT JOIN air_raid_state_current leaf_state ON leaf_state.uid = leaf.uid
+          LEFT JOIN air_raid_state_current direct ON direct.uid = t.uid
           GROUP BY t.level, t.uid
         )
         SELECT
           level,
           uid,
           CASE
+            WHEN direct_active = 1 THEN 'A'
             WHEN total_leaf_count = 0 THEN ' '
             WHEN active_leaf_count = 0 THEN 'N'
             WHEN active_leaf_count = total_leaf_count THEN 'A'

@@ -20,21 +20,28 @@ async function rebuildAlertLayer() {
     await client.query('DELETE FROM alert_layer_features');
     console.log('✓ Cleared existing data');
 
-    // Insert all regions with active alerts (excluding oblasts - their children are included)
+    // Insert all regions with active alerts (excluding oblasts - their children are included).
+    // Cities inherit active status from their parent oblast (e.g. м. Київ from Київська область).
     const result = await client.query(
       `
-        INSERT INTO alert_layer_features (uid, region_type, alert_type, geometry_json)
+        INSERT INTO alert_layer_features (uid, region_type, alert_type, alert_level, geometry_json)
         SELECT rc.uid,
                rc.region_type,
-               COALESCE(arc.alert_type, 'air_raid') as alert_type,
+               COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
+               COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level,
                ST_AsGeoJSON(
                  COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.01))
                ) AS geometry_json
-        FROM air_raid_state_current arc
-        JOIN region_catalog rc ON rc.uid = arc.uid
+        FROM region_catalog rc
         JOIN region_geometry rg ON rg.uid = rc.uid
         LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
-        WHERE arc.status = 'A'
+        LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+        LEFT JOIN air_raid_state_current arc_parent
+          ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
+        WHERE (
+            arc.status = 'A'
+            OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL)
+          )
           AND (
             rc.region_type = 'city'
             OR

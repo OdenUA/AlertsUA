@@ -69,7 +69,7 @@ fun FaqBottomSheet(
         FAQItem(
             question = "Що означають кнопки у додатку?",
             answer = "![tg.png](tg.png) - Показує шар загроз з телеграм-каналу «Повітряні сили ЗСУ».\n" +
-                    "![radar.png](radar.png) - Показує шар загроз з телеграм-каналу War Monitor.\n" +
+                    "![radar.png](radar.png) - Показує шар загроз з телеграм-каналу єТривога.\n" +
                     "Одночасно відображаються загрози лише з одного каналу: натискання на іншу кнопку перемикає джерело, а повторне натискання на активну кнопку приховує шар загроз.\n" +
                     "Якщо з'явиться інформація про переміщення БпЛА чи ракет у цих телеграм-каналах, на мапі автоматично з'явиться іконка загрози та приблизний напрямок руху.\n" +
                     "Натиснувши на іконку загрози, можна побачити повідомлення з телеграм-каналу-джерела щодо цієї загрози \n" +
@@ -322,14 +322,14 @@ private fun FAQItemView(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Icon(
-                                        painter = painterResource(R.drawable.ic_threat_layers_war_monitor),
-                                        contentDescription = "Загрози з каналу War Monitor",
+                                        painter = painterResource(R.drawable.ic_threat_layers_ua_alarm_signal),
+                                        contentDescription = "Загрози з каналу єТривога",
                                         modifier = Modifier.size(24.dp),
                                         tint = Color.Unspecified // отключаем tint для PNG
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
-                                        text = "• Загрози з каналу War Monitor",
+                                        text = "• Загрози з каналу єТривога",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         lineHeight = 26.sp

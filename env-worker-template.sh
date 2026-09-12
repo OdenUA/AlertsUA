@@ -14,8 +14,8 @@ TELEGRAM_SESSION_STRING="INSERT_TELEGRAM_SESSION_STRING"
 
 # Telegram Channels to Monitor
 # Format: comma-separated channel usernames or IDs
-# Example: @kpszsu,@war_monitor,@channel2
-TELEGRAM_CHANNEL_REFS=@kpszsu,@war_monitor
+# Example: @kpszsu,@UkraineAlarmSignal,@channel2
+TELEGRAM_CHANNEL_REFS=@kpszsu,@UkraineAlarmSignal
 
 # LLM Configuration
 # Chain: deepseek-v4-flash -> gemini-3.5-flash-lite -> gemini-2.5-flash
