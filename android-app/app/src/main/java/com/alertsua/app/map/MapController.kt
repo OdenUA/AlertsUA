@@ -124,9 +124,10 @@ class MapController {
         pushPinSource()
     }
 
-    /** Forces a refresh of the alert overlays on the map. */
+    /** Forces a refresh of alert overlays and threat layers on the map. */
     fun refreshAlerts() {
         alertLayersManager?.refreshStatusesNow()
+        threatLayersManager?.refreshNow()
     }
 
     /**

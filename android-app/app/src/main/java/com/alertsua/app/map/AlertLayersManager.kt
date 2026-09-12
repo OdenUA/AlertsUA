@@ -203,9 +203,31 @@ class AlertLayersManager(
         pollJob = null
     }
 
-    /** Немедленное обновление статусов (MapController.refreshAlerts). */
+    /** Немедленное обновление статусов (MapController.refreshAlerts) с фидбеком. */
     fun refreshStatusesNow() {
-        scope.launch { fetchAndApplyStatuses(notifyOnChange = true) }
+        scope.launch {
+            if (apiBaseUrl.isEmpty()) {
+                mapController.onToast("Сервер недоступний")
+                return@launch
+            }
+            val bundle = withContext(Dispatchers.IO) {
+                runCatching { fetchBundle() }
+                    .onFailure { Log.w("AlertLayers", "Manual refresh fetch failed: ${it.message}") }
+                    .getOrNull()
+            }
+            if (bundle == null) {
+                mapController.onToast("Помилка оновлення")
+                return@launch
+            }
+            lastFetchAtMs = SystemClock.elapsedRealtime()
+            val (stateVersion, lookup) = bundle
+            if (stateVersion == appliedStateVersion) {
+                mapController.onToast("Дані вже актуальні")
+                return@launch
+            }
+            applyStatusBundle(stateVersion, lookup, notifyOnChange = false)
+            mapController.onToast("Статуси тривог оновлено")
+        }
     }
 
     // ── Loading ──────────────────────────────────────────────────────────────
