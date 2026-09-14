@@ -143,7 +143,7 @@ fun NativeMapView(
 
                     val ukraineBounds = LatLngBounds.from(52.4, 40.2, 44.3, 22.1)
                     map.moveCamera(CameraUpdateFactory.newLatLngBounds(ukraineBounds, 24))
-                    map.setMinZoomPreference(3.0)
+                    map.setMinZoomPreference(4.0)
                     map.setMaxZoomPreference(11.0)
                     map.setLatLngBoundsForCameraTarget(ukraineBounds)
 
@@ -243,6 +243,9 @@ private val HEAVY_LAYER_IDS = setOf(
     "landcover_wood", "landcover_grass", "landcover_ice",
     "landcover_wetland", "landcover_sand",
     "park", "park_outline",
+    // Стандартные подписи областей и стран (оба стиля — liberty и dark)
+    "label_country_1", "label_country_2", "label_country_3", "label_state",
+    "place_country_major", "place_country_minor", "place_country_other", "place_state",
 )
 
 private fun hideHeavyBaseLayers(style: Style) {

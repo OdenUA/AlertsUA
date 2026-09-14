@@ -79,6 +79,8 @@ class AlertLayersManager(
         private const val SOURCE_HROMADA = "src-hromada"
         private const val SOURCE_OCCUPIED = "src-occupied"
         private const val SOURCE_ALERT_ICONS = "src-alert-icons"
+        private const val SOURCE_OBLAST_LABELS = "src-oblast-labels"
+        private const val LAYER_OBLAST_LABELS = "oblast-city-labels"
 
         private const val IMAGE_OCCUPIED_HATCH = "occupied-hatch"
         private const val IMAGE_ICON_PREFIX = "alert-icon-"
@@ -94,6 +96,36 @@ class AlertLayersManager(
         private val COLOR_OCCUPIED = Color.parseColor("#dc2626")
 
         private val DEFAULT_STATUS = StatusInfo(" ", "air_raid", "red")
+
+        // uid → короткое название области (без слова «область») для подписей на карте
+        private val OBLAST_CITY_NAMES: Map<String, String> = mapOf(
+            "3" to "Хмельницька",
+            "4" to "Вінницька",
+            "5" to "Рівненська",
+            "8" to "Волинська",
+            "9" to "Дніпропетровська",
+            "10" to "Житомирська",
+            "11" to "Закарпатська",
+            "12" to "Запорізька",
+            "13" to "Івано-Франківська",
+            "14" to "Київська",
+            "15" to "Кіровоградська",
+            "16" to "Луганська",
+            "17" to "Миколаївська",
+            "18" to "Одеська",
+            "19" to "Полтавська",
+            "20" to "Сумська",
+            "21" to "Тернопільська",
+            "22" to "Харківська",
+            "23" to "Херсонська",
+            "24" to "Черкаська",
+            "25" to "Чернігівська",
+            "26" to "Чернівецька",
+            "27" to "Львівська",
+            "28" to "Донецька",
+            "29" to "АР Крим",
+            // "31" (м. Київ) не включаем — уже отображается в стандартном городском слое
+        )
     }
 
     var apiBaseUrl: String = ""
@@ -647,6 +679,32 @@ class AlertLayersManager(
             PropertyFactory.iconIgnorePlacement(true),
         ))
 
+        // Подписи областей — поверх всех слоёв
+        val labelFeatures = buildOblastLabelFeatures()
+        if (labelFeatures.isNotEmpty()) {
+            style.addSource(GeoJsonSource(SOURCE_OBLAST_LABELS,
+                FeatureCollection.fromFeatures(labelFeatures)))
+            style.addLayer(SymbolLayer(LAYER_OBLAST_LABELS, SOURCE_OBLAST_LABELS).withProperties(
+                PropertyFactory.textField(Expression.get("city")),
+                PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+                PropertyFactory.textMaxWidth(8f),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_CENTER),
+                PropertyFactory.textSize(
+                    Expression.interpolate(Expression.linear(), Expression.zoom(),
+                        Expression.literal(3), Expression.literal(8f),
+                        Expression.literal(5), Expression.literal(11f),
+                        Expression.literal(8), Expression.literal(13f),
+                    ),
+                ),
+                PropertyFactory.textColor(if (darkMode) Color.WHITE else Color.parseColor("#1a1a1a")),
+                PropertyFactory.textHaloWidth(0f),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.textIgnorePlacement(true),
+                PropertyFactory.visibility(Property.VISIBLE),
+            ).apply { maxZoom = 7f })
+            Log.d("AlertLayers", "label layer: features=${labelFeatures.size}")
+        }
+
         // Слои угроз и пины подписок должны оставаться поверх базовых —
         // контроллер переустановит их при необходимости (z-order).
         mapController.onBaseLayersReinstalled(style)
@@ -748,6 +806,24 @@ class AlertLayersManager(
         // в спецслой её добавляем отдельно
         kyivCityUid?.let { collect("oblast", onlyUid = it) }
         return result
+    }
+
+    private fun buildOblastLabelFeatures(): List<Feature> {
+        val oblastEntries = layerMeta["oblast"] ?: return emptyList()
+        // Ручные корректировки позиций подписей (lon, lat)
+        val labelOverrides: Map<String, Point> = mapOf(
+            "14" to Point.fromLngLat(30.580444, 49.957971), // Київська область
+        )
+        val features = oblastEntries.mapNotNull { (uid, meta) ->
+            val cityName = OBLAST_CITY_NAMES[uid] ?: return@mapNotNull null
+            val center = labelOverrides[uid] ?: meta.center ?: return@mapNotNull null
+            Feature.fromGeometry(center).apply {
+                addStringProperty("city", cityName)
+            }
+        }
+        Log.d("AlertLayers", "oblast label features: ${features.size}, " +
+            "first props: ${features.firstOrNull()?.properties()}")
+        return features
     }
 
     private fun installAlertTypeIcons(style: Style) {
