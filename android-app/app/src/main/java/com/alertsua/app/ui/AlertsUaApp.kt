@@ -302,10 +302,7 @@ fun AlertsUaApp(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .then(
-                        if (!isFullscreen) Modifier.statusBarsPadding() else Modifier
-                    ),
+                    .padding(innerPadding),
             ) {
                 // AdMob Banner —固定блок над картой
                 if (!isFullscreen) {
