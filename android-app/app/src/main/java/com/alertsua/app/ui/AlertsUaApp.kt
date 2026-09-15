@@ -299,7 +299,7 @@ fun AlertsUaApp(
                 }
             },
         ) { innerPadding ->
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
@@ -307,22 +307,23 @@ fun AlertsUaApp(
                         if (!isFullscreen) Modifier.statusBarsPadding() else Modifier
                     ),
             ) {
-                // Карта с отступами, чтобы не перекрывалась рекламой
-                Box(modifier = Modifier.fillMaxSize()) {
-                    val modifierWithPadding = when {
-                        isLandscape && !isFullscreen -> Modifier.padding(top = 8.dp, end = 56.dp) // 8px сверху под строкой состояния, 56px справа под кнопками
-                        !isLandscape && !isFullscreen -> Modifier.padding(top = 50.dp) // Отступ под высоту баннера
-                        else -> Modifier
+                // AdMob Banner —固定блок над картой
+                if (!isFullscreen) {
+                    AdMobComposableBanner(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+
+                // Карта + оверлейные элементы
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    val modifierWithPadding = if (isLandscape && !isFullscreen) {
+                        Modifier.padding(end = 56.dp)
+                    } else {
+                        Modifier
                     }
 
-                    // Насколько рекламный баннер перекрывает верх карты:
-                    // баннер занимает 8..58dp от верха; у карты отступ сверху
-                    // 50dp в портрете и 8dp в ландшафте; в fullscreen баннера нет.
-                    val mapTopInsetDp = when {
-                        isFullscreen -> 0
-                        isLandscape -> 50
-                        else -> 8
-                    }
                     AlertMapScreen(
                         modifier = modifierWithPadding.fillMaxSize(),
                         darkMode = darkMode,
@@ -330,173 +331,149 @@ fun AlertsUaApp(
                         activeThreatChannel = activeThreatChannel,
                         locationPermissionGranted = locationPermissionGranted,
                         requestLocationPermission = requestLocationPermission,
-                        mapTopInsetDp = mapTopInsetDp,
+                        mapTopInsetDp = 0,
                     )
-                }
 
-                // AdMob Banner - поверх карты (не зависит от обновления карты)
-                if (!isFullscreen) {
-                    if (isLandscape) {
-                        // Альбомная ориентация: слева сверху
-                        AdMobComposableBanner(
+                    if (isLandscape && !isFullscreen) {
+                        Column(
                             modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(top = 8.dp, start = 8.dp)
-                                .height(50.dp)
-                        )
-                    } else {
-                        // Портретная ориентация: поверх карты в отступе
-                        AdMobComposableBanner(
+                                .align(Alignment.TopEnd)
+                                .padding(end = 8.dp, top = 8.dp),
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            IconButton(onClick = {
+                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
+                            }) {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                            R.drawable.ic_threat_layers_telegram_active
+                                        } else {
+                                            R.drawable.ic_threat_layers_telegram_inactive
+                                        },
+                                    ),
+                                    contentDescription = stringResource(
+                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                            R.string.threat_layers_hide_telegram
+                                        } else {
+                                            R.string.threat_layers_show_telegram
+                                        },
+                                    ),
+                                    tint = Color.Unspecified,
+                                )
+                            }
+                            val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
+                            IconButton(onClick = {
+                                activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
+                            }) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
+                                    contentDescription = stringResource(
+                                        id = if (warMonitorActive) {
+                                            R.string.threat_layers_hide_war_monitor
+                                        } else {
+                                            R.string.threat_layers_show_war_monitor
+                                        },
+                                    ),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(if (warMonitorActive) 1f else 0.45f),
+                                    colorFilter = if (warMonitorActive) {
+                                        null
+                                    } else {
+                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                    },
+                                )
+                            }
+
+                            IconButton(onClick = { refreshTrigger++ }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = "Manual Refresh"
+                                )
+                            }
+
+                            IconButton(onClick = toggleDarkMode) {
+                                Icon(
+                                    imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                                    contentDescription = stringResource(
+                                        id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
+                                    ),
+                                )
+                            }
+
+                            IconButton(onClick = { showFaqDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Help,
+                                    contentDescription = "Help / FAQ",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
+                            IconButton(onClick = { showSettingsScreen = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Settings,
+                                    contentDescription = "Налаштування",
+                                )
+                            }
+
+                            IconButton(onClick = { isFullscreen = !isFullscreen }) {
+                                Icon(
+                                    imageVector = if (isFullscreen) {
+                                        Icons.Outlined.FullscreenExit
+                                    } else {
+                                        Icons.Outlined.Fullscreen
+                                    },
+                                    contentDescription = stringResource(
+                                        id = if (isFullscreen) {
+                                            R.string.fullscreen_exit
+                                        } else {
+                                            R.string.fullscreen_enter
+                                        },
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
+                    if (isFullscreen) {
+                        IconButton(
                             modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp, start = 16.dp, end = 16.dp)
-                                .height(50.dp)
+                                .align(Alignment.TopEnd)
+                                .statusBarsPadding()
+                                .padding(end = 8.dp, top = 8.dp),
+                            onClick = { isFullscreen = false },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FullscreenExit,
+                                contentDescription = stringResource(R.string.fullscreen_exit),
+                            )
+                        }
+                    }
+
+                    // Rate Prompt Card - показываем внизу над bottom bar
+                    if (showRatePrompt && !isFullscreen) {
+                        RatePromptCard(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 80.dp)
+                                .navigationBarsPadding(),
+                            onRate = {
+                                ratePromptManager.onRated()
+                                openPlayStore()
+                                showRatePrompt = false
+                            },
+                            onLater = {
+                                ratePromptManager.onLaterClicked()
+                                showRatePrompt = false
+                            },
+                            onNever = {
+                                ratePromptManager.onNeverClicked()
+                                showRatePrompt = false
+                            }
                         )
                     }
-                }
-
-                if (isLandscape && !isFullscreen) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(end = 8.dp, top = 8.dp),
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        // Top: Telegram threats
-                        IconButton(onClick = {
-                            activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
-                        }) {
-                            Icon(
-                                painter = painterResource(
-                                    id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                        R.drawable.ic_threat_layers_telegram_active
-                                    } else {
-                                        R.drawable.ic_threat_layers_telegram_inactive
-                                    },
-                                ),
-                                contentDescription = stringResource(
-                                    id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
-                                        R.string.threat_layers_hide_telegram
-                                    } else {
-                                        R.string.threat_layers_show_telegram
-                                    },
-                                ),
-                                tint = Color.Unspecified,
-                            )
-                        }
-                        val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
-                        IconButton(onClick = {
-                            activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
-                        }) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
-                                contentDescription = stringResource(
-                                    id = if (warMonitorActive) {
-                                        R.string.threat_layers_hide_war_monitor
-                                    } else {
-                                        R.string.threat_layers_show_war_monitor
-                                    },
-                                ),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .alpha(if (warMonitorActive) 1f else 0.45f),
-                                colorFilter = if (warMonitorActive) {
-                                    null
-                                } else {
-                                    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
-                                },
-                            )
-                        }
-
-                        // Middle: Refresh button
-                        IconButton(onClick = { refreshTrigger++ }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Refresh,
-                                contentDescription = "Manual Refresh"
-                            )
-                        }
-
-                        IconButton(onClick = toggleDarkMode) {
-                            Icon(
-                                imageVector = if (darkMode) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-                                contentDescription = stringResource(
-                                    id = if (darkMode) R.string.theme_toggle_light else R.string.theme_toggle_dark,
-                                ),
-                            )
-                        }
-
-                        IconButton(onClick = { showFaqDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Help,
-                                contentDescription = "Help / FAQ",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-
-                        IconButton(onClick = { showSettingsScreen = true }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Settings,
-                                contentDescription = "Налаштування",
-                            )
-                        }
-
-                        IconButton(onClick = { isFullscreen = !isFullscreen }) {
-                            Icon(
-                                imageVector = if (isFullscreen) {
-                                    Icons.Outlined.FullscreenExit
-                                } else {
-                                    Icons.Outlined.Fullscreen
-                                },
-                                contentDescription = stringResource(
-                                    id = if (isFullscreen) {
-                                        R.string.fullscreen_exit
-                                    } else {
-                                        R.string.fullscreen_enter
-                                    },
-                                ),
-                            )
-                        }
-                    }
-                }
-
-                if (isFullscreen) {
-                    IconButton(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(end = 8.dp, top = 8.dp),
-                        onClick = { isFullscreen = false },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.FullscreenExit,
-                            contentDescription = stringResource(R.string.fullscreen_exit),
-                        )
-                    }
-                }
-
-                // Rate Prompt Card - показываем внизу над bottom bar
-                if (showRatePrompt && !isFullscreen) {
-                    RatePromptCard(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 80.dp)
-                            .navigationBarsPadding(),
-                        onRate = {
-                            ratePromptManager.onRated()
-                            openPlayStore()
-                            showRatePrompt = false
-                        },
-                        onLater = {
-                            ratePromptManager.onLaterClicked()
-                            showRatePrompt = false
-                        },
-                        onNever = {
-                            ratePromptManager.onNeverClicked()
-                            showRatePrompt = false
-                        }
-                    )
                 }
             }
         }

@@ -927,11 +927,27 @@ class ThreatLayersManager(
 
     private fun loadScaledIcon(path: String, sizeDp: Float): Bitmap? {
         val density = appContext.resources.displayMetrics.density
-        val raw = runCatching {
-            appContext.assets.open(path).use { BitmapFactory.decodeStream(it) }
-        }.getOrNull() ?: return null
         val target = (sizeDp * density).roundToInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(raw, target, target, true)
+        val raw = runCatching {
+            appContext.assets.open(path).use { stream ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(stream, null, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= target &&
+                    bounds.outHeight / (sample * 2) >= target
+                ) {
+                    sample *= 2
+                }
+                appContext.assets.open(path).use { s2 ->
+                    BitmapFactory.decodeStream(s2, null, BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                    })
+                }
+            }
+        }.getOrNull() ?: return null
+        val scaled = Bitmap.createScaledBitmap(raw, target, target, true)
+        if (scaled !== raw) raw.recycle()
+        return scaled
     }
 
     // Треугольник-стрелка (в JS — L.polygon в конце дуги): остриё вверх (bearing 0),

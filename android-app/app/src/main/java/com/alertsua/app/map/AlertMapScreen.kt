@@ -817,9 +817,7 @@ private fun CriticalThreatIndicator(
 
     val context = LocalContext.current
     val bitmap = remember {
-        context.assets.open("map/icons/exclamation.png").use {
-            BitmapFactory.decodeStream(it).asImageBitmap()
-        }
+        decodeSampledAsset(context, "map/icons/exclamation.png", 46)?.asImageBitmap()
     }
 
     Box(
@@ -829,17 +827,19 @@ private fun CriticalThreatIndicator(
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = "Critical threat",
-            modifier = Modifier
-                .size(46.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    this.alpha = alpha
-                },
-        )
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Critical threat",
+                modifier = Modifier
+                    .size(46.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        this.alpha = alpha
+                    },
+            )
+        }
     }
 }
 
