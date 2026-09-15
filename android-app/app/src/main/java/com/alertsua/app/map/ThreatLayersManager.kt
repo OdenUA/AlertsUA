@@ -495,6 +495,11 @@ class ThreatLayersManager(
         }
     }
 
+    /** Overlays visible by time across ALL channels (for critical threat indicator). */
+    private fun filterVisibleAllChannels(now: Long): List<ThreatOverlay> {
+        return overlays.filter { isVisibleByTime(it, now) }
+    }
+
     // ── Layer installation ───────────────────────────────────────────────────
 
     /**
@@ -553,7 +558,7 @@ class ThreatLayersManager(
 
         layersInstalled = true
         MapPerf.log("ThreatLayers", "threat layers installed (visible=${data.visible.size})")
-        notifyCriticalThreats(data.visible)
+        notifyCriticalThreats(filterVisibleAllChannels(System.currentTimeMillis()))
     }
 
     private fun renderFromCache() {
@@ -562,7 +567,8 @@ class ThreatLayersManager(
             installLayers()
             return
         }
-        val data = buildRenderData(System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        val data = buildRenderData(now)
         visibleOverlays = data.visible
         style.getSourceAs<GeoJsonSource>(SOURCE_DIRECTIONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(data.directionFeatures))
@@ -570,7 +576,7 @@ class ThreatLayersManager(
             ?.setGeoJson(FeatureCollection.fromFeatures(data.arrowFeatures))
         style.getSourceAs<GeoJsonSource>(SOURCE_ICONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(data.iconFeatures))
-        notifyCriticalThreats(data.visible)
+        notifyCriticalThreats(filterVisibleAllChannels(now))
     }
 
     private var lastCriticalThreatIds: Set<String> = emptySet()

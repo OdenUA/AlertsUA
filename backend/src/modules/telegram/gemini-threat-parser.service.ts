@@ -191,7 +191,9 @@ TERMINOLOGY (monitoring channel slang):
 - "МіГ-31К" / "МіГ-31" / "зліт МіГ" = MiG-31K interceptor takeoff (often carries Kinzhal) → threat_kind "tactical_aviation"
 - "Ту-22М3" / "Ту-95" / "Ту-160" / "зліт стратегічної авіації" = strategic bomber activity → threat_kind "tactical_aviation"
 - "Су-34" / "Су-25" / "Су-35" / "зліт винищувача" = fighter jet takeoff → threat_kind "tactical_aviation"
+- "ракетна небезпека" / "ракетна загроза" when paired with aircraft mention (МіГ-31К, Ту-22М3, etc.) → threat_kind "tactical_aviation" (NOT "missile")
 - "ракета-носій" / "авіаційна ракета" when the launch platform is an aircraft → threat_kind "tactical_aviation"
+- CRITICAL PRIORITY RULE: If the message mentions an aircraft takeoff ("зліт МіГ-31К", "зліт Ту-22М3", "зліт Су-34", etc.), classify as "tactical_aviation" EVEN IF the message also contains "ракетна", "Кинджал", "ракета", or other missile keywords. The aircraft is the threat carrier, not the missile itself. Only classify as "missile" when cruise missiles are explicitly reported in flight (e.g., "КР у повітрі", "крилата ракета на маршруті") WITHOUT an aircraft takeoff context.
 - Emoji "🅿️" marks a threat position/update, "🔄" marks maneuvering — treat them as formatting, not content
 - "Уважно до відбою" / "дорозвідка до відбою" = the threat remains active until all-clear — it is NOT a cancellation
 - "зараз чисто" / "чисто" = all-clear → action "clear"

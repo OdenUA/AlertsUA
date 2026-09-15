@@ -92,6 +92,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -814,6 +815,13 @@ private fun CriticalThreatIndicator(
         label = "pulse-alpha",
     )
 
+    val context = LocalContext.current
+    val bitmap = remember {
+        context.assets.open("map/icons/exclamation.png").use {
+            BitmapFactory.decodeStream(it).asImageBitmap()
+        }
+    }
+
     Box(
         modifier = modifier
             .padding(start = 12.dp, top = 56.dp)
@@ -821,33 +829,11 @@ private fun CriticalThreatIndicator(
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(
+        Image(
+            bitmap = bitmap,
+            contentDescription = "Critical threat",
             modifier = Modifier
                 .size(46.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    this.alpha = alpha
-                },
-        ) {
-            val w = size.width
-            val h = size.height
-            val triangle = Path().apply {
-                moveTo(w / 2f, h * 0.06f)
-                lineTo(w * 0.94f, h * 0.92f)
-                lineTo(w * 0.06f, h * 0.92f)
-                close()
-            }
-            drawPath(triangle, color = Color(0xFFD7263D))
-            drawPath(triangle, color = Color.White, style = Stroke(width = 2.dp.toPx()))
-        }
-        Text(
-            text = "!",
-            color = Color.White,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier
-                .padding(bottom = 2.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
