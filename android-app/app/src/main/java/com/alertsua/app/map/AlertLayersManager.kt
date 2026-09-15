@@ -640,7 +640,7 @@ class AlertLayersManager(
 
         style.addLayer(LineLayer(LAYER_OBLAST_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(COLOR_OBLAST_BORDER),
-            PropertyFactory.lineWidth(2.5f),
+            PropertyFactory.lineWidth(1.0f),
         ))
 
         addAlertFillLayer(style, LAYER_FILL_OBLAST, SOURCE_OBLAST, statusActiveFilter())
@@ -650,7 +650,7 @@ class AlertLayersManager(
 
         style.addLayer(LineLayer(LAYER_OBLAST_STATUS_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(oblastStatusBorderColor()),
-            PropertyFactory.lineWidth(2.5f),
+            PropertyFactory.lineWidth(1.0f),
         ).apply { setFilter(Expression.eq(Expression.get("region_type"), Expression.literal("oblast"))) })
 
         occupiedCollectionJson?.let { json ->
