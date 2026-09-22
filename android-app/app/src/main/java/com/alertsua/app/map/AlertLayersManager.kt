@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.os.SystemClock
 import android.util.Log
 import com.google.gson.JsonObject
+import com.alertsua.app.notifications.AlertUpdateBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,6 +88,9 @@ class AlertLayersManager(
 
         private const val STATUS_POLL_INTERVAL_MS = 30_000L
 
+        // Порог «только что обновлялись» для ре-фетча при возврате на экран
+        private const val ON_START_REFETCH_THRESHOLD_MS = 10_000L
+
         private val COLOR_MASK_FILL_LIGHT = Color.parseColor("#e8f0f4")
         private val COLOR_MASK_FILL_DARK = Color.parseColor("#131e28")
         private val COLOR_MASK_BORDER_LIGHT = Color.parseColor("#91afc0")
@@ -145,6 +149,14 @@ class AlertLayersManager(
         // не дожидаясь onMapReady/стиля (тяжёлая работа — на IO-диспетчере).
         MapPerf.log("AlertLayers", "manager created, starting geometry load")
         loadJob = scope.launch { loadGeometryAndStatuses() }
+        // FCM-пуш → немедленное обновление статусов, не дожидаясь тика poll
+        scope.launch {
+            AlertUpdateBus.updates.collect {
+                if (!geometryLoaded) return@collect
+                runCatching { fetchAndApplyStatuses(notifyOnChange = true) }
+                    .onFailure { Log.w("AlertLayers", "Push-triggered refresh failed: ${it.message}") }
+            }
+        }
     }
 
     private var geometryLoaded = false
@@ -219,13 +231,16 @@ class AlertLayersManager(
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             // Первичный fetch уже делает loadJob (init) — не дублируем запрос
-            val fetchedRecently = SystemClock.elapsedRealtime() - lastFetchAtMs < STATUS_POLL_INTERVAL_MS
+            val fetchedRecently = SystemClock.elapsedRealtime() - lastFetchAtMs < ON_START_REFETCH_THRESHOLD_MS
             if (geometryLoaded && loadJob?.isActive != true && !fetchedRecently) {
-                fetchAndApplyStatuses(notifyOnChange = true)
+                runCatching { fetchAndApplyStatuses(notifyOnChange = true) }
+                    .onFailure { Log.w("AlertLayers", "Status poll tick failed: ${it.message}") }
             }
             while (isActive) {
                 delay(STATUS_POLL_INTERVAL_MS)
-                fetchAndApplyStatuses(notifyOnChange = true)
+                // Одно исключение в тике не должно убивать pollJob навсегда
+                runCatching { fetchAndApplyStatuses(notifyOnChange = true) }
+                    .onFailure { Log.w("AlertLayers", "Status poll tick failed: ${it.message}") }
             }
         }
     }
@@ -253,12 +268,13 @@ class AlertLayersManager(
             }
             lastFetchAtMs = SystemClock.elapsedRealtime()
             val (stateVersion, lookup) = bundle
-            if (stateVersion == appliedStateVersion) {
-                mapController.onToast("Дані вже актуальні")
-                return@launch
-            }
-            applyStatusBundle(stateVersion, lookup, notifyOnChange = false)
-            mapController.onToast("Статуси тривог оновлено")
+            val alreadyCurrent = stateVersion == appliedStateVersion
+            // Ручное обновление применяем безусловно (пере-применение тех же
+            // статусов безвредно) — кнопка «Обновить» должна реально обновлять
+            applyStatusBundle(stateVersion, lookup, notifyOnChange = false, force = true)
+            mapController.onToast(
+                if (alreadyCurrent) "Дані вже актуальні" else "Статуси тривог оновлено"
+            )
         }
     }
 
@@ -474,9 +490,12 @@ class AlertLayersManager(
         stateVersion: Long,
         lookup: Map<String, StatusInfo>,
         notifyOnChange: Boolean,
+        force: Boolean = false,
     ) {
-        if (stateVersion == appliedStateVersion) return
-        appliedStateVersion = stateVersion
+        // Принимаем только более свежие версии: старый ответ из гонки
+        // poll↔manual refresh не должен откатывать карту. Принудительное
+        // ручное применение (force) допускает равную версию, но не меньшую.
+        if (if (force) stateVersion < appliedStateVersion else stateVersion <= appliedStateVersion) return
 
         val changed = resolveStatuses(lookup)
         // Инъекция статусов в pristine GeoJSON-строки (быстрый строковый проход)
@@ -494,6 +513,10 @@ class AlertLayersManager(
         MapPerf.log("AlertLayers", "statuses injected into geojson")
         pushStatusesToSources()
         MapPerf.log("AlertLayers", "statuses pushed to sources")
+
+        // Версию помечаем применённой только после успешной инъекции/push,
+        // иначе при исключении она навсегда останется «применённой»
+        if (stateVersion > appliedStateVersion) appliedStateVersion = stateVersion
 
         val wasInitial = !initialStatusesApplied
         initialStatusesApplied = true

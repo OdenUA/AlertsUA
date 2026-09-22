@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { MapBundleService } from '../map/map-bundle.service';
 import { TimeUtil } from '../../common/utils/time.util';
 import { CacheService } from '../../common/cache/cache.service';
 import { CACHE_KEYS, CACHE_TTL, CACHE_CHANNELS } from '../../common/cache/cache.constants';
@@ -75,6 +76,7 @@ export class AlertsService {
     private readonly subscriptionsService: SubscriptionsService,
     private readonly supabaseSyncService: SupabaseSyncService,
     private readonly cacheService: CacheService,
+    private readonly mapBundleService: MapBundleService,
   ) {}
 
   async getFullStatuses() {
@@ -210,6 +212,11 @@ export class AlertsService {
     const requestedAt = new Date();
     const previousMetadata = await this.getLatestPollMetadata();
 
+    // active.json is needed on every cycle regardless of the IoT endpoint
+    // outcome (200 or 304) — fetch both in parallel to halve upstream latency.
+    // fetchActiveAlertAttributes never rejects (returns an empty Map on error).
+    const attributesPromise = this.fetchActiveAlertAttributes();
+
     let response: Response;
     try {
       response = await fetch(ALERTS_IN_UA_STATUS_ENDPOINT, {
@@ -253,7 +260,7 @@ export class AlertsService {
     if (httpStatus === 304) {
       // The IoT status string did not change, but alert attributes
       // (alert_type / alert_level) exist only in active.json — check them too.
-      const alertAttributes = await this.fetchActiveAlertAttributes();
+      const alertAttributes = await attributesPromise;
       const attributesHash = this.hashAlertAttributes(alertAttributes);
       const combinedHash = this.hashStatusWithAttributes(previousMetadata.status_string, attributesHash);
       const attributesChanged =
@@ -285,6 +292,18 @@ export class AlertsService {
             }),
           );
 
+          if (
+            appliedSnapshot.bootstrap_mode ||
+            appliedSnapshot.changed_uids.length > 0 ||
+            appliedSnapshot.level_changed_uids.length > 0
+          ) {
+            await this.refreshCachesAfterStateChange(
+              appliedSnapshot.state_version,
+              appliedSnapshot.changed_uids,
+              `304 attributes changed, cycle=${changedCycleId}`,
+            );
+          }
+
           return {
             cycle_id: changedCycleId,
             http_status: httpStatus,
@@ -311,18 +330,8 @@ export class AlertsService {
         }
       }
 
-      // Refresh cache even when API returns 304 to prevent expiration
-      try {
-        await this.databaseService.withTransaction(async (client) => {
-          const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
-          await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
-          this.logger.log(`Alerts cache refreshed (304 response): state_version=${previousMetadata.state_version}`);
-          await this.refreshAlertLayerCaches(client, '304 response');
-        });
-      } catch (error) {
-        this.logger.error(`Failed to refresh alerts cache on 304: ${error}`);
-      }
-
+      // No state change — caches keep serving the current version and expire
+      // into DB fallbacks on their own; nothing to refresh here.
       const cycleId = await this.insertPollCycle({
         requested_at: requestedAt,
         finished_at: finishedAt,
@@ -371,9 +380,9 @@ export class AlertsService {
 
     const statusString = this.parseStatusString(responseBody);
     // Alert attributes (alert_type / alert_level) are not part of the IoT
-    // status string — fetch them from active.json on every 200 response so
-    // level-only changes (e.g. yellow -> red) are detected as well.
-    const alertAttributes = await this.fetchActiveAlertAttributes();
+    // status string — they were fetched from active.json in parallel with the
+    // IoT request so level-only changes (e.g. yellow -> red) are detected too.
+    const alertAttributes = await attributesPromise;
     const attributesHash = this.hashAlertAttributes(alertAttributes);
     const combinedHash = this.hashStatusWithAttributes(statusString, attributesHash) as string;
     const sourceChanged = previousMetadata.status_string_hash !== combinedHash;
@@ -391,18 +400,8 @@ export class AlertsService {
     });
 
     if (!sourceChanged) {
-      // Refresh cache even when no changes detected to prevent expiration
-      try {
-        await this.databaseService.withTransaction(async (client) => {
-          const bundle = await this.buildAlertsBundle(client, previousMetadata.state_version);
-          await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
-          this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousMetadata.state_version}`);
-          await this.refreshAlertLayerCaches(client, 'no changes');
-        });
-      } catch (error) {
-        this.logger.error(`Failed to refresh alerts cache: ${error}`);
-      }
-
+      // No state change — caches keep serving the current version and expire
+      // into DB fallbacks on their own; nothing to refresh here.
       return {
         cycle_id: cycleId,
         http_status: httpStatus,
@@ -422,6 +421,18 @@ export class AlertsService {
           alert_attributes: alertAttributes,
         }),
       );
+
+      if (
+        appliedSnapshot.bootstrap_mode ||
+        appliedSnapshot.changed_uids.length > 0 ||
+        appliedSnapshot.level_changed_uids.length > 0
+      ) {
+        await this.refreshCachesAfterStateChange(
+          appliedSnapshot.state_version,
+          appliedSnapshot.changed_uids,
+          `state_version=${appliedSnapshot.state_version}, cycle=${cycleId}`,
+        );
+      }
 
       return {
         cycle_id: cycleId,
@@ -607,11 +618,11 @@ export class AlertsService {
   }
 
   private async buildAlertsBundle(
-    client: PoolClient,
+    db: DatabaseService,
     stateVersion: number,
   ): Promise<AlertsBundleDto> {
     const [activeAlertsResult, oblastAggregatesResult] = await Promise.all([
-      client.query<{
+      db.query<{
         uid: number;
         title_uk: string;
         region_type: string;
@@ -645,7 +656,7 @@ export class AlertsService {
           WHERE arc.status = ANY(ARRAY['A'::text, 'P'::text])
         `,
       ),
-      client.query<{
+      db.query<{
         oblast_uid: number;
         status: string;
         active_count: number;
@@ -900,15 +911,6 @@ export class AlertsService {
     }
 
     if (!bootstrapMode && changedRows.length === 0 && levelChangedUids.length === 0) {
-      // Even if no changes, always update the cache to prevent it from expiring
-      try {
-        const bundle = await this.buildAlertsBundle(client, previousStateVersion);
-        await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
-        this.logger.log(`Alerts cache refreshed (no changes): state_version=${previousStateVersion}`);
-      } catch (error) {
-        this.logger.error(`Failed to update alerts cache: ${error}`);
-      }
-
       return {
         state_version: previousStateVersion,
         bootstrap_mode: false,
@@ -1017,28 +1019,9 @@ export class AlertsService {
       occurred_at: input.occurred_at,
     });
 
-    // Invalidate and rebuild alerts cache
-    try {
-      const bundle = await this.buildAlertsBundle(client, nextStateVersion);
-      await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
-      await this.cacheService.publish(CACHE_CHANNELS.ALERTS_UPDATED, {
-        state_version: nextStateVersion,
-        changed_uids: changedRows.map((row) => row.uid),
-      });
-      this.logger.log(`Alerts cache updated: state_version=${nextStateVersion}, count=${bundle.active_alerts.meta.count}`);
-    } catch (error) {
-      this.logger.error(`Failed to update alerts cache: ${error}`);
-      if (error instanceof Error) {
-        this.logger.error(`Cache error stack: ${error.stack}`);
-      }
-    }
-
-    // Rebuild precomputed alert layer for fast map rendering
-    try {
-      await this.refreshAlertLayerCaches(client, `state_version=${nextStateVersion}`);
-    } catch (error) {
-      this.logger.error(`Failed to rebuild alert layer: ${error}`);
-    }
+    // Cache rebuild/invalidation happens in refreshCachesAfterStateChange,
+    // invoked by the caller AFTER this transaction commits — writing caches
+    // here would expose uncommitted data and race with concurrent API reads.
 
     return {
       state_version: nextStateVersion,
@@ -1224,47 +1207,91 @@ export class AlertsService {
   }
 
   /**
-   * Rebuilds the precomputed alert layer and refreshes the lightweight
-   * active-UIDs cache (with per-region alert_type / alert_level details),
-   * then invalidates all alert/feature caches so clients pick up fresh data.
+   * Post-commit cache refresh after alert state changed (poll cycle or a
+   * Telegram-driven synthetic alert). Must be called AFTER the state
+   * transaction commits: all data is read back from committed state, fresh
+   * values are written to Redis before stale derived keys are deleted, so API
+   * readers never observe pre-commit or mixed state.
+   *
+   * Non-fatal by design: failures are logged, short TTLs and DB fallbacks
+   * recover on the next request.
    */
-  private async refreshAlertLayerCaches(client: PoolClient, logContext: string): Promise<void> {
-    await this.rebuildAlertLayer(client);
+  async refreshCachesAfterStateChange(
+    stateVersion: number | null,
+    changedUids: number[],
+    logContext: string,
+  ): Promise<void> {
+    try {
+      // Rebuild the precomputed alert layer first — the map bundle embeds its uid list.
+      await this.databaseService.withTransaction((client) => this.rebuildAlertLayer(client));
 
-    // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
-    // DO NOT include raions/oblasts — they are parent regions filled by their active children.
-    // Cities inherit active status from their parent oblast (e.g. м. Київ from Київська область).
-    const activeUidsResult = await client.query<{ uid: number; alert_type: string; alert_level: string }>(
-      `SELECT rc.uid,
-              COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
-              COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level
-       FROM region_catalog rc
-       LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
-       LEFT JOIN air_raid_state_current arc_parent
-         ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
-       WHERE rc.is_active = TRUE
-         AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')
-         AND (arc.status IN ('A', 'P') OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL))`,
-    );
-    const activeUids = activeUidsResult.rows.map((r) => r.uid);
-    const details: Record<number, { alert_type: string; alert_level: string }> = {};
-    for (const row of activeUidsResult.rows) {
-      details[row.uid] = { alert_type: row.alert_type, alert_level: row.alert_level };
+      const effectiveStateVersion = stateVersion ?? (await this.getCurrentStateVersion());
+
+      // Cache active UIDs for subscription_leaf regions only (hromadas + cities).
+      // DO NOT include raions/oblasts — they are parent regions filled by their active children.
+      // Cities inherit active status from their parent oblast (e.g. м. Київ from Київська область).
+      const activeUidsResult = await this.databaseService.query<{ uid: number; alert_type: string; alert_level: string }>(
+        `SELECT rc.uid,
+                COALESCE(arc.alert_type, arc_parent.alert_type, 'air_raid') AS alert_type,
+                COALESCE(arc.alert_level, arc_parent.alert_level, 'red') AS alert_level
+         FROM region_catalog rc
+         LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
+         LEFT JOIN air_raid_state_current arc_parent
+           ON arc_parent.uid = rc.oblast_uid AND arc_parent.status = 'A'
+         WHERE rc.is_active = TRUE
+           AND (rc.is_subscription_leaf = TRUE OR rc.region_type = 'city')
+           AND (arc.status IN ('A', 'P') OR (rc.region_type = 'city' AND arc_parent.uid IS NOT NULL))`,
+      );
+      const activeUids = activeUidsResult.rows.map((row) => row.uid);
+      const details: Record<number, { alert_type: string; alert_level: string }> = {};
+      for (const row of activeUidsResult.rows) {
+        details[row.uid] = { alert_type: row.alert_type, alert_level: row.alert_level };
+      }
+
+      const [bundle, mapBundle] = await Promise.all([
+        this.buildAlertsBundle(this.databaseService, effectiveStateVersion),
+        this.mapBundleService.buildFullMapBundle(effectiveStateVersion),
+      ]);
+
+      // Write fresh values BEFORE invalidating derived keys.
+      await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids, details }, CACHE_TTL.ALERTS);
+      await this.cacheService.set(CACHE_KEYS.ALERTS_CURRENT, bundle, CACHE_TTL.ALERTS);
+      await this.cacheService.set(CACHE_KEYS.MAP_BUNDLE, mapBundle, CACHE_TTL.MAP_BUNDLE);
+
+      // Invalidate derived/expensive caches — they rebuild on demand.
+      await this.cacheService.delete([
+        CACHE_KEYS.ALERTS_LAYER,
+        CACHE_KEYS.FEATURES('oblast', 'low'),
+        CACHE_KEYS.FEATURES('oblast', 'medium'),
+        CACHE_KEYS.FEATURES('raion', 'medium'),
+        CACHE_KEYS.FEATURES('raion', 'high'),
+        CACHE_KEYS.FEATURES('hromada', 'medium'),
+        CACHE_KEYS.FEATURES('hromada', 'high'),
+      ]);
+      // resolve-point responses embed alert statuses — drop them all.
+      await this.cacheService.deleteByPattern('resolve-point:*');
+
+      await this.cacheService.publish(CACHE_CHANNELS.ALERTS_UPDATED, {
+        state_version: effectiveStateVersion,
+        changed_uids: changedUids,
+      });
+
+      this.logger.log(
+        `Caches refreshed after state change: state_version=${effectiveStateVersion}, ` +
+          `active_uids=${activeUids.length}, alerts_features=${bundle.active_alerts.meta.count} (${logContext})`,
+      );
+    } catch (error) {
+      this.logger.error(`Failed to refresh caches after state change (${logContext}): ${error}`);
+      if (error instanceof Error) {
+        this.logger.error(`Cache refresh error stack: ${error.stack}`);
+      }
     }
-    await this.cacheService.set(CACHE_KEYS.ALERTS_ACTIVE_UIDS, { uids: activeUids, details }, CACHE_TTL.ALERTS);
+  }
 
-    // Immediately invalidate full alert caches so next request gets fresh data
-    await this.cacheService.delete([CACHE_KEYS.ALERTS_LAYER, CACHE_KEYS.ALERTS_CURRENT]);
-    // Invalidate all feature caches (geometry bundles with stale status)
-    await this.cacheService.delete([
-      CACHE_KEYS.FEATURES('oblast', 'low'),
-      CACHE_KEYS.FEATURES('oblast', 'medium'),
-      CACHE_KEYS.FEATURES('raion', 'medium'),
-      CACHE_KEYS.FEATURES('raion', 'high'),
-      CACHE_KEYS.FEATURES('hromada', 'medium'),
-      CACHE_KEYS.FEATURES('hromada', 'high'),
-    ]);
-
-    this.logger.log(`Precomputed alert layer rebuilt, ${activeUids.length} active UIDs cached and caches invalidated (${logContext})`);
+  private async getCurrentStateVersion(): Promise<number> {
+    const result = await this.databaseService.query<{ state_version: number }>(
+      'SELECT COALESCE(MAX(state_version), 0) AS state_version FROM air_raid_state_current',
+    );
+    return Number(result.rows[0]?.state_version ?? 0);
   }
 }

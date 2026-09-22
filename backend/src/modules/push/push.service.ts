@@ -45,7 +45,7 @@ export class PushService {
     private readonly supabaseSyncService: SupabaseSyncService,
   ) {}
 
-  async processQueuedDispatches(limit = 50) {
+  async processQueuedDispatches(limit = 500) {
     if (!this.databaseService.isConfigured()) {
       throw new Error('DATABASE_URL is not configured.');
     }
@@ -113,6 +113,7 @@ export class PushService {
     let sent = 0;
     let failed = 0;
     let skipped = 0;
+    const sendable: DispatchRow[] = [];
 
     for (const dispatch of dispatchesResult.rows) {
       if (
@@ -122,163 +123,56 @@ export class PushService {
         dispatch.installation_status !== 'active'
       ) {
         skipped += 1;
-        await this.databaseService.withTransaction(async (client) => {
-          await client.query(
-            `
-              UPDATE notification_dispatches
-              SET status = 'skipped',
-                  provider_error_code = $2
-              WHERE dispatch_id = $1
-            `,
-            [dispatch.dispatch_id, 'RECIPIENT_DISABLED'],
-          );
-
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'notification_log',
-            entity_id: dispatch.dispatch_id,
-            operation: 'update',
-            payload: {
-              dispatch_id: dispatch.dispatch_id,
-              subscription_id: dispatch.subscription_id,
-              installation_id: dispatch.installation_id,
-              event_id: dispatch.event_id,
-              dispatch_kind: dispatch.dispatch_kind,
-              status: 'skipped',
-              provider_message_id: null,
-              provider_error_code: 'RECIPIENT_DISABLED',
-              queued_at: dispatch.queued_at,
-              sent_at: null,
-            },
-          });
-        });
+        await this.markSkipped(dispatch);
         continue;
       }
+      sendable.push(dispatch);
+    }
+
+    if (sendable.length > 0) {
+      const sentAt = TimeUtil.getNowInKyiv();
 
       try {
-        const sentAt = TimeUtil.getNowInKyiv();
-        const messageId = await messaging.send({
-          token: dispatch.fcm_token,
-          notification: {
-            title: dispatch.title_uk,
-            body: dispatch.body_uk,
-          },
-          data: {
-            subscription_id: dispatch.subscription_id,
-            event_id: dispatch.event_id ?? '',
-            dispatch_kind: dispatch.dispatch_kind,
-            alert_level: dispatch.alert_level,
-            sent_at: sentAt,
-          },
-          android: {
-            priority: 'high',
-          },
-        });
-
-        sent += 1;
-        await this.databaseService.withTransaction(async (client) => {
-          await client.query(
-            `
-              UPDATE notification_dispatches
-              SET status = 'sent',
-                  provider_message_id = $2,
-                  provider_error_code = NULL,
-                  sent_at = $3
-              WHERE dispatch_id = $1
-            `,
-            [dispatch.dispatch_id, messageId, sentAt],
-          );
-          await client.query(
-            `
-              UPDATE device_push_tokens
-              SET last_success_at = $2,
-                  last_error_at = NULL,
-                  last_error_code = NULL
-              WHERE token_id = $1
-            `,
-            [dispatch.token_id, sentAt],
-          );
-
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'notification_log',
-            entity_id: dispatch.dispatch_id,
-            operation: 'update',
-            payload: {
-              dispatch_id: dispatch.dispatch_id,
+        // Batch send — up to 500 messages per FCM call instead of one
+        // HTTP request per token.
+        const batchResponse = await messaging.sendEach(
+          sendable.map((dispatch) => ({
+            token: dispatch.fcm_token,
+            notification: {
+              title: dispatch.title_uk,
+              body: dispatch.body_uk,
+            },
+            data: {
               subscription_id: dispatch.subscription_id,
-              installation_id: dispatch.installation_id,
-              event_id: dispatch.event_id,
+              event_id: dispatch.event_id ?? '',
               dispatch_kind: dispatch.dispatch_kind,
-              status: 'sent',
-              provider_message_id: messageId,
-              provider_error_code: null,
-              queued_at: dispatch.queued_at,
+              alert_level: dispatch.alert_level,
               sent_at: sentAt,
             },
-          });
-
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'device_push_tokens',
-            entity_id: dispatch.token_id,
-            operation: 'update',
-            payload: await this.loadPushTokenPayload(client, dispatch.token_id),
-          });
-        });
-      } catch (error) {
-        failed += 1;
-        const providerErrorCode = this.extractProviderErrorCode(error);
-        const failedAt = TimeUtil.getNowInKyiv();
-        await this.databaseService.withTransaction(async (client) => {
-          await client.query(
-            `
-              UPDATE notification_dispatches
-              SET status = 'failed',
-                  attempt_no = attempt_no + 1,
-                  provider_error_code = $2
-              WHERE dispatch_id = $1
-            `,
-            [dispatch.dispatch_id, providerErrorCode],
-          );
-          await client.query(
-            `
-              UPDATE device_push_tokens
-              SET last_error_at = $3,
-                  last_error_code = $2,
-                  is_active = CASE WHEN $4 THEN FALSE ELSE is_active END
-              WHERE token_id = $1
-            `,
-            [
-              dispatch.token_id,
-              providerErrorCode,
-              failedAt,
-              this.shouldDeactivateToken(providerErrorCode),
-            ],
-          );
-
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'notification_log',
-            entity_id: dispatch.dispatch_id,
-            operation: 'update',
-            payload: {
-              dispatch_id: dispatch.dispatch_id,
-              subscription_id: dispatch.subscription_id,
-              installation_id: dispatch.installation_id,
-              event_id: dispatch.event_id,
-              dispatch_kind: dispatch.dispatch_kind,
-              status: 'failed',
-              provider_message_id: null,
-              provider_error_code: providerErrorCode,
-              queued_at: dispatch.queued_at,
-              sent_at: null,
+            android: {
+              priority: 'high' as const,
             },
-          });
+          })),
+        );
 
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'device_push_tokens',
-            entity_id: dispatch.token_id,
-            operation: 'update',
-            payload: await this.loadPushTokenPayload(client, dispatch.token_id),
-          });
-        });
+        for (let index = 0; index < sendable.length; index += 1) {
+          const dispatch = sendable[index];
+          const response = batchResponse.responses[index];
+          if (response?.success) {
+            sent += 1;
+            await this.markSent(dispatch, response.messageId ?? '', sentAt);
+          } else {
+            failed += 1;
+            await this.markFailed(dispatch, this.extractProviderErrorCode(response?.error), sentAt);
+          }
+        }
+      } catch (error) {
+        // RPC-level failure — every message in the batch is undelivered.
+        const providerErrorCode = this.extractProviderErrorCode(error);
+        for (const dispatch of sendable) {
+          failed += 1;
+          await this.markFailed(dispatch, providerErrorCode, sentAt);
+        }
       }
     }
 
@@ -291,6 +185,144 @@ export class PushService {
       skipped,
       queued_pending: Math.max(queuedPending - sent - failed - skipped, 0),
     };
+  }
+
+  private async markSkipped(dispatch: DispatchRow) {
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE notification_dispatches
+          SET status = 'skipped',
+              provider_error_code = $2
+          WHERE dispatch_id = $1
+        `,
+        [dispatch.dispatch_id, 'RECIPIENT_DISABLED'],
+      );
+
+      await this.supabaseSyncService.enqueueEntity(client, {
+        entity_type: 'notification_log',
+        entity_id: dispatch.dispatch_id,
+        operation: 'update',
+        payload: {
+          dispatch_id: dispatch.dispatch_id,
+          subscription_id: dispatch.subscription_id,
+          installation_id: dispatch.installation_id,
+          event_id: dispatch.event_id,
+          dispatch_kind: dispatch.dispatch_kind,
+          status: 'skipped',
+          provider_message_id: null,
+          provider_error_code: 'RECIPIENT_DISABLED',
+          queued_at: dispatch.queued_at,
+          sent_at: null,
+        },
+      });
+    });
+  }
+
+  private async markSent(dispatch: DispatchRow, messageId: string, sentAt: string) {
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE notification_dispatches
+          SET status = 'sent',
+              provider_message_id = $2,
+              provider_error_code = NULL,
+              sent_at = $3
+          WHERE dispatch_id = $1
+        `,
+        [dispatch.dispatch_id, messageId, sentAt],
+      );
+      await client.query(
+        `
+          UPDATE device_push_tokens
+          SET last_success_at = $2,
+              last_error_at = NULL,
+              last_error_code = NULL
+          WHERE token_id = $1
+        `,
+        [dispatch.token_id, sentAt],
+      );
+
+      await this.supabaseSyncService.enqueueEntity(client, {
+        entity_type: 'notification_log',
+        entity_id: dispatch.dispatch_id,
+        operation: 'update',
+        payload: {
+          dispatch_id: dispatch.dispatch_id,
+          subscription_id: dispatch.subscription_id,
+          installation_id: dispatch.installation_id,
+          event_id: dispatch.event_id,
+          dispatch_kind: dispatch.dispatch_kind,
+          status: 'sent',
+          provider_message_id: messageId,
+          provider_error_code: null,
+          queued_at: dispatch.queued_at,
+          sent_at: sentAt,
+        },
+      });
+
+      await this.supabaseSyncService.enqueueEntity(client, {
+        entity_type: 'device_push_tokens',
+        entity_id: dispatch.token_id,
+        operation: 'update',
+        payload: await this.loadPushTokenPayload(client, dispatch.token_id),
+      });
+    });
+  }
+
+  private async markFailed(dispatch: DispatchRow, providerErrorCode: string, failedAt: string) {
+    await this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE notification_dispatches
+          SET status = 'failed',
+              attempt_no = attempt_no + 1,
+              provider_error_code = $2
+          WHERE dispatch_id = $1
+        `,
+        [dispatch.dispatch_id, providerErrorCode],
+      );
+      await client.query(
+        `
+          UPDATE device_push_tokens
+          SET last_error_at = $3,
+              last_error_code = $2,
+              is_active = CASE WHEN $4 THEN FALSE ELSE is_active END
+          WHERE token_id = $1
+        `,
+        [
+          dispatch.token_id,
+          providerErrorCode,
+          failedAt,
+          this.shouldDeactivateToken(providerErrorCode),
+        ],
+      );
+
+      await this.supabaseSyncService.enqueueEntity(client, {
+        entity_type: 'notification_log',
+        entity_id: dispatch.dispatch_id,
+        operation: 'update',
+        payload: {
+          dispatch_id: dispatch.dispatch_id,
+          subscription_id: dispatch.subscription_id,
+          installation_id: dispatch.installation_id,
+          event_id: dispatch.event_id,
+          dispatch_kind: dispatch.dispatch_kind,
+          status: 'failed',
+          provider_message_id: null,
+          provider_error_code: providerErrorCode,
+          queued_at: dispatch.queued_at,
+          sent_at: null,
+        },
+      });
+
+      await this.supabaseSyncService.enqueueEntity(client, {
+        entity_type: 'device_push_tokens',
+        entity_id: dispatch.token_id,
+        operation: 'update',
+        payload: await this.loadPushTokenPayload(client, dispatch.token_id),
+      });
+    });
   }
 
   private getMessagingClient(firebaseServiceAccountPath: string): Messaging {

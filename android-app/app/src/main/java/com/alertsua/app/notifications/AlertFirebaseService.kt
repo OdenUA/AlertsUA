@@ -58,6 +58,9 @@ class AlertFirebaseService : FirebaseMessagingService() {
 
         NotificationManagerCompat.from(this)
             .notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), builder.build())
+
+        // Будим карту: свежие статусы/угрозы подтянутся немедленно
+        AlertUpdateBus.notifyUpdate()
     }
 }
 

@@ -4,8 +4,9 @@ import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { AlertsService } from '../alerts/alerts.service';
 import { CacheService } from '../../common/cache/cache.service';
-import { CACHE_KEYS, CACHE_TTL, CACHE_CHANNELS } from '../../common/cache/cache.constants';
+import { CACHE_KEYS, CACHE_CHANNELS } from '../../common/cache/cache.constants';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
@@ -383,6 +384,7 @@ export class GeminiThreatParserService {
     private readonly databaseService: DatabaseService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly cacheService: CacheService,
+    private readonly alertsService: AlertsService,
   ) {}
 
   async processPendingJobs() {
@@ -422,6 +424,19 @@ export class GeminiThreatParserService {
         const persistResult = await this.databaseService.withTransaction(async (client) => {
           return this.persistCandidates(client, job, candidates);
         });
+
+        // Cache invalidation runs AFTER the transaction commits so API readers
+        // never observe pre-commit state.
+        if (persistResult.overlays_created > 0) {
+          await this.invalidateThreatCaches(persistResult.overlays_created);
+        }
+        if (persistResult.runtime_events_applied > 0) {
+          await this.alertsService.refreshCachesAfterStateChange(
+            null,
+            [],
+            `telegram_llm job=${job.job_id}`,
+          );
+        }
 
         overlaysCreated += persistResult.overlays_created;
         await this.markJobSuccess(job.job_id);
@@ -1008,6 +1023,7 @@ export class GeminiThreatParserService {
     candidates: ParseCandidate[],
   ) {
     let overlaysCreated = 0;
+    let runtimeEventsApplied = 0;
 
     for (const candidate of candidates) {
       const fallbackHint = candidate.region_hint;
@@ -1254,6 +1270,7 @@ export class GeminiThreatParserService {
       );
 
       if (runtimeEventId) {
+        runtimeEventsApplied += 1;
         await client.query(
           `
             UPDATE threat_vectors
@@ -1267,24 +1284,30 @@ export class GeminiThreatParserService {
       overlaysCreated += 1;
     }
 
-    // Invalidate threats cache
-    if (overlaysCreated > 0) {
-      try {
-        const currentBucketTs = Math.floor(Date.now() / 60000) * 60000;
-        await this.cacheService.delete(CACHE_KEYS.THREATS_BUCKET(currentBucketTs));
-        await this.cacheService.publish(CACHE_CHANNELS.THREATS_UPDATED, {
-          overlays_created: overlaysCreated,
-          timestamp: Date.now(),
-        });
-        this.logger.debug(`Threats cache invalidated: ${overlaysCreated} new overlays`);
-      } catch (error) {
-        this.logger.warn(`Failed to invalidate threats cache: ${error}`);
-      }
-    }
+    // Threat/alert cache invalidation is done by the caller after the
+    // enclosing transaction commits.
 
     return {
       overlays_created: overlaysCreated,
+      runtime_events_applied: runtimeEventsApplied,
     };
+  }
+
+  private async invalidateThreatCaches(overlaysCreated: number) {
+    try {
+      // Bucket keys carry a sources suffix (threats:<bucketTs>:<sources>) and
+      // bbox variants (threats:<bbox>) — drop them all by pattern, plus the
+      // standalone threat bundle.
+      await this.cacheService.deleteByPattern('threats:*');
+      await this.cacheService.delete(CACHE_KEYS.THREAT_BUNDLE);
+      await this.cacheService.publish(CACHE_CHANNELS.THREATS_UPDATED, {
+        overlays_created: overlaysCreated,
+        timestamp: Date.now(),
+      });
+      this.logger.debug(`Threats cache invalidated: ${overlaysCreated} new overlays`);
+    } catch (error) {
+      this.logger.warn(`Failed to invalidate threats cache: ${error}`);
+    }
   }
 
   private async resolveRegionHint(client: PoolClient, hint: string | null) {

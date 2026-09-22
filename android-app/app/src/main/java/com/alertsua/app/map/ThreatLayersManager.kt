@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.util.Log
 import com.google.gson.JsonObject
+import com.alertsua.app.notifications.AlertUpdateBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -154,6 +155,13 @@ class ThreatLayersManager(
         // Первичный fetch не зависит от карты/стиля — стартуем сразу
         MapPerf.log("ThreatLayers", "manager created, starting overlays fetch")
         loadJob = scope.launch { fetchAndRender() }
+        // FCM-пуш → немедленное обновление угроз, не дожидаясь тика poll
+        scope.launch {
+            AlertUpdateBus.updates.collect {
+                runCatching { fetchAndRender() }
+                    .onFailure { Log.w("ThreatLayers", "Push-triggered refresh failed: ${it.message}") }
+            }
+        }
     }
 
     private var overlays: List<ThreatOverlay> = emptyList()

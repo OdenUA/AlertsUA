@@ -10,6 +10,6 @@ import { OccupiedTerritoriesService } from './occupied-territories.service';
   imports: [CacheModule],
   controllers: [MapController],
   providers: [MapService, GeometryImportService, MapBundleService, OccupiedTerritoriesService],
-  exports: [GeometryImportService],
+  exports: [GeometryImportService, MapBundleService],
 })
 export class MapModule {}

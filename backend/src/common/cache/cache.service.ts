@@ -111,6 +111,28 @@ export class CacheService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Deletes all keys matching a pattern (e.g. 'resolve-point:*').
+   * ioredis returns full key names including keyPrefix, while `del`
+   * prepends the prefix again — so the prefix is stripped before deletion.
+   */
+  async deleteByPattern(pattern: string): Promise<number> {
+    if (!this.enabled || !this.redis) return 0;
+
+    try {
+      const keys = await this.redis.keys(pattern);
+      if (keys.length === 0) return 0;
+
+      const prefix = 'alerts-ua:map:';
+      const stripped = keys.map((key) => (key.startsWith(prefix) ? key.slice(prefix.length) : key));
+      await this.redis.del(...stripped);
+      return stripped.length;
+    } catch (error) {
+      this.logger.warn(`Cache deleteByPattern failed for ${pattern}: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
   async keys(pattern: string): Promise<string[]> {
     if (!this.enabled || !this.redis) return [];
 
