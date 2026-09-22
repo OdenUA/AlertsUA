@@ -5,8 +5,6 @@ import { readFile, stat } from 'fs/promises';
 import type { PoolClient } from 'pg';
 import { resolve } from 'path';
 import { DatabaseService } from '../../common/database/database.service';
-import { SupabaseSyncService } from '../supabase/supabase-sync.service';
-import { TimeUtil } from '../../common/utils/time.util';
 
 type RegionType = 'oblast' | 'raion' | 'city' | 'hromada' | 'unknown';
 
@@ -35,7 +33,6 @@ const KNOWN_RAION_OBLAST_OVERRIDES: Readonly<Record<number, number>> = {
 export class ImportsService {
   constructor(
     @Optional() private readonly databaseService?: DatabaseService,
-    @Optional() private readonly supabaseSyncService?: SupabaseSyncService,
   ) {}
 
   async inspectWorkbook(filePath?: string) {
@@ -61,7 +58,6 @@ export class ImportsService {
 
     const parsedWorkbook = await this.parseWorkbook(filePath);
     const importId = randomUUID();
-    const syncTimestamp = TimeUtil.getNowInKyiv();
 
     return this.databaseService.withTransaction(async (client) => {
       await client.query(
@@ -109,24 +105,6 @@ export class ImportsService {
         }
 
         await this.upsertRegion(client, parsedWorkbook, row);
-
-        if (this.supabaseSyncService) {
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'regions_ref',
-            entity_id: row.uid,
-            operation: existing.rowCount === 0 ? 'insert' : 'update',
-            payload: {
-              uid: row.uid,
-              region_type: row.region_type,
-              title_uk: row.title_uk,
-              parent_uid: row.parent_uid,
-              oblast_uid: row.oblast_uid,
-              raion_uid: row.raion_uid,
-              source_version: parsedWorkbook.source_version,
-              updated_at: syncTimestamp,
-            },
-          });
-        }
       }
 
       await client.query(

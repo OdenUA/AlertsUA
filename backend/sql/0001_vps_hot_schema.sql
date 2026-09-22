@@ -188,15 +188,3 @@ CREATE TABLE IF NOT EXISTS geocoder_cache (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() AT TIME ZONE 'Europe/Kyiv',
   last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW() AT TIME ZONE 'Europe/Kyiv'
 );
-
-CREATE TABLE IF NOT EXISTS supabase_outbox (
-  outbox_id BIGSERIAL PRIMARY KEY,
-  entity_type TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  operation TEXT NOT NULL CHECK (operation IN ('insert', 'update', 'delete')),
-  payload JSONB NOT NULL,
-  available_at TIMESTAMPTZ NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT NULL,
-  processed_at TIMESTAMPTZ NULL
-);

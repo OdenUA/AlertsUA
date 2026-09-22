@@ -8,7 +8,6 @@ import { InstallationsModule } from './modules/installations/installations.modul
 import { MapModule } from './modules/map/map.module';
 import { PushModule } from './modules/push/push.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
-import { SupabaseModule } from './modules/supabase/supabase.module';
 import { SystemModule } from './modules/system/system.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 
@@ -17,7 +16,6 @@ import { TelegramModule } from './modules/telegram/telegram.module';
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../secrets.env', '.env'], ignoreEnvFile: false }),
     CacheModule,
     DatabaseModule,
-    SupabaseModule,
     SystemModule,
     InstallationsModule,
     MapModule,

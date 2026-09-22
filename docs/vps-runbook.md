@@ -30,12 +30,7 @@
 - `GET /api/v1/map/features` уже підтверджено live по всіх шарах; у bbox Києва endpoint повернув `oblast = 3`, `raion = 9`, `hromada = 54`.
 - `GET /api/v1/map/geometry-check` уже розгорнуто live як ручну debug-сторінку для візуальної перевірки геометрії; сторінка читає `/api/v1/map/regions` і `/api/v1/map/feature?uid=...`.
 - `alerts-ua-push.service` встановлено і запускається успішно як oneshot unit, але `alerts-ua-push.timer` навмисно лишається вимкненим, поки на VPS не з’явиться `firebase-service-account.json`.
-- У server-side env уже записані `SUPABASE_PUBLISHABLE_KEY` та `SUPABASE_SECRET_KEY`; для сумісності `SUPABASE_SERVICE_KEY` виставлено в те саме значення.
-- У backend уже додано `supabase_outbox`, реальний sync worker і enqueue в hot-path write flows; sync-capable build розгорнуто на VPS.
-- Для remote schema apply в репозиторії додано script `backend/scripts/apply-supabase-schema.mjs`; він викликається через `cd backend && npm run apply:supabase-schema` і читає `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID` та `supabase/migrations/0001_initial.sql`.
-- Прямі перевірки Supabase Data API зараз повертають `PGRST205` для `public.regions_ref`, `public.devices`, `public.device_push_tokens`, `public.subscriptions`, `public.alert_event_log`, `public.notification_log`.
-- Поточний висновок: remote cold-path schema з `supabase/migrations/0001_initial.sql` ще не застосована в цільовому Supabase-проєкті або ще не з’явилася в PostgREST schema cache.
-- До застосування цієї schema `alerts-ua-sync.timer` слід тримати вимкненим; bootstrap sync потрібно повторювати тільки після появи всіх шести таблиць.
+- Міграцію на чистий PostgreSQL завершено: колишній cold-path sync повністю вилучено з коду, схеми БД та systemd; усі дані зберігаються лише в PostgreSQL на VPS.
 - На всіх етапах `dtek-api.service` залишився в стані `active`.
 
 ## Важлива примітка про скрипти

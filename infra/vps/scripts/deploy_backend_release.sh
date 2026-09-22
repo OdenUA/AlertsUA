@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# set -euo pipefail  # Disabled for debugging
+set -euo pipefail
 
 echo "=== DEPLOY SCRIPT STARTED ==="
 
@@ -172,10 +172,13 @@ if [[ "$NEEDS_NPM_INSTALL" == "1" ]]; then
   fi
 
   rm -rf "$NEW_RELEASE/node_modules"
-  (
+  if ! (
     cd "$NEW_RELEASE"
     runuser -u "$APP_USER" -- "$RUNTIME_NPM" ci --omit=dev
-  )
+  ); then
+    echo "Error: npm ci failed in $NEW_RELEASE; aborting deploy, previous release stays active"
+    exit 1
+  fi
 fi
 
 ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"

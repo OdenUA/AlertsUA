@@ -11,7 +11,7 @@
 
 ## 1. Основа проєкту та інфраструктура VPS
 
-- [x] Створено monorepo з каталогами `backend`, `android-app`, `infra`, `supabase`, `docs`.
+- [x] Створено monorepo з каталогами `backend`, `android-app`, `infra`, `docs`.
 - [x] Для нового сервісу підготовлено окреме дерево `/srv/alerts-ua` на VPS.
 - [x] Піднято окремий runtime Node.js для нового проєкту без зміни системного Node чинного сервісу.
 - [x] Встановлено PostgreSQL + PostGIS, Redis та Nginx.
@@ -73,19 +73,10 @@
 - [x] Додано live overlays статусів на мапі.
 - [ ] Провести перший повний запуск Android MVP на реальному Firebase проєкті.
 
-## 6. Supabase cold path
+## 6. PostgreSQL-only архітектура
 
-- [x] Підготовлено базову схему cold path у репозиторії.
-- [x] На VPS збережено `SUPABASE_URL`, `SUPABASE_PROJECT_ID`, `SUPABASE_ACCESS_TOKEN`.
-- [x] На VPS збережено `SUPABASE_PUBLISHABLE_KEY` та `SUPABASE_SECRET_KEY`.
-- [x] Для зворотної сумісності `SUPABASE_SERVICE_KEY` на VPS виставлено в той самий server-side secret key.
-- [x] Реалізовано `supabase_outbox` worker і hot-path enqueue для `regions_ref`, `devices`, `device_push_tokens`, `subscriptions`, `alert_event_log`, `notification_log`.
-- [x] Sync-capable backend build уже зібрано локально і розгорнуто на VPS.
-- [x] Додано non-interactive script `npm run apply:supabase-schema` для застосування `supabase/migrations/0001_initial.sql` через Supabase Management API.
-- [ ] Застосувати remote schema з `supabase/migrations/0001_initial.sql` у фактичному Supabase-проєкті; поточний bootstrap sync блокується через відсутні `public` таблиці й помилку `PGRST205` у schema cache.
-- [ ] Після застосування schema повторно виконати bootstrap sync і звірити row counts у cold path.
-- [ ] Увімкнути `alerts-ua-sync.timer` тільки після успішного bootstrap і валідації cold-path даних.
-- [ ] Перевірити фактичне місячне egress-навантаження після запуску sync.
+- [x] Завершено міграцію на чистий PostgreSQL (VPS hot-path); колишній cold-path sync повністю видалено з коду, схеми БД та інфраструктури.
+- [x] Усі дані (регіони, пристрої, push-токени, підписки, події тривог, нотифікації) зберігаються лише в PostgreSQL на VPS.
 
 ## 7. Геометрія та карта
 
@@ -100,10 +91,7 @@
 
 ## 8. Найближчі практичні кроки
 
-1. Застосувати remote schema з `supabase/migrations/0001_initial.sql` у Supabase і повторно прогнати bootstrap sync.
-	Практичний шлях: `cd backend && npm run apply:supabase-schema`, якщо в shell уже є `SUPABASE_ACCESS_TOKEN` і `SUPABASE_PROJECT_ID`.
-2. Після успішної валідації cold path увімкнути `alerts-ua-sync.timer`.
-3. Додати `firebase-service-account.json` на VPS і увімкнути `alerts-ua-push.timer`.
-4. Провести повний прогін Android MVP на емуляторі/пристрої з реальним Firebase push.
-5. Зменшити unmatched-залишок між OCHA geometry та `region_catalog`.
-6. Довести публічний production reverse proxy та backup/ops сценарії.
+1. Додати `firebase-service-account.json` на VPS і увімкнути `alerts-ua-push.timer`.
+2. Провести повний прогін Android MVP на емуляторі/пристрої з реальним Firebase push.
+3. Зменшити unmatched-залишок між OCHA geometry та `region_catalog`.
+4. Довести публічний production reverse proxy та backup/ops сценарії.

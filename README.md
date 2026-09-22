@@ -7,7 +7,6 @@
 - `backend` — NestJS backend для VPS.
 - `android-app` — Kotlin Android-клiєнт.
 - `infra` — шаблони systemd та reverse proxy.
-- `supabase` — cold-path SQL мiграцiї.
 - `docs` — runbook i нотатки по розгортанню.
 
 ## Поточний стан
@@ -30,5 +29,5 @@
 1. Встановити залежностi backend i запустити локальний dev server.
 2. Добудувати importer так, щоб вiн збагачував `oblast_uid` для районiв i громад з надiйного джерела, а не з припущення по порядку рядкiв.
 3. Реалiзувати polling worker для alerts.in.ua та генерацiю `started/ended/state_changed` подiй.
-4. Добудувати push dispatcher, геометричний resolver i Supabase sync.
+4. Добудувати push dispatcher i геометричний resolver.
 5. Дотягнути Android app до першого компiльованого MVP.

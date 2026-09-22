@@ -377,18 +377,10 @@ try {
         Write-Host $deploymentOutput
     }
 
-    # Check for actual errors (ignore npm warnings)
-    $hasRealErrors = $deploymentOutput -match '(?i)error|fail|fatal' -and
-                     $deploymentOutput -notmatch 'npm warn deprecated' -and
-                     $deploymentOutput -notmatch 'Runtime npm'
-
-    if ($deploymentExitCode -ne 0 -and $hasRealErrors) {
-        Write-Host "  - Deployment output:" -ForegroundColor Yellow
-        Write-Host $deploymentOutput
-        Fail "Deployment failed. Check VPS logs for details."
-    }
-    elseif ($deploymentExitCode -ne 0) {
-        Write-Host "  - Deployment completed (exit code $deploymentExitCode ignored - npm warnings)" -ForegroundColor Yellow
+    # Any non-zero exit code from the remote deploy script is a real failure.
+    # npm warnings go to stderr but keep exit code 0, so there is nothing to whitelist.
+    if ($deploymentExitCode -ne 0) {
+        Fail "Deployment failed (exit code $deploymentExitCode). See deployment output above."
     }
 
     # Parse deployment output
@@ -449,7 +441,7 @@ try {
     }
 
     if (-not $healthOk) {
-        Write-Host "[!] Health check did not pass after $maxAttempts attempts. Last response: $healthCheckResult" -ForegroundColor Yellow
+        Fail "Health check did not pass after $maxAttempts attempts. Last response: $healthCheckResult"
     }
 
     # Step 7: Install occupied territories timer

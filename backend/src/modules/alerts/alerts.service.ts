@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
-import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { MapBundleService } from '../map/map-bundle.service';
 import { TimeUtil } from '../../common/utils/time.util';
@@ -74,7 +73,6 @@ export class AlertsService {
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly subscriptionsService: SubscriptionsService,
-    private readonly supabaseSyncService: SupabaseSyncService,
     private readonly cacheService: CacheService,
     private readonly mapBundleService: MapBundleService,
   ) {}
@@ -995,21 +993,6 @@ export class AlertsService {
 
         if ((eventResult.rowCount ?? 0) > 0) {
           insertedEvents += 1;
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'alert_event_log',
-            entity_id: eventId,
-            operation: 'insert',
-            payload: {
-              event_id: eventId,
-              uid: row.uid,
-              event_kind: eventKind,
-              previous_status: row.previous_status,
-              new_status: row.new_status,
-              state_version: nextStateVersion,
-              occurred_at: input.occurred_at.toISOString(),
-              created_at: input.occurred_at.toISOString(),
-            },
-          });
         }
       }
     }

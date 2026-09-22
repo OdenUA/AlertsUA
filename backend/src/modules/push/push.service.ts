@@ -3,9 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync, readFileSync } from 'fs';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
-import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
-import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { TimeUtil } from '../../common/utils/time.util';
 
 type DispatchRow = {
@@ -27,22 +25,11 @@ type DispatchRow = {
   subscription_active: boolean;
 };
 
-type PushTokenSyncRow = {
-  token_id: string;
-  installation_id: string;
-  fcm_token: string;
-  is_active: boolean;
-  last_seen_at: string;
-  last_success_at: string | null;
-  last_error_code: string | null;
-};
-
 @Injectable()
 export class PushService {
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
-    private readonly supabaseSyncService: SupabaseSyncService,
   ) {}
 
   async processQueuedDispatches(limit = 500) {
@@ -188,35 +175,15 @@ export class PushService {
   }
 
   private async markSkipped(dispatch: DispatchRow) {
-    await this.databaseService.withTransaction(async (client) => {
-      await client.query(
-        `
-          UPDATE notification_dispatches
-          SET status = 'skipped',
-              provider_error_code = $2
-          WHERE dispatch_id = $1
-        `,
-        [dispatch.dispatch_id, 'RECIPIENT_DISABLED'],
-      );
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'notification_log',
-        entity_id: dispatch.dispatch_id,
-        operation: 'update',
-        payload: {
-          dispatch_id: dispatch.dispatch_id,
-          subscription_id: dispatch.subscription_id,
-          installation_id: dispatch.installation_id,
-          event_id: dispatch.event_id,
-          dispatch_kind: dispatch.dispatch_kind,
-          status: 'skipped',
-          provider_message_id: null,
-          provider_error_code: 'RECIPIENT_DISABLED',
-          queued_at: dispatch.queued_at,
-          sent_at: null,
-        },
-      });
-    });
+    await this.databaseService.query(
+      `
+        UPDATE notification_dispatches
+        SET status = 'skipped',
+            provider_error_code = $2
+        WHERE dispatch_id = $1
+      `,
+      [dispatch.dispatch_id, 'RECIPIENT_DISABLED'],
+    );
   }
 
   private async markSent(dispatch: DispatchRow, messageId: string, sentAt: string) {
@@ -242,31 +209,6 @@ export class PushService {
         `,
         [dispatch.token_id, sentAt],
       );
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'notification_log',
-        entity_id: dispatch.dispatch_id,
-        operation: 'update',
-        payload: {
-          dispatch_id: dispatch.dispatch_id,
-          subscription_id: dispatch.subscription_id,
-          installation_id: dispatch.installation_id,
-          event_id: dispatch.event_id,
-          dispatch_kind: dispatch.dispatch_kind,
-          status: 'sent',
-          provider_message_id: messageId,
-          provider_error_code: null,
-          queued_at: dispatch.queued_at,
-          sent_at: sentAt,
-        },
-      });
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'device_push_tokens',
-        entity_id: dispatch.token_id,
-        operation: 'update',
-        payload: await this.loadPushTokenPayload(client, dispatch.token_id),
-      });
     });
   }
 
@@ -297,31 +239,6 @@ export class PushService {
           this.shouldDeactivateToken(providerErrorCode),
         ],
       );
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'notification_log',
-        entity_id: dispatch.dispatch_id,
-        operation: 'update',
-        payload: {
-          dispatch_id: dispatch.dispatch_id,
-          subscription_id: dispatch.subscription_id,
-          installation_id: dispatch.installation_id,
-          event_id: dispatch.event_id,
-          dispatch_kind: dispatch.dispatch_kind,
-          status: 'failed',
-          provider_message_id: null,
-          provider_error_code: providerErrorCode,
-          queued_at: dispatch.queued_at,
-          sent_at: null,
-        },
-      });
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'device_push_tokens',
-        entity_id: dispatch.token_id,
-        operation: 'update',
-        payload: await this.loadPushTokenPayload(client, dispatch.token_id),
-      });
     });
   }
 
@@ -359,33 +276,5 @@ export class PushService {
       'messaging/registration-token-not-registered',
       'messaging/invalid-registration-token',
     ].includes(providerErrorCode);
-  }
-
-  private async loadPushTokenPayload(client: PoolClient, tokenId: string) {
-    const result = await client.query<PushTokenSyncRow>(
-      `
-        SELECT token_id,
-               installation_id,
-               fcm_token,
-               is_active,
-               last_seen_at::text,
-               last_success_at::text,
-               last_error_code
-        FROM device_push_tokens
-        WHERE token_id = $1
-        LIMIT 1
-      `,
-      [tokenId],
-    );
-
-    return {
-      token_id: result.rows[0].token_id,
-      installation_id: result.rows[0].installation_id,
-      token_hash: this.supabaseSyncService.hashPushToken(result.rows[0].fcm_token),
-      is_active: result.rows[0].is_active,
-      last_seen_at: result.rows[0].last_seen_at,
-      last_success_at: result.rows[0].last_success_at,
-      last_error_code: result.rows[0].last_error_code,
-    };
   }
 }

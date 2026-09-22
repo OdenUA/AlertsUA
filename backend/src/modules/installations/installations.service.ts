@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/
 import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
-import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { TimeUtil } from '../../common/utils/time.util';
 import { RegisterInstallationDto } from './dto/register-installation.dto';
 import { UpdateInstallationDto } from './dto/update-installation.dto';
@@ -19,45 +18,10 @@ type InstallationIdentity = {
   last_seen_at: string;
 };
 
-type DeviceSyncRow = {
-  installation_id: string;
-  platform: string;
-  locale: string;
-  app_version: string;
-  status: string;
-  created_at: string;
-  last_seen_at: string;
-};
-
-type PushTokenSyncRow = {
-  token_id: string;
-  installation_id: string;
-  fcm_token: string;
-  is_active: boolean;
-  last_seen_at: string;
-  last_success_at: string | null;
-  last_error_code: string | null;
-};
-
-type PushTokenSyncChange = {
-  entity_id: string;
-  operation: 'insert' | 'update';
-  payload: {
-    token_id: string;
-    installation_id: string;
-    token_hash: string;
-    is_active: boolean;
-    last_seen_at: string;
-    last_success_at: string | null;
-    last_error_code: string | null;
-  };
-};
-
 @Injectable()
 export class InstallationsService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly supabaseSyncService: SupabaseSyncService,
   ) {}
 
   async register(dto: RegisterInstallationDto) {
@@ -99,24 +63,7 @@ export class InstallationsService {
         ],
       );
 
-      const devicePayload = await this.loadDevicePayload(client, installationId);
-      const pushTokenChanges = await this.persistPushToken(client, installationId, dto.fcm_token, now);
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'devices',
-        entity_id: installationId,
-        operation: 'insert',
-        payload: devicePayload,
-      });
-
-      for (const change of pushTokenChanges) {
-        await this.supabaseSyncService.enqueueEntity(client, {
-          entity_type: 'device_push_tokens',
-          entity_id: change.entity_id,
-          operation: change.operation,
-          payload: change.payload,
-        });
-      }
+      await this.persistPushToken(client, installationId, dto.fcm_token, now);
     });
 
     return {
@@ -135,32 +82,23 @@ export class InstallationsService {
     const installation = await this.requireByToken(token);
     const now = TimeUtil.getNowInKyiv();
 
-    await this.databaseService.withTransaction(async (client) => {
-      await client.query(
-        `
-          UPDATE device_installations
-          SET app_version = COALESCE($2, app_version),
-              app_build = COALESCE($3, app_build),
-              notifications_enabled = COALESCE($4, notifications_enabled),
-              last_seen_at = $5
-          WHERE installation_id = $1
-        `,
-        [
-          installation.installation_id,
-          dto.app_version ?? null,
-          dto.app_build ?? null,
-          dto.notifications_enabled ?? null,
-          now,
-        ],
-      );
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'devices',
-        entity_id: installation.installation_id,
-        operation: 'update',
-        payload: await this.loadDevicePayload(client, installation.installation_id),
-      });
-    });
+    await this.databaseService.query(
+      `
+        UPDATE device_installations
+        SET app_version = COALESCE($2, app_version),
+            app_build = COALESCE($3, app_build),
+            notifications_enabled = COALESCE($4, notifications_enabled),
+            last_seen_at = $5
+        WHERE installation_id = $1
+      `,
+      [
+        installation.installation_id,
+        dto.app_version ?? null,
+        dto.app_build ?? null,
+        dto.notifications_enabled ?? null,
+        now,
+      ],
+    );
 
     return {
       installation_id: installation.installation_id,
@@ -186,28 +124,12 @@ export class InstallationsService {
         [installation.installation_id, now],
       );
 
-      const pushTokenChanges = await this.persistPushToken(
+      await this.persistPushToken(
         client,
         installation.installation_id,
         fcmToken,
         now,
       );
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'devices',
-        entity_id: installation.installation_id,
-        operation: 'update',
-        payload: await this.loadDevicePayload(client, installation.installation_id),
-      });
-
-      for (const change of pushTokenChanges) {
-        await this.supabaseSyncService.enqueueEntity(client, {
-          entity_type: 'device_push_tokens',
-          entity_id: change.entity_id,
-          operation: change.operation,
-          payload: change.payload,
-        });
-      }
     });
 
     return {
@@ -257,34 +179,18 @@ export class InstallationsService {
   ) {
     const normalizedToken = fcmToken.trim();
     if (!normalizedToken) {
-      return [] as PushTokenSyncChange[];
+      return;
     }
 
-    const changes: PushTokenSyncChange[] = [];
-    const deactivatedTokens = await client.query<PushTokenSyncRow>(
+    await client.query(
       `
         UPDATE device_push_tokens
         SET is_active = FALSE
         WHERE installation_id = $1
           AND fcm_token <> $2
-        RETURNING token_id,
-                  installation_id,
-                  fcm_token,
-                  is_active,
-                  last_seen_at::text,
-                  last_success_at::text,
-                  last_error_code
       `,
       [installationId, normalizedToken],
     );
-
-    for (const row of deactivatedTokens.rows) {
-      changes.push({
-        entity_id: row.token_id,
-        operation: 'update',
-        payload: this.mapPushTokenPayload(row),
-      });
-    }
 
     const existingTokenResult = await client.query<{ token_id: string; installation_id: string }>(
       `
@@ -297,7 +203,7 @@ export class InstallationsService {
     );
 
     if (existingTokenResult.rowCount === 0) {
-      const insertedTokenResult = await client.query<PushTokenSyncRow>(
+      await client.query(
         `
           INSERT INTO device_push_tokens (
             token_id,
@@ -309,24 +215,11 @@ export class InstallationsService {
             last_error_at,
             last_error_code
           ) VALUES ($1, $2, $3, TRUE, $4, NULL, NULL, NULL)
-          RETURNING token_id,
-                    installation_id,
-                    fcm_token,
-                    is_active,
-                    last_seen_at::text,
-                    last_success_at::text,
-                    last_error_code
         `,
         [randomUUID(), installationId, normalizedToken, now],
       );
 
-      changes.push({
-        entity_id: insertedTokenResult.rows[0].token_id,
-        operation: 'insert',
-        payload: this.mapPushTokenPayload(insertedTokenResult.rows[0]),
-      });
-
-      return changes;
+      return;
     }
 
     const oldInstallationId = existingTokenResult.rows[0].installation_id;
@@ -357,23 +250,13 @@ export class InstallationsService {
         );
       } else {
         // Different device or no android_id - delete old subscriptions as before
-        const deletedSubs = await client.query<{ subscription_id: string }>(
+        await client.query(
           `
             DELETE FROM subscriptions
             WHERE installation_id = $1
-            RETURNING subscription_id
           `,
           [oldInstallationId],
         );
-
-        for (const row of deletedSubs.rows) {
-          await this.supabaseSyncService.enqueueEntity(client, {
-            entity_type: 'subscriptions',
-            entity_id: row.subscription_id,
-            operation: 'delete',
-            payload: { subscription_id: row.subscription_id },
-          });
-        }
       }
 
       await client.query(
@@ -382,7 +265,7 @@ export class InstallationsService {
       );
     }
 
-    const updatedTokenResult = await client.query<PushTokenSyncRow>(
+    await client.query(
       `
         UPDATE device_push_tokens
         SET installation_id = $2,
@@ -391,56 +274,9 @@ export class InstallationsService {
             last_error_at = NULL,
             last_error_code = NULL
         WHERE token_id = $1
-        RETURNING token_id,
-                  installation_id,
-                  fcm_token,
-                  is_active,
-                  last_seen_at::text,
-                  last_success_at::text,
-                  last_error_code
       `,
       [existingTokenResult.rows[0].token_id, installationId, now],
     );
-
-    changes.push({
-      entity_id: updatedTokenResult.rows[0].token_id,
-      operation: 'update',
-      payload: this.mapPushTokenPayload(updatedTokenResult.rows[0]),
-    });
-
-    return changes;
-  }
-
-  private async loadDevicePayload(client: PoolClient, installationId: string) {
-    const result = await client.query<DeviceSyncRow>(
-      `
-        SELECT installation_id,
-               platform,
-               locale,
-               app_version,
-               status,
-               created_at::text,
-               last_seen_at::text
-        FROM device_installations
-        WHERE installation_id = $1
-        LIMIT 1
-      `,
-      [installationId],
-    );
-
-    return result.rows[0];
-  }
-
-  private mapPushTokenPayload(row: PushTokenSyncRow) {
-    return {
-      token_id: row.token_id,
-      installation_id: row.installation_id,
-      token_hash: this.supabaseSyncService.hashPushToken(row.fcm_token),
-      is_active: row.is_active,
-      last_seen_at: row.last_seen_at,
-      last_success_at: row.last_success_at,
-      last_error_code: row.last_error_code,
-    };
   }
 
   private ensureDatabaseConfigured() {

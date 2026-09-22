@@ -3,7 +3,6 @@ import { randomUUID } from 'crypto';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { InstallationsService } from '../installations/installations.service';
-import { SupabaseSyncService } from '../supabase/supabase-sync.service';
 import { TimeUtil } from '../../common/utils/time.util';
 import { CacheService } from '../../common/cache/cache.service';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
@@ -153,7 +152,6 @@ export class SubscriptionsService {
   constructor(
     private readonly installationsService: InstallationsService,
     private readonly databaseService: DatabaseService,
-    private readonly supabaseSyncService: SupabaseSyncService,
     private readonly cacheService: CacheService,
   ) {}
 
@@ -341,13 +339,6 @@ export class SubscriptionsService {
         subscriptionId,
       );
 
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'subscriptions',
-        entity_id: subscriptionId,
-        operation: 'insert',
-        payload: this.toSubscriptionSyncPayload(createdView),
-      });
-
       return createdView;
     });
   }
@@ -447,13 +438,6 @@ export class SubscriptionsService {
         subscriptionId,
       );
 
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'subscriptions',
-        entity_id: subscriptionId,
-        operation: 'update',
-        payload: this.toSubscriptionSyncPayload(updatedView),
-      });
-
       return updatedView;
     });
   }
@@ -476,15 +460,6 @@ export class SubscriptionsService {
       if (result.rowCount === 0) {
         throw new NotFoundException('Підписку не знайдено.');
       }
-
-      await this.supabaseSyncService.enqueueEntity(client, {
-        entity_type: 'subscriptions',
-        entity_id: subscriptionId,
-        operation: 'delete',
-        payload: {
-          subscription_id: subscriptionId,
-        },
-      });
     });
 
     return {
@@ -817,23 +792,6 @@ export class SubscriptionsService {
 
       if ((result.rowCount ?? 0) > 0) {
         inserted += 1;
-        await this.supabaseSyncService.enqueueEntity(client, {
-          entity_type: 'notification_log',
-          entity_id: dispatchId,
-          operation: 'insert',
-          payload: {
-            dispatch_id: dispatchId,
-            subscription_id: input.subscription.subscription_id,
-            installation_id: input.subscription.installation_id,
-            event_id: input.event_id,
-            dispatch_kind: input.dispatch_kind,
-            status: 'queued',
-            provider_message_id: null,
-            provider_error_code: null,
-            queued_at: input.occurred_at,
-            sent_at: null,
-          },
-        });
       }
     }
 
@@ -1777,25 +1735,6 @@ export class SubscriptionsService {
 
   private buildAddressLabel(leafTitleUk: string) {
     return `Точка в межах «${leafTitleUk}»`;
-  }
-
-  private toSubscriptionSyncPayload(view: SubscriptionViewRow) {
-    return {
-      subscription_id: view.subscription_id,
-      installation_id: view.installation_id,
-      label_user: view.label_user,
-      address_uk: view.address_uk,
-      latitude: view.latitude,
-      longitude: view.longitude,
-      leaf_uid: view.leaf_uid,
-      raion_uid: view.raion_uid,
-      oblast_uid: view.oblast_uid,
-      notify_on_start: view.notify_on_start,
-      notify_on_end: view.notify_on_end,
-      is_active: view.is_active,
-      created_at: view.created_at,
-      updated_at: view.updated_at,
-    };
   }
 
   private async getSubscriptionViewsByInstallation(installationId: string) {
