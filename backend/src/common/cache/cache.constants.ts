@@ -7,7 +7,6 @@ export const CACHE_KEYS = {
   THREATS_BUCKET: (ts: number) => `threats:${Math.floor(ts / 60000) * 60000}`,
   FEATURES: (layer: string, lod: string) => `features:${layer}:${lod}`,
   REGIONS_STATIC: 'regions:static',
-  OBLAST_SIMPLIFIED: 'oblast:simplified',
 } as const;
 
 export const CACHE_TTL = {

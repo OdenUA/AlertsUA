@@ -3,9 +3,6 @@ package com.alertsua.app.data
 import android.content.Context
 import android.os.Build
 import com.alertsua.app.BuildConfig
-import com.alertsua.app.map.simplified.LatLng
-import com.alertsua.app.map.simplified.Bounds
-import com.alertsua.app.map.simplified.OblastData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -67,57 +64,9 @@ data class ResolvedPoint(
     val resolvedRegion: ResolvedRegion,
 )
 
-data class ActiveAlertGeometry(
-    val uid: Int,
-    val titleUk: String,
-    val regionType: String,
-    val alertType: String,
-    val alertLevel: String = "red",
-    val geometry: List<List<List<Double>>>,
-)
-
-/** Лёгкий статусный снапшот из /map/bundle — без геометрии, для опроса изменений */
-data class MapStatusSnapshot(
-    val stateVersion: Long,
-    val statusLookup: Map<Int, Triple<String, String, String>>, // uid -> (status, alert_type, alert_level)
-    val activeAlertUids: Set<Int>,
-)
-
 class AlertsRepository(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-
-    // Hardcoded coordinates of oblast centers (regional capital cities)
-    private fun getOblastCenter(titleUk: String): LatLng {
-        return when (titleUk) {
-            "Київська область" -> LatLng(50.45, 30.5238888889)
-            "Вінницька область" -> LatLng(49.2333333333, 28.4666666667)
-            "Дніпропетровська область" -> LatLng(48.4666666667, 35.0166666667)
-            "Донецька область" -> LatLng(48.0, 37.8)
-            "Житомирська область" -> LatLng(50.25, 28.65)
-            "Запорізька область" -> LatLng(47.8333333333, 35.1333333333)
-            "Івано-Франківська область" -> LatLng(48.9166666667, 24.7)
-            "Кіровоградська область" -> LatLng(48.5, 32.2666666667)
-            "Луганська область" -> LatLng(48.5666666667, 39.3)
-            "Волинська область" -> LatLng(50.7333333333, 25.3166666667)
-            "Львівська область" -> LatLng(49.8333333333, 24.0166666667)
-            "Миколаївська область" -> LatLng(46.9666666667, 31.9833333333)
-            "Одеська область" -> LatLng(46.4833333333, 30.7333333333)
-            "Полтавська область" -> LatLng(49.5833333333, 34.55)
-            "Рівненська область" -> LatLng(50.6166666667, 26.25)
-            "Автономна Республіка Крим" -> LatLng(44.95, 34.1)
-            "Сумська область" -> LatLng(50.9, 34.8)
-            "Тернопільська область" -> LatLng(49.55, 25.5833333333)
-            "Закарпатська область" -> LatLng(48.6166666667, 22.3)
-            "Харківська область" -> LatLng(49.9833333333, 36.2166666667)
-            "Херсонська область" -> LatLng(46.6333333333, 32.6)
-            "Хмельницька область" -> LatLng(49.4166666667, 27.0)
-            "Черкаська область" -> LatLng(49.4333333333, 32.0666666667)
-            "Чернівецька область" -> LatLng(48.2833333333, 25.9333333333)
-            "Чернігівська область" -> LatLng(51.5, 31.3)
-            else -> LatLng(0.0, 0.0)
-        }
-    }
 
     fun loadApiBaseUrl(): String {
         val storedValue = preferences.getString(KEY_API_BASE_URL, "http://173.242.53.129/api/v1").orEmpty()
@@ -145,12 +94,6 @@ class AlertsRepository(context: Context) {
         } else {
             null
         }
-
-    fun saveSimplifiedMapEnabled(isEnabled: Boolean) {
-        preferences.edit().putBoolean(KEY_SIMPLIFIED_MAP_ENABLED, isEnabled).apply()
-    }
-
-    fun loadSimplifiedMapEnabled(): Boolean = preferences.getBoolean(KEY_SIMPLIFIED_MAP_ENABLED, false)
 
     fun normalizeApiBaseUrl(rawValue: String): String {
         val trimmed = rawValue.trim().removeSuffix("/")
@@ -635,260 +578,13 @@ class AlertsRepository(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    suspend fun fetchSimplifiedOblastMap(rawApiBaseUrl: String): List<OblastData> = withContext(Dispatchers.IO) {
-        parseSimplifiedOblastBody(loadSimplifiedOblastBody(rawApiBaseUrl))
-    }
-
-    /**
-     * Геометрия областей статична — кэшируем тело ответа на диске (TTL 24ч).
-     * При ошибке сети используется устаревший кэш, если он есть.
-     */
-    private fun loadSimplifiedOblastBody(rawApiBaseUrl: String): String {
-        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
-        val cachedBody = runCatching {
-            oblastCacheFile.takeIf { it.isFile }?.readText()
-        }.getOrNull()
-        val cacheAge = System.currentTimeMillis() - preferences.getLong(KEY_OBLAST_CACHE_TIMESTAMP, 0L)
-        if (cachedBody != null && cacheAge < OBLAST_CACHE_TTL_MS) {
-            return cachedBody
-        }
-
-        val connection = (URL("$apiBaseUrl/map/simplified-oblast").openConnection() as HttpURLConnection)
-            .apply {
-                requestMethod = "GET"
-                doInput = true
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/json")
-            }
-
-        try {
-            val code = connection.responseCode
-            val responseText = readResponse(connection)
-
-            if (code !in 200..299) {
-                android.util.Log.e("SimplifiedMap", "HTTP error: $code")
-                throw IllegalStateException("Failed to load map data")
-            }
-
-            runCatching {
-                oblastCacheFile.writeText(responseText)
-                preferences.edit()
-                    .putLong(KEY_OBLAST_CACHE_TIMESTAMP, System.currentTimeMillis())
-                    .apply()
-            }
-            return responseText
-        } catch (e: Exception) {
-            if (cachedBody != null) {
-                android.util.Log.w("SimplifiedMap", "Network failed, using stale oblast cache", e)
-                return cachedBody
-            }
-            throw e
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private val oblastCacheFile: java.io.File
-        get() = java.io.File(appContext.filesDir, "simplified_oblast_cache.json")
-
-    private fun parseSimplifiedOblastBody(responseText: String): List<OblastData> {
-            val json = JSONObject(responseText)
-            val oblastsArray = json.getJSONArray("oblasts")
-
-            return (0 until oblastsArray.length()).map { i ->
-                try {
-                    val obj = oblastsArray.getJSONObject(i)
-                    val geometry = obj.getJSONObject("geometry")
-                    val coordinates = geometry.getJSONArray("coordinates")
-
-                    val parsedGeometry = parseGeoJsonCoordinates(coordinates)
-
-                    val titleUk = obj.getString("title_uk")
-                    val geoCenter = LatLng(
-                        lat = obj.getJSONObject("center").getDouble("lat"),
-                        lon = obj.getJSONObject("center").getDouble("lon")
-                    )
-
-                    val bounds = Bounds(
-                        west = obj.getJSONObject("bounds").getDouble("west"),
-                        south = obj.getJSONObject("bounds").getDouble("south"),
-                        east = obj.getJSONObject("bounds").getDouble("east"),
-                        north = obj.getJSONObject("bounds").getDouble("north")
-                    )
-
-                    OblastData(
-                        uid = obj.getInt("uid"),
-                        titleUk = titleUk,
-                        status = obj.getString("status"),
-                        alertType = obj.getString("alert_type"),
-                        alertLevel = obj.optString("alert_level", "red"),
-                        geometry = parsedGeometry,
-                        center = geoCenter,
-                        cityCenter = getOblastCenter(titleUk),
-                        bounds = bounds
-                    )
-                } catch (e: Exception) {
-                    android.util.Log.e("SimplifiedMap", "Error parsing oblast $i: ${e.message}", e)
-                    throw e
-                }
-            }
-    }
-
-    private fun parseGeoJsonCoordinates(coordinates: JSONArray): List<List<List<Double>>> {
-        return mutableListOf<List<List<Double>>>().apply {
-            if (coordinates.length() == 0) return@apply
-
-            val firstElement = coordinates.get(0)
-            if (firstElement !is JSONArray) return@apply
-
-            // GeoJSON Polygon:   coordinates = [ ring, ... ]    where ring = [[lon,lat], ...]
-            // GeoJSON MultiPolygon: coordinates = [ polygon, ... ] where polygon = [ring, ...]
-            //
-            // Both firstElement and secondElement are JSONArray.
-            // The key distinction: check what's INSIDE secondElement.
-            //   Polygon:       firstElement[0] = [lon, lat]  → firstElement[0][0] is Double
-            //   MultiPolygon:  firstElement[0] = [[lon,lat],...] → firstElement[0][0] is JSONArray
-
-            val secondElement = firstElement.get(0)
-            if (secondElement !is JSONArray) return@apply
-
-            val thirdElement = secondElement.get(0)
-
-            if (thirdElement is JSONArray) {
-                // MultiPolygon: coordinates = [ polygon, ... ]
-                // polygon = [ ring, ... ], ring = [ [lon,lat], ... ]
-                for (i in 0 until coordinates.length()) {
-                    val polygon = coordinates.getJSONArray(i)
-                    for (j in 0 until polygon.length()) {
-                        val ring = polygon.getJSONArray(j)
-                        add(parseRing(ring))
-                    }
-                }
-            } else {
-                // Polygon: coordinates = [ ring, ... ]
-                // ring = [ [lon,lat], ... ]
-                for (i in 0 until coordinates.length()) {
-                    val ring = coordinates.getJSONArray(i)
-                    add(parseRing(ring))
-                }
-            }
-        }
-    }
-
-    private fun parseRing(ring: JSONArray): List<List<Double>> {
-        val points = mutableListOf<List<Double>>()
-        for (k in 0 until ring.length()) {
-            val point = ring.getJSONArray(k)
-            points.add(listOf(point.getDouble(0), point.getDouble(1)))
-        }
-        return points
-    }
-
-    suspend fun fetchActiveAlertGeometries(rawApiBaseUrl: String): List<ActiveAlertGeometry> = withContext(Dispatchers.IO) {
-        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
-        val connection = (URL("$apiBaseUrl/map/active-alerts-simplified").openConnection() as HttpURLConnection)
-            .apply {
-                requestMethod = "GET"
-                doInput = true
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/json")
-            }
-
-        try {
-            val code = connection.responseCode
-            val responseText = readResponse(connection)
-            if (code !in 200..299) return@withContext emptyList()
-
-            val json = JSONObject(responseText)
-            val features = json.optJSONArray("features") ?: return@withContext emptyList()
-
-            (0 until features.length()).mapNotNull { i ->
-                try {
-                    val feature = features.getJSONObject(i)
-                    val props = feature.getJSONObject("properties")
-                    val geometry = feature.getJSONObject("geometry")
-                    val coordinates = geometry.getJSONArray("coordinates")
-                    ActiveAlertGeometry(
-                        uid = props.getInt("uid"),
-                        titleUk = props.getString("title_uk"),
-                        regionType = props.getString("region_type"),
-                        alertType = props.optString("alert_type", "air_raid"),
-                        alertLevel = props.optString("alert_level", "red"),
-                        geometry = parseGeoJsonCoordinates(coordinates),
-                    )
-                } catch (_: Exception) { null }
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    /**
-     * Лёгкий опрос статусов без геометрии (~86KB). Полные геометрии активных
-     * регионов имеет смысл перезапрашивать только при смене [MapStatusSnapshot.activeAlertUids].
-     */
-    suspend fun fetchMapStatusSnapshot(rawApiBaseUrl: String): MapStatusSnapshot = withContext(Dispatchers.IO) {
-        val apiBaseUrl = normalizeApiBaseUrl(rawApiBaseUrl)
-        val connection = (URL("$apiBaseUrl/map/bundle").openConnection() as HttpURLConnection)
-            .apply {
-                requestMethod = "GET"
-                doInput = true
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/json")
-            }
-
-        try {
-            val code = connection.responseCode
-            val responseText = readResponse(connection)
-            if (code !in 200..299) throw IllegalStateException("Failed to load status bundle: $code")
-
-            val json = JSONObject(responseText)
-
-            val lookup = mutableMapOf<Int, Triple<String, String, String>>()
-            json.optJSONObject("status_lookup")?.let { lookupJson ->
-                val keys = lookupJson.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    val uid = key.toIntOrNull() ?: continue
-                    val entry = lookupJson.optJSONObject(key) ?: continue
-                    lookup[uid] = Triple(
-                        entry.optString("status", " "),
-                        entry.optString("alert_type", "air_raid"),
-                        entry.optString("alert_level", "red"),
-                    )
-                }
-            }
-
-            val activeUids = mutableSetOf<Int>()
-            json.optJSONArray("active_alert_uids")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    activeUids.add(arr.getInt(i))
-                }
-            }
-
-            MapStatusSnapshot(
-                stateVersion = json.optLong("state_version", 0L),
-                statusLookup = lookup,
-                activeAlertUids = activeUids,
-            )
-        } finally {
-            connection.disconnect()
-        }
-    }
-
     private companion object {
         const val LEGACY_EMULATOR_API_BASE_URL = "http://10.0.2.2:43100/api/v1"
         const val PREFERENCES_NAME       = "alerts_ua_preferences"
         const val KEY_API_BASE_URL       = "api_base_url"
         const val KEY_DARK_MODE_ENABLED    = "dark_mode_enabled"
-        const val KEY_SIMPLIFIED_MAP_ENABLED = "simplified_map_enabled"
         const val KEY_FCM_TOKEN          = "fcm_token"
         const val KEY_INSTALLATION_TOKEN = "installation_token"
         const val KEY_SUBSCRIPTION_PINS  = "subscription_pins"
-        const val KEY_OBLAST_CACHE_TIMESTAMP = "oblast_cache_timestamp"
-        const val OBLAST_CACHE_TTL_MS    = 24L * 60 * 60 * 1000
     }
 }

@@ -58,19 +58,9 @@ export class MapController {
     return this.mapService.getActiveAlerts();
   }
 
-  @Get('active-alerts-simplified')
-  getActiveAlertsSimplified() {
-    return this.mapService.getActiveAlertsSimplified();
-  }
-
   @Get('alerts-layer')
   getAlertsLayer() {
     return this.mapService.getAlertsLayer();
-  }
-
-  @Get('simplified-oblast')
-  getSimplifiedOblastMap() {
-    return this.mapService.getSimplifiedOblastMap();
   }
 
   @Get('occupied-territories')

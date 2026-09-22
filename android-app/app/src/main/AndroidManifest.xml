@@ -18,7 +18,7 @@
 
     <!-- Override MapLibre SDK's Vulkan requirement: mark as optional so Google Play
          doesn't filter out devices without Vulkan. MapLibre may still fail at runtime
-         on such devices — the simplified map serves as fallback. -->
+         on such devices without Vulkan support. -->
     <uses-feature
         android:name="android.hardware.vulkan.version"
         android:required="false"

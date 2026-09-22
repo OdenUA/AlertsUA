@@ -470,59 +470,6 @@ export class MapService {
     };
   }
 
-  async getActiveAlertsSimplified() {
-    if (!this.databaseService.isConfigured()) {
-      return {
-        generated_at: TimeUtil.getNowInKyiv(),
-        features: [],
-        note_uk: 'База даних недоступна.',
-      };
-    }
-
-    // Include ALL region types with active alerts — not just raions
-    // Artillery shelling and urban fights often occur in cities/hromadas
-    const result = await this.databaseService.query<{
-      uid: number;
-      title_uk: string;
-      region_type: string;
-      alert_type: string;
-      alert_level: string;
-      geometry_json: string;
-    }>(
-      `
-        SELECT rc.uid,
-               rc.title_uk,
-               rc.region_type,
-               COALESCE(arc.alert_type, 'air_raid') AS alert_type,
-               COALESCE(arc.alert_level, 'red') AS alert_level,
-               ST_AsGeoJSON(COALESCE(rgl.geom, ST_Simplify(rg.geom, 0.005))) AS geometry_json
-        FROM region_catalog rc
-        JOIN region_geometry rg ON rg.uid = rc.uid
-        LEFT JOIN region_geometry_lod rgl ON rgl.uid = rc.uid AND rgl.lod = 'low'
-        JOIN air_raid_state_current arc ON arc.uid = rc.uid
-        WHERE rc.is_active = TRUE
-          AND rc.is_subscription_leaf = TRUE
-          AND arc.status = 'A'
-        ORDER BY rc.uid ASC
-      `,
-    );
-
-    return {
-      generated_at: TimeUtil.getNowInKyiv(),
-      features: result.rows.map((row) => ({
-        type: 'Feature',
-        geometry: JSON.parse(row.geometry_json),
-        properties: {
-          uid: row.uid,
-          title_uk: row.title_uk,
-          region_type: row.region_type,
-          alert_type: row.alert_type,
-          alert_level: row.alert_level,
-        },
-      })),
-    };
-  }
-
   async getAlertsLayer() {
     if (!this.databaseService.isConfigured()) {
       return {
@@ -811,71 +758,6 @@ export class MapService {
 
     const [west, south, east, north] = parts;
     return { west, south, east, north };
-  }
-
-  async getSimplifiedOblastMap() {
-    if (!this.databaseService.isConfigured()) {
-      return {
-        generated_at: TimeUtil.getNowInKyiv(),
-        oblasts: [],
-        note_uk: 'База даних недоступна. Спрощену карту тимчасово не можна отримати.',
-      };
-    }
-
-    const result = await this.databaseService.query<{
-      uid: number;
-      title_uk: string;
-      status: 'A' | 'P' | 'N' | ' ';
-      alert_type: string;
-      alert_level: string;
-      geometry_json: string;
-      center_lon: number;
-      center_lat: number;
-      bounds_west: number;
-      bounds_south: number;
-      bounds_east: number;
-      bounds_north: number;
-    }>(
-      `
-        SELECT rc.uid,
-               rc.title_uk,
-               COALESCE(arc.status, 'N') AS status,
-               COALESCE(arc.alert_type, 'air_raid') AS alert_type,
-               COALESCE(arc.alert_level, 'red') AS alert_level,
-               ST_AsGeoJSON(ST_SimplifyPreserveTopology(rg.geom, 0.01)) AS geometry_json,
-               ST_X(rg.centroid) AS center_lon,
-               ST_Y(rg.centroid) AS center_lat,
-               ST_XMin(rg.bbox) AS bounds_west,
-               ST_YMin(rg.bbox) AS bounds_south,
-               ST_XMax(rg.bbox) AS bounds_east,
-               ST_YMax(rg.bbox) AS bounds_north
-        FROM region_catalog rc
-        JOIN region_geometry rg ON rg.uid = rc.uid
-        LEFT JOIN air_raid_state_current arc ON arc.uid = rc.uid
-        WHERE rc.is_active = TRUE
-          AND rc.region_type = 'oblast'
-        ORDER BY rc.uid ASC
-      `,
-    );
-
-    return {
-      generated_at: TimeUtil.getNowInKyiv(),
-      oblasts: result.rows.map((row) => ({
-        uid: row.uid,
-        title_uk: row.title_uk,
-        status: row.status,
-        alert_type: row.alert_type,
-        alert_level: row.alert_level,
-        geometry: JSON.parse(row.geometry_json),
-        center: { lat: row.center_lat, lon: row.center_lon },
-        bounds: {
-          west: row.bounds_west,
-          south: row.bounds_south,
-          east: row.bounds_east,
-          north: row.bounds_north,
-        },
-      })),
-    };
   }
 
   async archiveOldThreats(): Promise<number> {
