@@ -84,11 +84,13 @@ class ThreatLayersManager(
     companion object {
         const val CHANNEL_DEFAULT = "@kpszsu"
         const val CHANNEL_WAR_MONITOR = "@war_monitor"
+        const val CHANNEL_ROZVIDKANEBA = "@rozvidkaneba"
 
         // Порт THREAT_CHANNEL_CONFIG из constants.js (sender per channel)
         val CHANNEL_SENDERS = mapOf(
             CHANNEL_DEFAULT to "Повітряні Сили ЗС України",
             CHANNEL_WAR_MONITOR to "War Monitor",
+            CHANNEL_ROZVIDKANEBA to "Розвідка Неба",
         )
 
         private const val LAYER_DIRECTION_LINE = "threat-direction-line"
@@ -166,7 +168,7 @@ class ThreatLayersManager(
 
     private var overlays: List<ThreatOverlay> = emptyList()
     private var visibleOverlays: List<ThreatOverlay> = emptyList()
-    private var activeChannel: String? = CHANNEL_DEFAULT
+    private var activeChannels: Set<String> = setOf(CHANNEL_DEFAULT)
     // Кластер: representative overlayId → список оверлеев в кластере
     private var clusterMap: Map<String, List<ThreatOverlay>> = emptyMap()
 
@@ -268,11 +270,11 @@ class ThreatLayersManager(
     }
 
     /**
-     * Смена активного канала — только перерендер из кэша, без сети
-     * (порт setThreatChannel: null скрывает слой полностью).
+     * Смена набора активных каналов — только перерендер из кэша, без сети.
+     * Пустой набор скрывает все угрозы.
      */
-    fun setThreatChannel(channelRef: String?) {
-        activeChannel = channelRef
+    fun setThreatChannels(channels: Set<String>) {
+        activeChannels = channels
         renderFromCache()
     }
 
@@ -289,7 +291,7 @@ class ThreatLayersManager(
 
         // Пересчитываем кластеры при новом зуме (minSepPx зависит от iconScale)
         val clusters = computeClusters(visibleOverlays)
-        clusterMap = clusters.associateBy({ it.first().overlayId }, { it })
+        clusterMap = buildClusterMap(clusters)
 
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
@@ -315,7 +317,7 @@ class ThreatLayersManager(
     fun hitTest(latLng: LatLng): List<ThreatInfo> {
         val map = this.map ?: return emptyList()
         val style = this.style ?: return emptyList()
-        if (activeChannel == null) return emptyList()
+        if (activeChannels.isEmpty()) return emptyList()
         if (style.getLayer(LAYER_ICONS) == null) return emptyList()
 
         val density = appContext.resources.displayMetrics.density
@@ -323,19 +325,23 @@ class ThreatLayersManager(
         val r = TAP_TOLERANCE_DP * density
         val rect = RectF(screen.x - r, screen.y - r, screen.x + r, screen.y + r)
         val hits = map.queryRenderedFeatures(rect, LAYER_ICONS)
-        // Интерактивны только угрозы с попапом (как hitMarker в JS)
-        val hit = hits.firstOrNull { it.getBooleanProperty("has_popup") } ?: return emptyList()
-        val overlayId = hit.getStringProperty("overlay_id") ?: return emptyList()
-        // Ищем кластер по representative overlayId
-        val cluster = clusterMap[overlayId]
-        if (cluster != null) {
-            return cluster
-                .sortedByDescending { it.occurredAtMs }
-                .map { it.toThreatInfo() }
+        // Собираем все кластеры из всех хитов — при перекрывающихся иконках
+        // нужно вернуть сообщения из всех кластеров в зоне тапа
+        val collected = LinkedHashMap<String, ThreatOverlay>()
+        for (hit in hits) {
+            if (!hit.getBooleanProperty("has_popup")) continue
+            val overlayId = hit.getStringProperty("overlay_id") ?: continue
+            val cluster = clusterMap[overlayId]
+            if (cluster != null) {
+                cluster.forEach { collected.putIfAbsent(it.overlayId, it) }
+            } else {
+                val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId }
+                if (overlay != null) collected.putIfAbsent(overlay.overlayId, overlay)
+            }
         }
-        // Фолбэк: одиночный оверлей
-        val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId } ?: return emptyList()
-        return listOf(overlay.toThreatInfo())
+        return collected.values
+            .sortedByDescending { it.occurredAtMs }
+            .map { it.toThreatInfo() }
     }
 
     private fun ThreatOverlay.toThreatInfo(): ThreatInfo {
@@ -497,9 +503,9 @@ class ThreatLayersManager(
     }
 
     private fun filterVisible(now: Long): List<ThreatOverlay> {
-        val channel = activeChannel ?: return emptyList()
+        if (activeChannels.isEmpty()) return emptyList()
         return overlays.filter { o ->
-            isVisibleByTime(o, now) && (o.channelRef ?: CHANNEL_DEFAULT) == channel
+            isVisibleByTime(o, now) && (o.channelRef ?: CHANNEL_DEFAULT) in activeChannels
         }
     }
 
@@ -656,7 +662,7 @@ class ThreatLayersManager(
     private fun buildRenderData(now: Long): RenderData {
         val visible = filterVisible(now)
         val clusters = computeClusters(visible)
-        clusterMap = clusters.associateBy({ it.first().overlayId }, { it })
+        clusterMap = buildClusterMap(clusters)
 
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
@@ -728,6 +734,17 @@ class ThreatLayersManager(
             c.members.sortByDescending { it.occurredAtMs }
             c.members
         }
+    }
+
+    /** Кластер-мапа: каждый overlayId всех членов кластера → сам кластер. */
+    private fun buildClusterMap(clusters: List<List<ThreatOverlay>>): Map<String, List<ThreatOverlay>> {
+        val map = HashMap<String, List<ThreatOverlay>>(clusters.size * 2)
+        for (cluster in clusters) {
+            for (member in cluster) {
+                map[member.overlayId] = cluster
+            }
+        }
+        return map
     }
 
     /** Одна иконка на кластер: representative = самый свежий оверлей */

@@ -72,9 +72,10 @@ import com.alertsua.app.ui.faq.FaqBottomSheet
 import com.alertsua.app.ui.rateprompt.RatePromptCard
 import com.alertsua.app.ui.settings.SettingsScreen
 
-// Telegram-каналы — источники угроз. Одновременно показываются угрозы только одного канала.
+// Telegram-каналы — источники угроз. Можно включать/выключать в любой комбинации.
 private const val THREAT_CHANNEL_KPSZSU = "@kpszsu"
 private const val THREAT_CHANNEL_WAR_MONITOR = "@war_monitor"
+private const val THREAT_CHANNEL_ROZVIDKANEBA = "@rozvidkaneba"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,7 +111,18 @@ fun AlertsUaApp(
         }
     }
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    var activeThreatChannel by rememberSaveable { mutableStateOf<String?>(THREAT_CHANNEL_KPSZSU) }
+    var activeThreatChannelsCsv by rememberSaveable { mutableStateOf(THREAT_CHANNEL_KPSZSU) }
+    val activeThreatChannels = remember(activeThreatChannelsCsv) {
+        activeThreatChannelsCsv.split(',').filter { it.isNotBlank() }.toSet()
+    }
+    val toggleThreatChannel: (String) -> Unit = { channel ->
+        val current = activeThreatChannelsCsv.split(',').filter { it.isNotBlank() }.toSet()
+        activeThreatChannelsCsv = if (channel in current) {
+            (current - channel).joinToString(",")
+        } else {
+            (current + channel).joinToString(",")
+        }
+    }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var showFaqDialog by remember { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
@@ -202,19 +214,18 @@ fun AlertsUaApp(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             // All buttons centered horizontally
-                            IconButton(onClick = {
-                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
-                            }) {
+                            val kpszsuActive = THREAT_CHANNEL_KPSZSU in activeThreatChannels
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_KPSZSU) }) {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        id = if (kpszsuActive) {
                                             R.drawable.ic_threat_layers_telegram_active
                                         } else {
                                             R.drawable.ic_threat_layers_telegram_inactive
                                         },
                                     ),
                                     contentDescription = stringResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        id = if (kpszsuActive) {
                                             R.string.threat_layers_hide_telegram
                                         } else {
                                             R.string.threat_layers_show_telegram
@@ -223,10 +234,8 @@ fun AlertsUaApp(
                                     tint = Color.Unspecified,
                                 )
                             }
-                            val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
-                            IconButton(onClick = {
-                                activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
-                            }) {
+                            val warMonitorActive = THREAT_CHANNEL_WAR_MONITOR in activeThreatChannels
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_WAR_MONITOR) }) {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
                                     contentDescription = stringResource(
@@ -240,6 +249,27 @@ fun AlertsUaApp(
                                         .size(24.dp)
                                         .alpha(if (warMonitorActive) 1f else 0.45f),
                                     colorFilter = if (warMonitorActive) {
+                                        null
+                                    } else {
+                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                    },
+                                )
+                            }
+                            val rozvidkanebaActive = THREAT_CHANNEL_ROZVIDKANEBA in activeThreatChannels
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_ROZVIDKANEBA) }) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_rozvidkaneba),
+                                    contentDescription = stringResource(
+                                        id = if (rozvidkanebaActive) {
+                                            R.string.threat_layers_hide_rozvidkaneba
+                                        } else {
+                                            R.string.threat_layers_show_rozvidkaneba
+                                        },
+                                    ),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(if (rozvidkanebaActive) 1f else 0.45f),
+                                    colorFilter = if (rozvidkanebaActive) {
                                         null
                                     } else {
                                         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
@@ -325,7 +355,7 @@ fun AlertsUaApp(
                         modifier = modifierWithPadding.fillMaxSize(),
                         darkMode = darkMode,
                         refreshTrigger = refreshTrigger,
-                        activeThreatChannel = activeThreatChannel,
+                        activeThreatChannels = activeThreatChannels,
                         locationPermissionGranted = locationPermissionGranted,
                         requestLocationPermission = requestLocationPermission,
                         mapTopInsetDp = 0,
@@ -339,19 +369,18 @@ fun AlertsUaApp(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            IconButton(onClick = {
-                                activeThreatChannel = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) null else THREAT_CHANNEL_KPSZSU
-                            }) {
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_KPSZSU) }) {
+                                val kpszsuActive = THREAT_CHANNEL_KPSZSU in activeThreatChannels
                                 Icon(
                                     painter = painterResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        id = if (kpszsuActive) {
                                             R.drawable.ic_threat_layers_telegram_active
                                         } else {
                                             R.drawable.ic_threat_layers_telegram_inactive
                                         },
                                     ),
                                     contentDescription = stringResource(
-                                        id = if (activeThreatChannel == THREAT_CHANNEL_KPSZSU) {
+                                        id = if (kpszsuActive) {
                                             R.string.threat_layers_hide_telegram
                                         } else {
                                             R.string.threat_layers_show_telegram
@@ -360,10 +389,8 @@ fun AlertsUaApp(
                                     tint = Color.Unspecified,
                                 )
                             }
-                            val warMonitorActive = activeThreatChannel == THREAT_CHANNEL_WAR_MONITOR
-                            IconButton(onClick = {
-                                activeThreatChannel = if (warMonitorActive) null else THREAT_CHANNEL_WAR_MONITOR
-                            }) {
+                            val warMonitorActive = THREAT_CHANNEL_WAR_MONITOR in activeThreatChannels
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_WAR_MONITOR) }) {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_threat_layers_war_monitor),
                                     contentDescription = stringResource(
@@ -377,6 +404,27 @@ fun AlertsUaApp(
                                         .size(24.dp)
                                         .alpha(if (warMonitorActive) 1f else 0.45f),
                                     colorFilter = if (warMonitorActive) {
+                                        null
+                                    } else {
+                                        ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+                                    },
+                                )
+                            }
+                            val rozvidkanebaActive = THREAT_CHANNEL_ROZVIDKANEBA in activeThreatChannels
+                            IconButton(onClick = { toggleThreatChannel(THREAT_CHANNEL_ROZVIDKANEBA) }) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_threat_layers_rozvidkaneba),
+                                    contentDescription = stringResource(
+                                        id = if (rozvidkanebaActive) {
+                                            R.string.threat_layers_hide_rozvidkaneba
+                                        } else {
+                                            R.string.threat_layers_show_rozvidkaneba
+                                        },
+                                    ),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(if (rozvidkanebaActive) 1f else 0.45f),
+                                    colorFilter = if (rozvidkanebaActive) {
                                         null
                                     } else {
                                         ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })

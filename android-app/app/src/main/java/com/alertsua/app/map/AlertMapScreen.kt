@@ -144,7 +144,7 @@ fun AlertMapScreen(
     modifier: Modifier = Modifier,
     darkMode: Boolean = false,
     refreshTrigger: Int = 0,
-    activeThreatChannel: String? = "@kpszsu",
+    activeThreatChannels: Set<String> = setOf("@kpszsu"),
     locationPermissionGranted: Boolean = false,
     requestLocationPermission: (() -> Unit)? = null,
     mapTopInsetDp: Int = 0,
@@ -436,8 +436,8 @@ fun AlertMapScreen(
         }
     }
 
-    LaunchedEffect(activeThreatChannel) {
-        mapController.setThreatChannel(activeThreatChannel)
+    LaunchedEffect(activeThreatChannels) {
+        mapController.setThreatChannels(activeThreatChannels)
     }
 
     // Watch for location permission grant from MainActivity
@@ -1573,12 +1573,14 @@ private fun ThreatPopupDialog(
     // Первый элемент — самый свежий (hitTest сортирует по occurredAtMs desc)
     val primary = threats.first()
     // Аватар канала: @kpszsu — векторный порт THREAT_LAYER_TELEGRAM_ICON_MARKUP,
-    // @war_monitor — PNG из assets (как в THREAT_CHANNEL_CONFIG).
-    val warMonitorAvatar = remember(primary.channelRef) {
-        if (primary.channelRef == ThreatLayersManager.CHANNEL_WAR_MONITOR) {
-            runCatching { decodeSampledAsset(context, "map/icons/war-monitor.png", 40) }.getOrNull()
-        } else {
-            null
+    // @war_monitor — PNG из assets, @rozvidkaneba — JPG из drawable.
+    val channelAvatarBitmap = remember(primary.channelRef) {
+        when (primary.channelRef) {
+            ThreatLayersManager.CHANNEL_WAR_MONITOR ->
+                runCatching { decodeSampledAsset(context, "map/icons/war-monitor.png", 40) }.getOrNull()
+            ThreatLayersManager.CHANNEL_ROZVIDKANEBA ->
+                runCatching { decodeSampledAsset(context, "map/icons/rozvidkaneba.jpg", 40) }.getOrNull()
+            else -> null
         }
     }
 
@@ -1598,9 +1600,9 @@ private fun ThreatPopupDialog(
                 val avatarModifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(8.dp))
-                if (warMonitorAvatar != null) {
+                if (channelAvatarBitmap != null) {
                     Image(
-                        bitmap = warMonitorAvatar.asImageBitmap(),
+                        bitmap = channelAvatarBitmap.asImageBitmap(),
                         contentDescription = null,
                         modifier = avatarModifier,
                         contentScale = ContentScale.Fit,

@@ -162,6 +162,11 @@ export class TelegramIngestService implements OnModuleDestroy {
           continue;
         }
 
+        // Сообщения с «Дорозвідка» — служебные, не несут угроз
+        if (text.includes('Дорозвідка')) {
+          continue;
+        }
+
         const messageDate = this.toDate(message.date);
         const maxMessageAgeMs = 60 * 60 * 1000; // 1 hour
         if (Date.now() - messageDate.getTime() > maxMessageAgeMs) {

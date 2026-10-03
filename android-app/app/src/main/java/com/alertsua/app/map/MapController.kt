@@ -41,7 +41,6 @@ class MapController {
 
     private val pins = LinkedHashMap<String, LatLng>()
     private var userLocation: LatLng? = null
-    private var threatChannel: String? = null
 
     private val mapClickListener = MapLibreMap.OnMapClickListener { latLng -> handleMapClick(latLng) }
 
@@ -145,10 +144,9 @@ class MapController {
         }
     }
 
-    /** Selects which threat source channel is shown on the map (null hides all threats). Фаза B. */
-    fun setThreatChannel(channelRef: String?) {
-        threatChannel = channelRef
-        threatLayersManager?.setThreatChannel(channelRef)
+    /** Selects which threat source channels are shown on the map (empty set hides all threats). */
+    fun setThreatChannels(channels: Set<String>) {
+        threatLayersManager?.setThreatChannels(channels)
     }
 
     fun zoomIn() {

@@ -467,6 +467,7 @@ export class GeminiThreatParserService {
         WHERE lpj.status IN ('pending', 'failed')
           AND lpj.attempt_count < $1
           AND tmr.message_date > NOW() AT TIME ZONE 'Europe/Kyiv' - INTERVAL '1 hour'
+          AND tmr.message_text NOT LIKE '%Дорозвідка%'
         ORDER BY lpj.created_at ASC
         LIMIT $2
       `,

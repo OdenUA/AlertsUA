@@ -70,7 +70,8 @@ fun FaqBottomSheet(
             question = "Що означають кнопки у додатку?",
             answer = "![tg.png](tg.png) - Показує шар загроз з телеграм-каналу «Повітряні сили ЗСУ».\n" +
                     "![radar.png](radar.png) - Показує шар загроз з телеграм-каналу War Monitor.\n" +
-                    "Одночасно відображаються загрози лише з одного каналу: натискання на іншу кнопку перемикає джерело, а повторне натискання на активну кнопку приховує шар загроз.\n" +
+                    "![rozvidka.png](rozvidka.png) - Показує шар загроз з телеграм-каналу «Розвідка Неба».\n" +
+                    "Канали можна вмикати та вимикати в будь-якій комбінації: натискання на кнопку перемикає канал, а повторне натискання приховує його загрози.\n" +
                     "Якщо з'явиться інформація про переміщення БпЛА чи ракет у цих телеграм-каналах, на мапі автоматично з'явиться іконка загрози та приблизний напрямок руху.\n" +
                     "Натиснувши на іконку загрози, можна побачити повідомлення з телеграм-каналу-джерела щодо цієї загрози \n" +
                     "Зверніть увагу, що дані про рух об'єктів є орієнтовними та надходять із певною затримкою, без деталізації. \n" +
@@ -330,6 +331,26 @@ private fun FAQItemView(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "• Загрози з каналу War Monitor",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 26.sp
+                                    )
+                                }
+                            }
+                            line.contains("rozvidka.png") -> {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_threat_layers_rozvidkaneba),
+                                        contentDescription = "Загрози з каналу «Розвідка Неба»",
+                                        modifier = Modifier.size(24.dp),
+                                        tint = Color.Unspecified
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "• Загрози з каналу «Розвідка Неба»",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         lineHeight = 26.sp
