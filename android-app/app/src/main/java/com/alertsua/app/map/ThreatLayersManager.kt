@@ -325,23 +325,32 @@ class ThreatLayersManager(
         val r = TAP_TOLERANCE_DP * density
         val rect = RectF(screen.x - r, screen.y - r, screen.x + r, screen.y + r)
         val hits = map.queryRenderedFeatures(rect, LAYER_ICONS)
-        // Собираем все кластеры из всех хитов — при перекрывающихся иконках
-        // нужно вернуть сообщения из всех кластеров в зоне тапа
-        val collected = LinkedHashMap<String, ThreatOverlay>()
-        for (hit in hits) {
-            if (!hit.getBooleanProperty("has_popup")) continue
-            val overlayId = hit.getStringProperty("overlay_id") ?: continue
-            val cluster = clusterMap[overlayId]
-            if (cluster != null) {
-                cluster.forEach { collected.putIfAbsent(it.overlayId, it) }
-            } else {
-                val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId }
-                if (overlay != null) collected.putIfAbsent(overlay.overlayId, overlay)
-            }
+        // Интерактивны только угрозы с попапом (как hitMarker в JS)
+        // Среди хитов выбираем ближайший к точке тапа кластер
+        val candidates = hits.filter { it.getBooleanProperty("has_popup") }
+        if (candidates.isEmpty()) return emptyList()
+        val closestHit = candidates.minByOrNull { hit ->
+            val lng = hit.geometry()?.let { g ->
+                (g as? org.maplibre.geojson.Point)?.longitude() ?: Double.MAX_VALUE
+            } ?: Double.MAX_VALUE
+            val lat = hit.geometry()?.let { g ->
+                (g as? org.maplibre.geojson.Point)?.latitude() ?: Double.MAX_VALUE
+            } ?: Double.MAX_VALUE
+            val dLng = lng - latLng.longitude
+            val dLat = lat - latLng.latitude
+            dLng * dLng + dLat * dLat
+        } ?: return emptyList()
+        val overlayId = closestHit.getStringProperty("overlay_id") ?: return emptyList()
+        // Ищем кластер по overlayId (clusterMap индексирован по всем членам)
+        val cluster = clusterMap[overlayId]
+        if (cluster != null) {
+            return cluster
+                .sortedByDescending { it.occurredAtMs }
+                .map { it.toThreatInfo() }
         }
-        return collected.values
-            .sortedByDescending { it.occurredAtMs }
-            .map { it.toThreatInfo() }
+        // Фолбэк: одиночный оверлей
+        val overlay = visibleOverlays.firstOrNull { it.overlayId == overlayId } ?: return emptyList()
+        return listOf(overlay.toThreatInfo())
     }
 
     private fun ThreatOverlay.toThreatInfo(): ThreatInfo {
