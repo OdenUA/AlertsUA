@@ -125,6 +125,16 @@ class ThreatLayersManager(
         private const val TAP_TOLERANCE_DP = 20f
         private const val THREAT_ICON_SIZE_DP = 28f
 
+        // Стопы threatIconSize() по зуму — пульсация масштабирует их значения
+        private const val THREAT_ICON_SIZE_Z5 = 0.6f
+        private const val THREAT_ICON_SIZE_Z6 = 0.78f
+        private const val THREAT_ICON_SIZE_Z7 = 1.0f
+
+        // Пульсация иконок угроз: тик и период синуса, размер 1.0 ± амплитуда
+        private const val PULSE_TICK_MS = 66L
+        private const val PULSE_PERIOD_SEC = 2.5
+        private const val PULSE_SCALE_AMPLITUDE = 0.10
+
         private val COLOR_DIRECTION = Color.parseColor("#4285f4")
 
         // Максимальная широта Web-Mercator (как в Leaflet SphericalMercator)
@@ -214,11 +224,13 @@ class ThreatLayersManager(
         this.style = style
         layersInstalled = false
         installLayers()
+        startIconPulse()
     }
 
     fun detach() {
         pollJob?.cancel()
         loadJob?.cancel()
+        stopIconPulse()
         map?.removeOnCameraIdleListener(cameraIdleListener)
         map = null
         style = null
@@ -240,6 +252,7 @@ class ThreatLayersManager(
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     fun onHostStart() {
+        startIconPulse()
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             // Первичный fetch уже делает loadJob (init) — не дублируем запрос
@@ -258,6 +271,7 @@ class ThreatLayersManager(
     fun onHostStop() {
         pollJob?.cancel()
         pollJob = null
+        stopIconPulse()
     }
 
     fun refreshNow() {
@@ -719,13 +733,52 @@ class ThreatLayersManager(
         )
     }
 
-    // Размер иконки угрозы (makeThreatIcon): zoom<=5 → 0.6, zoom<=6 → 0.78, дальше 1.0
-    private fun threatIconSize(): Expression = Expression.interpolate(
+    // Размер иконки угрозы (makeThreatIcon): zoom<=5 → 0.6, zoom<=6 → 0.78, дальше 1.0.
+    // Параметр scale (пульсация) масштабирует стопы, а не выражение целиком:
+    // ["zoom"] нельзя вкладывать в арифметику — только top-level interpolate/step.
+    private fun threatIconSize(scale: Double = 1.0): Expression = Expression.interpolate(
         Expression.linear(), Expression.zoom(),
-        Expression.stop(5f, 0.6f),
-        Expression.stop(6f, 0.78f),
-        Expression.stop(7f, 1.0f),
+        Expression.stop(5f, (THREAT_ICON_SIZE_Z5 * scale).toFloat()),
+        Expression.stop(6f, (THREAT_ICON_SIZE_Z6 * scale).toFloat()),
+        Expression.stop(7f, (THREAT_ICON_SIZE_Z7 * scale).toFloat()),
     )
+
+    // ── Пульсация иконок ─────────────────────────────────────────────────────
+
+    private var pulseJob: Job? = null
+
+    /**
+     * Лёгкая пульсация всех иконок угроз РАЗМЕРОМ: стопы icon-size x синус
+     * 0.90…1.10 (~1.8 с период). Каждый тик перепроверяет layersInstalled
+     * и молча глотает IllegalStateException от умирающего стиля (смена темы) —
+     * следующий тик попробует снова.
+     */
+    private fun startIconPulse() {
+        if (pulseJob?.isActive == true) return
+        pulseJob = scope.launch {
+            val startMs = SystemClock.elapsedRealtime()
+            while (isActive) {
+                val s = style
+                if (s != null && layersInstalled) {
+                    val phaseSec = (SystemClock.elapsedRealtime() - startMs) / 1000.0
+                    val k = 2.0 * Math.PI * phaseSec / PULSE_PERIOD_SEC
+                    val scale = 1.0 + PULSE_SCALE_AMPLITUDE * sin(k)
+                    try {
+                        (s.getLayer(LAYER_ICONS) as? SymbolLayer)
+                            ?.setProperties(PropertyFactory.iconSize(threatIconSize(scale)))
+                    } catch (e: IllegalStateException) {
+                        // style race — следующий тик попробует снова
+                    }
+                }
+                delay(PULSE_TICK_MS)
+            }
+        }
+    }
+
+    private fun stopIconPulse() {
+        pulseJob?.cancel()
+        pulseJob = null
+    }
 
     // ── Render data ──────────────────────────────────────────────────────────
 
