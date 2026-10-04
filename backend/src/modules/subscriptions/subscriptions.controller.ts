@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Header,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { ResolvePointDto } from './dto/resolve-point.dto';
@@ -38,11 +39,24 @@ export class SubscriptionsController {
     @Headers('authorization') authorization: string | undefined,
     @Query('android_id') androidId?: string,
   ) {
-    // If android_id is provided, try to fetch subscriptions by android_id (fallback for reinstalled apps)
+    // Token-first: the installation token identifies the device exactly. The android_id
+    // lookup is only a fallback for reinstalled apps whose token is not yet known to the server
+    // (installations created before the android_id column existed have NULL there and would
+    // otherwise be invisible to their owner while pushes keep flowing).
+    const token = this.extractToken(authorization);
+    if (token) {
+      try {
+        return await this.subscriptionsService.list(token, androidId);
+      } catch (error) {
+        if (!(error instanceof UnauthorizedException)) {
+          throw error;
+        }
+      }
+    }
     if (androidId) {
       return this.subscriptionsService.listByAndroidId(androidId);
     }
-    return this.subscriptionsService.list(this.extractToken(authorization));
+    return this.subscriptionsService.list(token ?? '');
   }
 
   @Patch(':subscriptionId')

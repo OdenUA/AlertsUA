@@ -15,6 +15,7 @@ type InstallationIdentity = {
   device_model: string | null;
   notifications_enabled: boolean;
   status: string;
+  android_id: string | null;
   last_seen_at: string;
 };
 
@@ -61,6 +62,13 @@ export class InstallationsService {
           dto.android_id ?? null,
           now,
         ],
+      );
+
+      await this.reclaimInstallationsByAndroidIdWithClient(
+        client,
+        installationId,
+        dto.android_id,
+        now,
       );
 
       await this.persistPushToken(client, installationId, dto.fcm_token, now);
@@ -155,6 +163,7 @@ export class InstallationsService {
                device_model,
                notifications_enabled,
                status,
+               android_id,
                last_seen_at::text
         FROM device_installations
         WHERE installation_token_hash = $1
@@ -249,13 +258,16 @@ export class InstallationsService {
           [installationId, oldInstallationId],
         );
       } else {
-        // Different device or no android_id - delete old subscriptions as before
+        // Different or missing android_id: the FCM token physically belongs to a single
+        // device, so the subscriptions follow the token instead of being silently deleted
+        // (an old installation may have android_id = NULL from before the column existed).
         await client.query(
           `
-            DELETE FROM subscriptions
-            WHERE installation_id = $1
+            UPDATE subscriptions
+            SET installation_id = $1
+            WHERE installation_id = $2
           `,
-          [oldInstallationId],
+          [installationId, oldInstallationId],
         );
       }
 
@@ -277,6 +289,93 @@ export class InstallationsService {
       `,
       [existingTokenResult.rows[0].token_id, installationId, now],
     );
+  }
+
+  /**
+   * Self-heal for duplicate/orphaned installations sharing an android_id:
+   * backfills android_id on the current installation (pre-android_id installations have NULL)
+   * and migrates subscriptions from older active installations of the same device,
+   * marking those replaced. Called lazily whenever an app contacts the API with a valid token.
+   */
+  async reclaimInstallationsByAndroidId(
+    currentInstallationId: string,
+    androidId: string | null | undefined,
+  ): Promise<void> {
+    if (!this.isUsableAndroidId(androidId)) {
+      return;
+    }
+    const now = TimeUtil.getNowInKyiv();
+    await this.databaseService.withTransaction(async (client) => {
+      await this.reclaimInstallationsByAndroidIdWithClient(
+        client,
+        currentInstallationId,
+        androidId,
+        now,
+      );
+    });
+  }
+
+  async reclaimInstallationsByAndroidIdWithClient(
+    client: PoolClient,
+    currentInstallationId: string,
+    androidId: string | null | undefined,
+    now: string,
+  ): Promise<void> {
+    if (!this.isUsableAndroidId(androidId)) {
+      return;
+    }
+    const normalizedAndroidId = (androidId as string).trim();
+
+    await client.query(
+      `
+        UPDATE device_installations
+        SET android_id = $1, last_seen_at = $3
+        WHERE installation_id = $2
+          AND android_id IS NULL
+      `,
+      [normalizedAndroidId, currentInstallationId, now],
+    );
+
+    const duplicates = await client.query<{ installation_id: string }>(
+      `
+        SELECT di.installation_id
+        FROM device_installations di
+        WHERE di.android_id = $1
+          AND di.status = 'active'
+          AND di.installation_id <> $2
+          AND di.created_at < (
+            SELECT created_at FROM device_installations WHERE installation_id = $2
+          )
+        FOR UPDATE
+      `,
+      [normalizedAndroidId, currentInstallationId],
+    );
+
+    for (const duplicate of duplicates.rows) {
+      await client.query(
+        `
+          UPDATE subscriptions
+          SET installation_id = $1
+          WHERE installation_id = $2
+        `,
+        [currentInstallationId, duplicate.installation_id],
+      );
+      await client.query(
+        `
+          UPDATE device_installations
+          SET status = 'replaced'
+          WHERE installation_id = $1
+        `,
+        [duplicate.installation_id],
+      );
+    }
+  }
+
+  private isUsableAndroidId(androidId: string | null | undefined): boolean {
+    const normalized = androidId?.trim();
+    // 9774d56d682e5494 is the well-known constant ANDROID_ID of legacy emulators —
+    // reclaiming by it would merge unrelated emulator installations into one.
+    return !!normalized && normalized !== '9774d56d682e5494';
   }
 
   private ensureDatabaseConfigured() {

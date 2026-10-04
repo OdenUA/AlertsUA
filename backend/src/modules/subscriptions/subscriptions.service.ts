@@ -343,9 +343,18 @@ export class SubscriptionsService {
     });
   }
 
-  async list(token: string) {
+  async list(token: string, androidId?: string) {
     this.ensureDatabaseConfigured();
     const installation = await this.installationsService.requireByToken(token);
+
+    // Self-heal: backfill android_id (installations from before the android_id column
+    // have NULL there) and absorb subscriptions from older duplicate installations of
+    // the same device, so pre-android_id users can see and manage their subscriptions.
+    await this.installationsService.reclaimInstallationsByAndroidId(
+      installation.installation_id,
+      androidId,
+    );
+
     const result = await this.getSubscriptionViewsByInstallation(installation.installation_id);
     return {
       subscriptions: result,
