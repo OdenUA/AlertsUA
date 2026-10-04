@@ -7,6 +7,7 @@ import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { AlertsService } from '../alerts/alerts.service';
 import { CacheService } from '../../common/cache/cache.service';
 import { CACHE_KEYS, CACHE_CHANNELS } from '../../common/cache/cache.constants';
+import { isReconOnlyReport } from './recon-report.util';
 
 type AlertStatus = 'A' | 'P' | 'N' | ' ';
 type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical' | 'nuclear';
@@ -183,7 +184,7 @@ Example 19: "Дніпропетровщина: 🔄 7х реактивів в с
 TERMINOLOGY (monitoring channel slang):
 - "Бандеролі" / "Бандероль" = jet-powered UAV (реактивний БпЛА) → threat_kind "uav"
 - "реактив" / "реактиви" / "реактивний" = jet-powered UAV → threat_kind "uav" (even without the word "БпЛА")
-- "дорозвідка" = reconnaissance UAV activity → threat_kind "uav"
+- "дорозвідка" = reconnaissance activity. It is NOT a threat by itself — NEVER emit a threat object for a recon mention alone ("Київ дорозвідка", "дорозвідка до відбою", "дорозвідка по Бандеролях", "дорозвідка БПЛА" = no threat object). In a mixed post (recon + strike report), quote and emit ONLY the strike lines
 - "мгКР" / "КР" / "крилаті ракети" / "крилата ракета" = cruise missile(s) → threat_kind "missile"
 - "Увага по крилатим ракетам" = cruise missile warning for the named place → threat_kind "missile"
 - "балістична ракета" / "балістика" / "загроза балістичного удару" / "пуски балістики" = ballistic missile → threat_kind "ballistic"
@@ -413,7 +414,18 @@ export class GeminiThreatParserService {
       try {
         const attemptCount = await this.markJobProcessing(job.job_id);
 
-        const candidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, job.raw_message_id);
+        const parsedCandidates = await this.parseWithGemini(job.job_id, attemptCount, job.message_text, job.raw_message_id);
+
+        // Защита в глубину: даже если LLM вернул объект угрозы по строке с
+        // «дорозвідка» (смешанный пост), чистые дорозвідка-цитаты отбрасываем
+        const candidates = parsedCandidates.filter(
+          (candidate) => !isReconOnlyReport(candidate.source_excerpt ?? ''),
+        );
+        if (parsedCandidates.length > candidates.length) {
+          this.logger.log(
+            `Job ${job.job_id}: dropped ${parsedCandidates.length - candidates.length} recon-only candidate(s)`,
+          );
+        }
 
         if (candidates.length === 0) {
           await this.markJobFailed(job.job_id, 'No candidates were extracted by parser.', true);
@@ -467,7 +479,12 @@ export class GeminiThreatParserService {
         WHERE lpj.status IN ('pending', 'failed')
           AND lpj.attempt_count < $1
           AND tmr.message_date > NOW() AT TIME ZONE 'Europe/Kyiv' - INTERVAL '1 hour'
-          AND tmr.message_text NOT LIKE '%Дорозвідка%'
+          -- чистые «дорозвідка»-отчёты (без признаков реальной угрозы) в LLM не отправляем;
+          -- смешанные посты (дорозвідка + мгКР/ракеты/...) анализируются как обычно
+          AND NOT (
+            tmr.message_text ILIKE '%дорозвідк%'
+            AND tmr.message_text !~* 'мгКР|крилат|ракет|баліст|іскандер|кинджал|циркон|шахед|пуски?|удар|увага по|міг-31|ту-22|ту-95|ту-160|су-34|су-25|су-35|зліт|авіац|реактив|вибух|🅿'
+          )
         ORDER BY lpj.created_at ASC
         LIMIT $2
       `,

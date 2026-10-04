@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { calculateBearingDegrees, resolveMovementBearingDegrees } from '../../common/utils/bearing.util';
+import { stripRozvidkanebaPromo } from '../../common/utils/message-text.util';
 import { DatabaseService } from '../../common/database/database.service';
 import { TimeUtil } from '../../common/utils/time.util';
 import { CacheService } from '../../common/cache/cache.service';
@@ -658,7 +659,7 @@ export class MapService {
         color_hex: row.color_hex,
         occurred_at: row.occurred_at,
         expires_at: row.expires_at,
-        message_text: row.message_text,
+        message_text: stripRozvidkanebaPromo(row.message_text),
         message_date: row.message_date,
         source_excerpt: row.source_excerpt,
         channel_ref: row.channel_ref,

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { DatabaseService } from '../../common/database/database.service';
 import { TimeUtil } from '../../common/utils/time.util';
+import { stripRozvidkanebaPromo } from '../../common/utils/message-text.util';
 import type {
   FeaturesBundleDto,
   MapBundleDto,
@@ -347,7 +348,7 @@ export class MapBundleService {
       color_hex: row.color_hex,
       occurred_at: row.occurred_at,
       expires_at: row.expires_at,
-      message_text: row.message_text,
+      message_text: stripRozvidkanebaPromo(row.message_text),
       message_date: row.message_date,
       source_excerpt: row.source_excerpt,
       channel_ref: row.channel_ref,

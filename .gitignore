@@ -57,3 +57,6 @@ backend/data/
 .tmp-screenshots/
 backend/*.tar.gz
 backend/tmp_*.sql
+
+# Full VPS backups (contain secrets, multi-GB)
+backups/

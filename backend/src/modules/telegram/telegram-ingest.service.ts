@@ -5,6 +5,7 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
+import { isReconOnlyReport } from './recon-report.util';
 
 type TelegramRawMessage = {
   id?: number;
@@ -162,8 +163,9 @@ export class TelegramIngestService implements OnModuleDestroy {
           continue;
         }
 
-        // Сообщения с «Дорозвідка» — служебные, не несут угроз
-        if (text.includes('Дорозвідка')) {
+        // «Дорозвідка»-отчёты без признаков реальной угрозы — служебные,
+        // в LLM не отправляем и на карте не показываем
+        if (isReconOnlyReport(text)) {
           continue;
         }
 
