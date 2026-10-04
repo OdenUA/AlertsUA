@@ -19,8 +19,13 @@ set "AVD_NAME=Pixel_6"
 
 echo [*] Starting emulator: %AVD_NAME% (cold boot)
 rem Размер userdata-раздела берется из AVD config.ini (disk.dataPartition.size)
-rem -no-snapshot-load: всегда холодная загрузка, сохранённый снапшот не используется
-start "" "%EMULATOR_EXE%" -avd %AVD_NAME% -no-snapshot-load
+rem -no-snapshot: полный cold boot — снапшот не загружается и не сохраняется
+start "" "%EMULATOR_EXE%" -avd %AVD_NAME% -no-snapshot
+
+rem Единый adb для всех скриптов: поднимаем сервер той же версии,
+rem что и в install-debug.bat (иначе чужой adb пересоздаст сервер
+rem другой версии и эмулятор уйдёт в offline)
+"%ADB%" start-server >nul 2>&1
 
 echo [*] Waiting for emulator to boot...
 :wait_loop

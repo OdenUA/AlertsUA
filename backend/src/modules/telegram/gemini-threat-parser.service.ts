@@ -26,6 +26,7 @@ type ParseCandidate = {
   target_lng: number | null;
   movement_bearing_deg: number | null;
   source_excerpt: string | null;
+  origin_inferred?: boolean;
 };
 
 type PendingJobRow = {
@@ -109,16 +110,23 @@ TARGET INDICATORS (destination):
 - "в напрямку [місце]" = towards [place]
 - "курсом на [місце]" = course towards [place]
 
-CURRENT LOCATION (where threat is NOW) — HIGHEST PRIORITY, overrides all other rules:
+CURRENT LOCATION & DIRECTION PATTERNS (where threat IS now / where it is HEADING):
 - "БпЛА по межі X і Y" = UAV ON THE BORDER between X and Y → use border coordinates as origin
 - "БпЛА в районі [місто]" = UAV currently IN/AT area of [city] → use city coordinates as origin
 - "БпЛА над [місто/область]" = UAV currently OVER [city/oblast] → use those coordinates as origin
 - "БпЛА біля [місто]" = UAV currently NEAR [city] → use city coordinates as origin
 - "БпЛА в сторону X" = heading TOWARDS X → X is target, not current location
-- CRITICAL: When current location is explicitly stated, use it as origin. Do NOT apply regional entry vectors!
 - "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
 - "вектор - [city1]/[city2]" = exact movement direction towards those towns.
 - "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
+- Priority among these patterns is defined in LOCATION RESOLUTION PRIORITY below.
+
+SECTION HEADERS (REGION PREFIXES) — CRITICAL:
+- A line starting with "Харківщина:", "Дніпропетровщина:", "Сумщина:", "Запорізька область:" etc. is a SECTION HEADER naming the oblast that the lines below it belong to. Colloquial "-щина"/"-цина" names map to official oblast names (Харківщина = Харківська область, Полтавщина = Полтавська область, Запоріжжя = Запорізька область).
+- The threat's location MUST be consistent with its section header: the drone/threat origin or current location belongs to the oblast named in the header.
+- Set region_hint to the official oblast name from the section header (e.g. "Харківська область").
+- DISAMBIGUATE ambiguous toponyms using the section header FIRST. Similar-sounding town names in different oblasts are DIFFERENT places (Васильківка in Dnipropetrovsk oblast is NOT Василівка in Zaporizhzhia oblast). Choose the town consistent with the header. If no town with that name exists in the header oblast, do NOT silently relocate the threat to another oblast — use the header oblast for the coordinates and put the literal place name in target_hint.
+- A course INTO a different oblast is allowed only when the text explicitly names that other oblast/city as the destination ("курсом на Полтавщину"). Then the target coordinates must be inside the DESTINATION oblast, while region_hint stays the header oblast.
 
 Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."
 - ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
@@ -126,28 +134,29 @@ Example 10: "🛵 БпЛА в акваторії Чорного моря кур�
 - Bearing: ~320°
 
 Example 11: "Пуски КАБ на Дніпропетровщину." (direction not stated, inferred from east)
-- ORIGIN: "окупована Донецька область" (implied/inferred, ~48.3°N, 37.5°E)
-- TARGET: "на Дніпропетровщину" → EASTERN border of Dnipropetrovsk oblast (~48.5°N, 36.5°E)
+- ORIGIN: "окупована Донецька область" (implied/inferred, ~48.3°N, 37.5°E), origin_inferred: true
+- TARGET: "на Дніпропетровщину" → EASTERN border of Dnipropetrovsk oblast (~48.5°N, 36.5°E); target_hint: "Дніпропетровська область"
 - Bearing: ~270° (west)
 - CRITICAL: Target is at BORDER ENTRY POINT, not oblast center!
+- CRITICAL: Border entry points are APPROXIMATE direction markers, not precise impact points. For oblast-level targets, target_hint must be the OBLAST NAME — never invent a specific city.
 
 Example 12: "🛵 КАБ на Харківщину з півночі."
-- ORIGIN: "з півночі" → north (Belgorod direction, ~50.3°N, 36.5°E)
-- TARGET: "на Харківщину" → NORTHERN border of Kharkiv oblast (~50.0°N, 36.5°E)
+- ORIGIN: "з півночі" → north (Belgorod direction, ~50.3°N, 36.5°E), origin_inferred: true
+- TARGET: "на Харківщину" → NORTHERN border of Kharkiv oblast (~50.0°N, 36.5°E); target_hint: "Харківська область"
 - Bearing: ~180° (south)
-- CRITICAL: Target is at BORDER ENTRY POINT from threat origin direction!
+- CRITICAL: Target is at BORDER ENTRY POINT from threat origin direction! Border entry points are approximate direction markers, not precise impact points.
 
 Example 13: "🛵 БпЛА на Запоріжжі (Тернувате-Новомиколаївка)"
-- ORIGIN: "окупована Запорізька область" (implied/inferred occupied south, ~46.5°N, 36.0°E)
-- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E)
+- ORIGIN: "окупована Запорізька область" (implied/inferred occupied south, ~46.8°N, 35.5°E), origin_inferred: true
+- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E), origin_inferred: false
 - Bearing: ~355° (north/north-west)
 - CRITICAL: Since UAV is heading towards Ternuvate/Novomykolaivka in Zaporizhzhia oblast, the origin MUST NOT be set to Zaporizhzhia center. Infer it from the occupied south (~80km away) so the vector points from occupied territory towards the target.
 
 Example 14: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
-- ORIGIN: "окупований південний схід" (implied/inferred occupied Donetsk/Zaporizhzhia, ~47.2°N, 36.2°E)
-- TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E)
+- ORIGIN: "окупований південний схід" (implied/inferred occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E), origin_inferred: true
+- TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E), origin_inferred: false
 - Bearing: ~330° (north-west)
-- CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from occupied Zaporizhzhia/Donetsk region to point the flight vector from occupied territories towards Synelnykove.
+- CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from the occupied Zaporizhzhia/Donetsk frontline to point the flight vector from occupied territories towards Synelnykove.
 
 Example 15: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
 - CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
@@ -202,11 +211,13 @@ TERMINOLOGY (monitoring channel slang):
 
 COORDINATE REQUIREMENTS:
 - You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng
-- DO NOT rely on server-side hints or fallbacks
+- Hints and coordinates are validated together server-side: coordinates MUST match the places named in origin_hint/target_hint/region_hint. Keep hints accurate even when you are unsure about coordinates.
+- If you are NOT confident in exact coordinates (ambiguous toponym, unsure which same-named town, uncertain oblast), output NULL coordinates for that point — the server will resolve them from your hints. NEVER fabricate precise-looking coordinates for a place you are unsure about.
 - If both origin and target are specified, they MUST be different coordinates (>1km apart)
 - If exact coordinates are unknown, provide approximate center coordinates of the region/city
 - Coordinates: latitude (-90 to 90), longitude (-180 to 180)
 - NEVER use 0.0, 0.0 as fallback - use null instead
+- VERIFY every toponym before assigning coordinates: Ukraine has many same-named towns, and similar-sounding names in different oblasts are different places (Васильківка vs Василівка, Кам'янка, Новомиколаївка, etc.). Coordinates must match the place named in the text AND be consistent with the section header oblast. When unsure between two same-named places, prefer the one inside the section header oblast.
 
 GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
 
@@ -221,14 +232,15 @@ GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
      * Mykolaiv/Kherson oblasts: threats typically from SOUTH/EAST (Crimea) → use southern border entry point.
    - If direction is UNKNOWN and no context is available, use the oblast center coordinates.
    - If threat targets a CITY (not oblast), use city coordinates.
+   - For oblast-level targets, target_hint MUST be the oblast name (e.g. "Дніпропетровська область"), NEVER an invented city. Border entry points are approximate direction markers, not precise impact points.
 
 2. For UAV (Drone) Threats (Inferred Entry Vectors) — ONLY when origin is NOT explicitly stated:
    - CRITICAL: These rules apply ONLY when the message does NOT explicitly state WHERE the drone currently is.
    - If the message says "по межі X і Y", "над X", "в районі X", "біля X" — the origin is EXPLICIT. Do NOT use these entry vectors. Use the stated location directly.
    - "в напрямку [область]" means heading TOWARDS that oblast, NOT that the drone is currently there. Do NOT apply that oblast's entry vector when "в напрямку" is used.
    - If origin IS NOT stated and no direction phrases are present, use these regional entry vectors as fallback ONLY:
-     * Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате"): from SOUTH (~46.5°N, 36.0°E)
-     * Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове"): from SOUTH-EAST (~47.2°N, 36.2°E)
+     * Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате"): from SOUTH (occupied southern Zaporizhzhia, ~46.8°N, 35.5°E)
+     * Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове"): from SOUTH-EAST (occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E)
      * Targets in Kharkiv oblast (e.g., "на Харків"): from NORTH (~50.4°N, 36.3°E)
      * Targets in Odesa/Mykolaiv/Kherson: from SOUTH (~45.5°N, 31.5°E)
      * Targets in Sumy/Chernihiv: from NORTH-EAST (~51.5°N, 34.7°E)
@@ -237,7 +249,12 @@ GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
    - WRONG EXAMPLE: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини" → origin is on Sumy/Kharkiv border (~50.0°N, 34.0°E), NOT from Poltava entry vectors
    - RIGHT EXAMPLE: "БпЛА на Полтавщині" (no origin stated) → origin from EAST (~49.5°N, 35.5°E)
 
-CRITICAL LOCATION PRIORITY RULES (apply in this order, stop at first match):
+ORIGIN INFERENCE MARKER (origin_inferred) — REQUIRED in every threat object:
+- origin_inferred = FALSE when the message explicitly states WHERE the threat/drone IS or comes FROM as a NAMED PLACE: "над X", "в районі X", "біля X", "по межі X і Y", "з X"/"від X" with a named place, "в акваторії Чорного моря".
+- origin_inferred = TRUE when the origin was GUESSED by inference: occupied-territory guesses ("окупований південь/схід"), regional entry vectors, or direction-only phrases without a named place ("з півночі", "з півдня").
+- Never guess when the location is stated: if the text says where the drone is, that place IS the origin and origin_inferred = FALSE.
+
+LOCATION RESOLUTION PRIORITY (single authority — apply in this order, stop at first match):
 
 1. EXPLICIT CURRENT LOCATION — when message states WHERE the drone IS RIGHT NOW:
    - "по межі X і Y" = ON THE BORDER between X and Y → use border coordinates as origin
@@ -268,6 +285,12 @@ OTHER RULES:
 - If one post describes several simultaneous threats, return one threat object per independently trackable threat
 - "Швидкісна ціль" (high-speed target) = missile threat
 - Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)
+- Confidence calibration (set honestly per threat):
+  * 0.9–1.0: explicit named place(s), coordinates certain, unambiguous text
+  * 0.7–0.9: clear region/city, minor uncertainty about exact position
+  * 0.4–0.7: inferred origin (entry vector, occupied-territory guess), ambiguous or same-named toponym, approximate coordinates
+  * 0.1–0.4: unclear or fragmented text, significant guessing involved
+- region_hint = official Ukrainian name of the oblast this threat line belongs to (take it from the SECTION HEADER, e.g. "Харківська область"); null only if the post has no regional context at all
 - All hints (region_hint, origin_hint, target_hint, direction_text) must be in Ukrainian only
 
 SOURCE EXCERPT (per-threat quote):
@@ -277,7 +300,7 @@ SOURCE EXCERPT (per-threat quote):
 - Do not translate, rephrase or summarize — quote the original text
 
 Return strict JSON only with this schema:
-{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|ballistic|tactical_aviation|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
+{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|ballistic|tactical_aviation|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_inferred":false,"origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
 No markdown, no comments, no extra keys.`;
 
   return `${promptText}\n\nText: ${messageText}`;
@@ -308,7 +331,10 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
 export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown', hasTarget: boolean) {
   // Threat visibility windows: UAVs and tactical aviation are slow-moving and
   // stay on the map longer; missiles/KABs are short-lived; ballistic is very fast.
-  if (threatKind === 'uav' || threatKind === 'tactical_aviation') {
+  if (threatKind === 'uav') {
+    return 35;
+  }
+  if (threatKind === 'tactical_aviation') {
     return 45;
   }
   if (threatKind === 'ballistic') {
@@ -936,6 +962,7 @@ export class GeminiThreatParserService {
       target_lng: this.toLongitude(candidate.target_lng),
       movement_bearing_deg: this.toBearing(candidate.movement_bearing_deg),
       source_excerpt: this.sanitizeSourceExcerpt(candidate.source_excerpt, messageText),
+      origin_inferred: candidate.origin_inferred === true,
     };
 
     // Validate coordinates and log warnings for suspicious patterns

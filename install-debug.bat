@@ -23,11 +23,22 @@ if not exist "%APK%" (
 )
 
 echo [*] Looking for an active emulator...
+rem Тот же adb, что и в start-emulator.bat: start-server гасит сервер чужой
+rem версии и поднимает свой — после этого эмулятору нужно несколько секунд
+rem на переподключение, поэтому сканируем devices в цикле, а не один раз.
+"%ADB%" start-server >nul 2>&1
 set "EMULATOR="
-for /f "tokens=1,2" %%A in ('"%ADB%" devices') do (
-    set "_serial=%%A"
-    if "%%B"=="device" if "!_serial:~0,9!"=="emulator-" if not defined EMULATOR set "EMULATOR=%%A"
+for /l %%I in (1,1,30) do (
+    if not defined EMULATOR (
+        for /f "tokens=1,2" %%A in ('"%ADB%" devices') do (
+            set "_serial=%%A"
+            if "%%B"=="device" if "!_serial:~0,9!"=="emulator-" if not defined EMULATOR set "EMULATOR=%%A"
+        )
+    )
+    if defined EMULATOR goto emulator_found
+    timeout /t 2 /nobreak >nul
 )
+:emulator_found
 
 if not defined EMULATOR (
     echo [!] No active emulator found. Start it with start-emulator.bat first.

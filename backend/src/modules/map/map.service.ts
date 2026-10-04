@@ -609,7 +609,18 @@ export class MapService {
                tmr.message_date::text AS message_date,
                tv.source_excerpt,
                tmr.channel_id AS channel_ref,
-               ST_AsGeoJSON(COALESCE(tv.origin_geom, tv.target_geom)) AS marker_json,
+               -- Icon anchors on the NAMED place (target) when the origin was only
+               -- inferred (occupied-territory guess / entry vector); for explicit
+               -- origins (stated current location) or legacy rows without the flag
+               -- it stays on the origin.
+               ST_AsGeoJSON(
+                 CASE
+                   WHEN (tv.parsed_payload->>'origin_inferred')::boolean IS TRUE
+                     AND tv.target_geom IS NOT NULL
+                     THEN tv.target_geom
+                   ELSE COALESCE(tv.origin_geom, tv.target_geom)
+                 END
+               ) AS marker_json,
                ST_AsGeoJSON(tv.corridor_geom) AS corridor_json,
                ST_AsGeoJSON(tv.danger_area_geom) AS area_json
         FROM threat_visual_overlays tvo
