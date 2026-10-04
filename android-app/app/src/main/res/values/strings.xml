@@ -21,6 +21,13 @@
     <string name="resolved_status_partial">Є зміни</string>
     <string name="resolved_status_none">Тривоги немає</string>
     <string name="resolved_status_value">%1$s</string>
+    <string name="banner_enable_location">Увімкніть геолокацію, щоб бачити тривоги у вашій громаді</string>
+    <string name="banner_resolving_location">Шукаємо вашу громаду…</string>
+    <string name="banner_status_none">У вашій громаді все спокійно</string>
+    <string name="banner_status_yellow">Жовта тривога — будьте пильні</string>
+    <string name="banner_status_red">Червона тривога — перебувайте в укритті</string>
+    <string name="banner_duration_active">Триває вже %1$s</string>
+    <string name="banner_duration_just_now">Триває щойно</string>
     <string name="subscribe_button">Підписатися на сповіщення</string>
     <string name="region_label_hromada">Громада</string>
     <string name="region_label_raion">Район</string>

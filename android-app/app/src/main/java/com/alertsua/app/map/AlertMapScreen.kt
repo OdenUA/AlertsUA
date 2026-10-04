@@ -104,6 +104,7 @@ import com.alertsua.app.data.ResolvedPoint
 import com.alertsua.app.data.ResolvedRegion
 import com.alertsua.app.data.SubscriptionPin
 import com.alertsua.app.location.getCurrentLocation
+import com.alertsua.app.location.locationUpdates
 import com.alertsua.app.ui.faq.FaqBottomSheet
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
@@ -126,6 +127,9 @@ private enum class SheetActionMode {
     SUBSCRIBE,
     UNSUBSCRIBE,
 }
+
+// Сдвиг GPS, при котором баннер перепроверяет громаду (ON_RESUME)
+private const val HROMADA_RESOLVE_MOVE_METERS = 1500f
 
 private data class RegionHierarchyDisplay(
     val hromadaTitleUk: String,
@@ -266,6 +270,8 @@ fun AlertMapScreen(
     // могут одновременно запустить оба LaunchedEffect (по subscriptionsLoaded
     // и по locationPermissionGranted), что дублирует запросы к API.
     var locationResolveInFlight by remember { mutableStateOf(false) }
+    // Время последнего успешного резолва громады (для баннера)
+    var lastHromadaResolveAtMs by remember { mutableStateOf(0L) }
 
     fun locateUserOnMap() {
         coroutineScope.launch {
@@ -302,40 +308,94 @@ fun AlertMapScreen(
         value
     }
 
+    // Обновляет статус-пилюлю баннера из AlertLayersManager (null = нет тривоги).
+    // Вызывается при смене leafUid и после каждого применения статусов бандлом.
+    fun updateBannerAlertStatus() {
+        val uid = CurrentAlertBannerState.leafUid ?: return
+        CurrentAlertBannerState.alertStatus =
+            mapController.alertLayersManager?.statusForUid(uid.toString())
+    }
+
+    // Резолв текущей громады по GPS: обновляет CurrentAlertBannerState и локальный
+    // кеш экрана. Сетевой запрос делается только если громада ещё не определена
+    // либо вызов с force=true (GPS сдвинулся — перепроверка). knownLocation —
+    // уже полученная геолокация (из потока обновлений), чтобы не дёргать fused повторно.
+    suspend fun resolveCurrentHromada(
+        force: Boolean = false,
+        knownLocation: android.location.Location? = null,
+    ): ResolvedPoint? {
+        if (locationResolveInFlight) return null
+        if (!force && resolvedHromada != null) return null
+        locationResolveInFlight = true
+        android.util.Log.d("AlertMapScreen", "Getting current location...")
+        isResolvingLocation = true
+        try {
+            val location = knownLocation ?: getCurrentLocation(context) ?: return null
+            android.util.Log.d("AlertMapScreen", "Location acquired: ${location.latitude}, ${location.longitude}")
+            val resolvedLocation = repository.resolvePoint(
+                rawApiBaseUrl = activeApiBaseUrl,
+                latitude = location.latitude,
+                longitude = location.longitude
+            )
+            val region = resolvedLocation.resolvedRegion
+            lastHromadaResolveAtMs = System.currentTimeMillis()
+            resolvedLocationPoint = location.latitude to location.longitude
+            android.util.Log.d("AlertMapScreen", "Resolved region: hromada=${region.hromadaTitleUk}")
+            if (region.hromadaTitleUk.isNotEmpty()) {
+                resolvedHromada = region.hromadaTitleUk
+                CurrentAlertBannerState.hromadaTitle = region.hromadaTitleUk
+                CurrentAlertBannerState.leafUid = region.leafUid
+                CurrentAlertBannerState.activeFrom = region.activeFrom
+                updateBannerAlertStatus()
+            }
+            return resolvedLocation
+        } finally {
+            isResolvingLocation = false
+            locationResolveInFlight = false
+        }
+    }
+
+    // ON_RESUME: перепроверяем громаду, только если GPS заметно уехал
+    // (громада границами велика; без сдвига повторный резолв не нужен).
+    fun refreshHromadaIfMoved() {
+        if (!CurrentAlertBannerState.locationPermissionGranted) return
+        coroutineScope.launch {
+            if (locationResolveInFlight) return@launch
+            val location = getCurrentLocation(context) ?: return@launch
+            val cached = resolvedLocationPoint
+            val moved = if (cached == null) {
+                true
+            } else {
+                val dist = FloatArray(1)
+                android.location.Location.distanceBetween(
+                    cached.first, cached.second,
+                    location.latitude, location.longitude, dist,
+                )
+                dist[0] > HROMADA_RESOLVE_MOVE_METERS
+            }
+            if (moved) resolveCurrentHromada(force = true, knownLocation = location)
+        }
+    }
+
     suspend fun resolveLocationAndPrompt() {
         // Пропускаем повторный вызов, пока идёт текущий, или если промпт уже показан
         if (locationResolveInFlight || resolvedHromada != null) return
-        locationResolveInFlight = true
         android.util.Log.d("AlertMapScreen", "resolveLocationAndPrompt called")
-        isResolvingLocation = true
         try {
-            android.util.Log.d("AlertMapScreen", "Getting current location...")
-            val location = getCurrentLocation(context)
-            if (location != null) {
-                android.util.Log.d("AlertMapScreen", "Location acquired: ${location.latitude}, ${location.longitude}")
-                resolvedLocationPoint = location.latitude to location.longitude
-                val resolvedLocation = repository.resolvePoint(
-                    rawApiBaseUrl = activeApiBaseUrl,
-                    latitude = location.latitude,
-                    longitude = location.longitude
-                )
-                val region = resolvedLocation.resolvedRegion
-                android.util.Log.d("AlertMapScreen", "Resolved region: hromada=${region.hromadaTitleUk}")
-                if (region.hromadaTitleUk.isNotEmpty()) {
-                    resolvedHromada = region.hromadaTitleUk
-                    showLocationPrompt = true
-                    android.util.Log.d("AlertMapScreen", "Showing location prompt for: $resolvedHromada")
-                }
-            } else {
+            val resolvedLocation = resolveCurrentHromada()
+            if (resolvedLocation == null) {
                 android.util.Log.d("AlertMapScreen", "Location is null")
                 snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
+                return
+            }
+            val region = resolvedLocation.resolvedRegion
+            if (region.hromadaTitleUk.isNotEmpty()) {
+                showLocationPrompt = true
+                android.util.Log.d("AlertMapScreen", "Showing location prompt for: ${region.hromadaTitleUk}")
             }
         } catch (e: Exception) {
             android.util.Log.e("AlertMapScreen", "Error resolving location", e)
             snackbarHostState.showSnackbar(context.getString(R.string.location_loading_failed))
-        } finally {
-            isResolvingLocation = false
-            locationResolveInFlight = false
         }
     }
 
@@ -416,13 +476,9 @@ fun AlertMapScreen(
                 android.util.Log.d("AlertMapScreen", "Has location permission: $hasLocationPermission (from param: $locationPermissionGranted)")
                 if (hasLocationPermission) {
                     resolveLocationAndPrompt()
-                } else {
-                    android.util.Log.d("AlertMapScreen", "Requesting location permission...")
-                    // Add delay to ensure Activity is ready
-                    kotlinx.coroutines.delay(500)
-                    android.util.Log.d("AlertMapScreen", "Launching permission request...")
-                    requestLocationPermission?.invoke()
                 }
+                // Если разрешения нет — запрос покажет стартап-эффект выше;
+                // после выдачи сработает LaunchedEffect(locationPermissionGranted, ...)
             } else {
                 android.util.Log.d("AlertMapScreen", "Conditions not met: pins empty=${subscriptionPins.isEmpty()}, dontAsk=$dontAskForLocation")
             }
@@ -449,6 +505,50 @@ fun AlertMapScreen(
         }
     }
 
+    // Баннер громады: резолвим при любой выдаче разрешения (независимо от
+    // подписок/промпта). Идёт после промпт-эффекта: in-flight guard и кеш
+    // в resolveCurrentHromada предотвращают дублирующий сетевой запрос.
+    LaunchedEffect(locationPermissionGranted) {
+        CurrentAlertBannerState.locationPermissionGranted = locationPermissionGranted
+        if (locationPermissionGranted) {
+            resolveCurrentHromada()
+            updateBannerAlertStatus()
+            // Живой трекинг: маркер на карте и перепроверка громады баннера
+            // при заметном сдвиге GPS (эмиссия от locationUpdates каждые 250 м/30 с)
+            locationUpdates(context).collect { location ->
+                mapController.setUserLocation(location.latitude, location.longitude)
+                val cached = resolvedLocationPoint
+                val moved = if (cached == null) {
+                    true
+                } else {
+                    val dist = FloatArray(1)
+                    android.location.Location.distanceBetween(
+                        cached.first, cached.second,
+                        location.latitude, location.longitude, dist,
+                    )
+                    dist[0] > HROMADA_RESOLVE_MOVE_METERS
+                }
+                if (moved) {
+                    resolveCurrentHromada(force = true, knownLocation = location)
+                }
+            }
+        }
+    }
+
+    // Запрос разрешения на геолокацию при старте: нужен и баннеру, и промпту
+    // подписки. Не спрашиваем, если пользователь отключил запросы в диалоге
+    // громады (dont_ask_location) или разрешение уже выдано.
+    var startupPermissionRequested by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(locationPermissionGranted) {
+        if (!locationPermissionGranted && !dontAskForLocation && !startupPermissionRequested) {
+            startupPermissionRequested = true
+            // Небольшая задержка, чтобы Activity гарантированно была готова
+            kotlinx.coroutines.delay(500)
+            android.util.Log.d("AlertMapScreen", "Startup: requesting location permission...")
+            requestLocationPermission?.invoke()
+        }
+    }
+
     // Центрирование по кнопке локации после выдачи разрешения
     LaunchedEffect(locationPermissionGranted) {
         if (locationPermissionGranted && locateAfterPermissionGrant) {
@@ -463,6 +563,7 @@ fun AlertMapScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 mapController.refreshAlerts()
                 refreshUserLocationMarker()
+                refreshHromadaIfMoved()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -475,7 +576,13 @@ fun AlertMapScreen(
     var mapPageReady by remember { mutableStateOf(false) }
     DisposableEffect(mapController) {
         mapController.onMapPageReady = { mapPageReady = true }
-        onDispose { mapController.onMapPageReady = null }
+        // Статусы применились (poll / FCM / ручной refresh) — обновляем пилюлю
+        val layersManager = mapController.alertLayersManager
+        layersManager?.onStatusesApplied = { updateBannerAlertStatus() }
+        onDispose {
+            mapController.onMapPageReady = null
+            layersManager?.onStatusesApplied = null
+        }
     }
 
     // ── Sync subscriptions from server on startup (with one retry on failure) ─

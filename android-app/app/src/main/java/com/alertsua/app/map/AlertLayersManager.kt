@@ -42,6 +42,13 @@ import java.net.URL
 import kotlin.math.roundToInt
 
 /**
+ * Эффективный статус региона после resolveStatuses: статус из бандла
+ * ('A' / 'P' / ' ') + тип и уровень тривоги (red/yellow).
+ * Читается баннером текущей громады через statusForUid().
+ */
+data class AlertStatusInfo(val status: String, val alertType: String, val alertLevel: String)
+
+/**
  * Нативный порт alert-layers.js / static-geometry.js / occupied-territories.js /
  * map-initialization.js (маска): статичная GeoJSON-геометрия из assets +
  * статусы тривог из GET {apiBase}/map/bundle, периодический опрос раз в 30 сек.
@@ -99,7 +106,7 @@ class AlertLayersManager(
         private val COLOR_OBLAST_STATUS_BORDER_IDLE = Color.parseColor("#4d7a8a")
         private val COLOR_OCCUPIED = Color.parseColor("#dc2626")
 
-        private val DEFAULT_STATUS = StatusInfo(" ", "air_raid", "red")
+        private val DEFAULT_STATUS = AlertStatusInfo(" ", "air_raid", "red")
 
         // uid → короткое название области (без слова «область») для подписей на карте
         private val OBLAST_CITY_NAMES: Map<String, String> = mapOf(
@@ -187,9 +194,14 @@ class AlertLayersManager(
     private var kyivCityUid: String? = null
 
     // Эффективные статусы по uid (после наследования м. Київ)
-    private data class StatusInfo(val status: String, val alertType: String, val alertLevel: String)
+    private var resolvedStatuses: Map<String, AlertStatusInfo> = emptyMap()
 
-    private var resolvedStatuses: Map<String, StatusInfo> = emptyMap()
+    /** Баннер текущей громады: статус конкретного uid (null — нет в lookup). */
+    fun statusForUid(uid: String): AlertStatusInfo? = resolvedStatuses[uid]
+
+    // Вызывается после каждого успешного применения статусов (poll / FCM /
+    // ручной refresh / первичная загрузка) — баннер перечитывает statusForUid
+    var onStatusesApplied: (() -> Unit)? = null
 
     // ── Attach / detach ──────────────────────────────────────────────────────
 
@@ -208,6 +220,7 @@ class AlertLayersManager(
     fun detach() {
         pollJob?.cancel()
         loadJob?.cancel()
+        onStatusesApplied = null
         map = null
         style = null
         layersInstalledForStyle = null
@@ -305,7 +318,7 @@ class AlertLayersManager(
     private suspend fun fetchBundleWithRetry(
         maxAttempts: Int = 3,
         initialDelayMs: Long = 1_000,
-    ): Pair<Long, Map<String, StatusInfo>>? {
+    ): Pair<Long, Map<String, AlertStatusInfo>>? {
         var delayMs = initialDelayMs
         repeat(maxAttempts) { attempt ->
             runCatching { fetchBundle() }
@@ -488,7 +501,7 @@ class AlertLayersManager(
 
     private suspend fun applyStatusBundle(
         stateVersion: Long,
-        lookup: Map<String, StatusInfo>,
+        lookup: Map<String, AlertStatusInfo>,
         notifyOnChange: Boolean,
         force: Boolean = false,
     ) {
@@ -518,6 +531,8 @@ class AlertLayersManager(
         // иначе при исключении она навсегда останется «применённой»
         if (stateVersion > appliedStateVersion) appliedStateVersion = stateVersion
 
+        onStatusesApplied?.invoke()
+
         val wasInitial = !initialStatusesApplied
         initialStatusesApplied = true
         if (wasInitial) {
@@ -529,7 +544,7 @@ class AlertLayersManager(
         }
     }
 
-    private fun fetchBundle(): Pair<Long, Map<String, StatusInfo>> {
+    private fun fetchBundle(): Pair<Long, Map<String, AlertStatusInfo>> {
         val url = apiBaseUrl.trimEnd('/') + "/map/bundle"
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
@@ -542,14 +557,14 @@ class AlertLayersManager(
 
             val json = JSONObject(text)
             val stateVersion = json.optLong("state_version", 0)
-            val lookup = mutableMapOf<String, StatusInfo>()
+            val lookup = mutableMapOf<String, AlertStatusInfo>()
             val lookupJson = json.optJSONObject("status_lookup")
             if (lookupJson != null) {
                 val keys = lookupJson.keys()
                 while (keys.hasNext()) {
                     val uid = keys.next()
                     val info = lookupJson.optJSONObject(uid) ?: continue
-                    lookup[uid] = StatusInfo(
+                    lookup[uid] = AlertStatusInfo(
                         status = info.optString("status", " "),
                         alertType = info.optString("alert_type", "air_raid"),
                         alertLevel = info.optString("alert_level", "red"),
@@ -567,9 +582,9 @@ class AlertLayersManager(
     // (или ' ' если региона нет в lookup); м. Київ наследует статус Киевской
     // области, если у города нет собственной активной тривоги.
     // Возвращает количество фич, у которых реально изменился статус.
-    private fun resolveStatuses(lookup: Map<String, StatusInfo>): Int {
+    private fun resolveStatuses(lookup: Map<String, AlertStatusInfo>): Int {
         val previous = resolvedStatuses
-        val resolved = HashMap<String, StatusInfo>()
+        val resolved = HashMap<String, AlertStatusInfo>()
         layerMeta.forEach { (_, entries) ->
             entries.keys.forEach { uid ->
                 resolved[uid] = lookup[uid] ?: DEFAULT_STATUS
@@ -602,7 +617,7 @@ class AlertLayersManager(
     // Вставляем status/alert_type/alert_level сразу после "{" properties
     // одним проходом по строке (без полной токенизации JSON).
 
-    private fun injectStatuses(rawJson: String, statuses: Map<String, StatusInfo>): String {
+    private fun injectStatuses(rawJson: String, statuses: Map<String, AlertStatusInfo>): String {
         if (rawJson.isEmpty()) return rawJson
         val marker = "\"properties\":{\"uid\":"
         val propsStartOffset = "\"properties\":{".length

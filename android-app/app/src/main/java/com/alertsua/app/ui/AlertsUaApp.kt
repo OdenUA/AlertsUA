@@ -343,6 +343,12 @@ fun AlertsUaApp(
                     )
                 }
 
+                // Статус тривоги у поточній громаді (по GPS)
+                CurrentAlertStatusBanner(
+                    darkMode = darkMode,
+                    onEnableLocation = { requestLocationPermission?.invoke() },
+                )
+
                 // Карта + оверлейные элементы
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     val modifierWithPadding = if (isLandscape && !isFullscreen) {
