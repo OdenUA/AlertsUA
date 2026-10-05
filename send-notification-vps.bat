@@ -6,7 +6,7 @@ if "%~1"=="" goto usage
 if "%~2"=="" goto usage
 if "%~3"=="" goto usage
 
-set SSH_KEY=E:\Dev\Projects\Alerts\VPS-54592
+set SSH_KEY=D:\Dev\Projects\Alerts\VPS-54592
 set SSH_USER=root@173.242.53.129
 
 echo 🚀 Запуск скрипта на VPS...

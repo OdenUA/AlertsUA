@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -27,6 +29,7 @@ type ParseCandidate = {
   movement_bearing_deg: number | null;
   source_excerpt: string | null;
   origin_inferred?: boolean;
+  origin_reanchored?: boolean;
 };
 
 type PendingJobRow = {
@@ -89,6 +92,34 @@ const DIRECTIONAL_STOP_WORDS = new Set([
   'east', 'west', 'north', 'south', 'center', 'центр'
 ]);
 
+type HostileGeometries = {
+  ukraineGeoJson: string;
+  occupiedGeoJsons: string[];
+  loadedAt: number;
+};
+
+// Coarse Black Sea + Sea of Azov polygons. Used only to classify a ray exit as
+// "hostile sea" (threats can come over the water) vs a non-hostile western
+// neighbour (Poland/Slovakia/Hungary/Romania/Moldova).
+const HOSTILE_SEA_WKT =
+  'MULTIPOLYGON(((27.8 45.2, 27.8 47.0, 41.5 47.0, 41.5 42.8, 28.5 42.8, 27.8 45.2)), ((34.3 45.0, 34.3 47.7, 40.0 47.7, 40.0 45.0, 34.3 45.0)))';
+
+// Same multi-path lookup as OccupiedTerritoriesService (the parse worker runs
+// from the release directory, so cwd-relative paths vary).
+function resolveOccupiedTerritoriesDataPath(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'data', 'occupied-territories.geojson'),
+    path.join(process.cwd(), '..', 'data', 'occupied-territories.geojson'),
+    path.join(process.cwd(), '..', '..', 'data', 'occupied-territories.geojson'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export function buildGeminiThreatPrompt(messageText: string) {
   const promptText = `Extract threats from Ukrainian military alert posts.
 
@@ -119,7 +150,7 @@ CURRENT LOCATION & DIRECTION PATTERNS (where threat IS now / where it is HEADING
 - "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
 - "вектор - [city1]/[city2]" = exact movement direction towards those towns.
 - "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
-- COMPASS COURSE: "курс південний" / "курс на південь" / "рух південний" / "напрямок південний" (and північ/схід/захід + intercardinals: північний схід, південний захід, ...) = the threat IS at the stated location and heads along the NAMED COMPASS DIRECTION. Keep the stated location as origin; target = a point 60-100 km from the origin ALONG that compass direction. NEVER use an oblast/city center as the target when a compass course is named. movement_bearing_deg MUST equal that compass direction (південь=180, північ=0, схід=90, захід=270, південний схід=135, південний захід=225, північний схід=45, північний захід=315).
+- COMPASS COURSE ("курс південний" / "рух на схід" etc.) = the threat is at the stated location and heads along the NAMED COMPASS DIRECTION — full handling in rule 0 of LOCATION RESOLUTION PRIORITY below.
 - Priority among these patterns is defined in LOCATION RESOLUTION PRIORITY below.
 
 SECTION HEADERS (REGION PREFIXES) — CRITICAL:
@@ -129,37 +160,19 @@ SECTION HEADERS (REGION PREFIXES) — CRITICAL:
 - DISAMBIGUATE ambiguous toponyms using the section header FIRST. Similar-sounding town names in different oblasts are DIFFERENT places (Васильківка in Dnipropetrovsk oblast is NOT Василівка in Zaporizhzhia oblast). Choose the town consistent with the header. If no town with that name exists in the header oblast, do NOT silently relocate the threat to another oblast — use the header oblast for the coordinates and put the literal place name in target_hint.
 - A course INTO a different oblast is allowed only when the text explicitly names that other oblast/city as the destination ("курсом на Полтавщину"). Then the target coordinates must be inside the DESTINATION oblast, while region_hint stays the header oblast.
 
-Example 10: "🛵 БпЛА в акваторії Чорного моря курсом на Одесу."
-- ORIGIN: "в акваторії Чорного моря" → in Black Sea aquatory (WATER, ~45.0°N, 31.0°E)
-- TARGET: "курсом на Одесу" → Odesa (LAND, ~46.5°N, 30.7°E)
-- Bearing: ~320°
-
-Example 11: "Пуски КАБ на Дніпропетровщину." (direction not stated, inferred from east)
-- ORIGIN: "окупована Донецька область" (implied/inferred, ~48.3°N, 37.5°E), origin_inferred: true
-- TARGET: "на Дніпропетровщину" → EASTERN border of Dnipropetrovsk oblast (~48.5°N, 36.5°E); target_hint: "Дніпропетровська область"
-- Bearing: ~270° (west)
-- CRITICAL: Target is at BORDER ENTRY POINT, not oblast center!
-- CRITICAL: Border entry points are APPROXIMATE direction markers, not precise impact points. For oblast-level targets, target_hint must be the OBLAST NAME — never invent a specific city.
-
-Example 12: "🛵 КАБ на Харківщину з півночі."
-- ORIGIN: "з півночі" → north (Belgorod direction, ~50.3°N, 36.5°E), origin_inferred: true
-- TARGET: "на Харківщину" → NORTHERN border of Kharkiv oblast (~50.0°N, 36.5°E); target_hint: "Харківська область"
-- Bearing: ~180° (south)
-- CRITICAL: Target is at BORDER ENTRY POINT from threat origin direction! Border entry points are approximate direction markers, not precise impact points.
-
-Example 13: "🛵 БпЛА на Запоріжжі (Тернувате-Новомиколаївка)"
+Example 10: "🛵 БпЛА на Запоріжжі (Тернувате-Новомиколаївка)"
 - ORIGIN: "окупована Запорізька область" (implied/inferred occupied south, ~46.8°N, 35.5°E), origin_inferred: true
-- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E), origin_inferred: false
+- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E)
 - Bearing: ~355° (north/north-west)
 - CRITICAL: Since UAV is heading towards Ternuvate/Novomykolaivka in Zaporizhzhia oblast, the origin MUST NOT be set to Zaporizhzhia center. Infer it from the occupied south (~80km away) so the vector points from occupied territory towards the target.
 
-Example 14: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
+Example 11: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
 - ORIGIN: "окупований південний схід" (implied/inferred occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E), origin_inferred: true
-- TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E), origin_inferred: false
+- TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E)
 - Bearing: ~330° (north-west)
 - CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from the occupied Zaporizhzhia/Donetsk frontline to point the flight vector from occupied territories towards Synelnykove.
 
-Example 15: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
+Example 12: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
 - CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
 - TARGET/DIRECTION: "в напрямку Полтавщини (вектор - Котельва/Опішня)" = heading towards Poltava oblast, specifically towards Kotelva/Opishnia towns (~50.0°N, 34.5°E)
 - Bearing: ~135° (south-east)
@@ -167,31 +180,31 @@ Example 15: "БпЛА по межі Сумщини і Харківщини в н
 - CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it. The Poltava entry vector rule does NOT apply here because the current location is explicitly stated.
 - CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
 
-Example 16: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
+Example 13: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
 - ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
 - TARGET: "курс на Полтавщину" = heading TO Poltava oblast (~49.5°N, 34.5°E)
 - Bearing: ~160° (south)
 - CRITICAL: "над [область]" means OVER that oblast — current position is there. Do NOT use inferred origin from occupied territories.
 
-Example 17: "БпЛА в районі Сум, рухається в сторону Харкова"
+Example 14: "БпЛА в районі Сум, рухається в сторону Харкова"
 - CURRENT LOCATION: "в районі Сум" = in area of Sumy city (~50.9°N, 34.8°E)
 - TARGET: "в сторону Харкова" = towards Kharkiv city (~50.0°N, 36.2°E)
 - Bearing: ~135° (south-east)
 - CRITICAL: "в районі [місто]" = currently NEAR that city. Do NOT move it to another oblast!
 
-Example 18: "Каб з півночі Харківщини по Слов'янську"
+Example 15: "Каб з півночі Харківщини по Слов'янську"
 - ORIGIN: "з півночі Харківщини" = from north of Kharkiv oblast (~49.5°N, 37.6°E)
 - TARGET: "по Слов'янську" = at/over Sloviansk city (~48.9°N, 37.6°E)
 - Bearing: ~180° (south)
 - CRITICAL: "по [місто]" means AT that city. Target is the city itself.
 
-Example 19: "Дніпропетровщина: 🔄 7х реактивів в сектор Перещепине / Магдалинівка."
+Example 16: "Дніпропетровщина: 🔄 7х реактивів в сектор Перещепине / Магдалинівка."
 - threat_kind: uav ("реактиви" = jet-powered UAVs)
 - CURRENT LOCATION: "в сектор Перещепине / Магдалинівка" = in the sector of those towns → use midpoint (~49.0°N, 35.3°E) as origin
 - TARGET: not stated → null
 - CRITICAL: monitoring-channel slang "реактиви" means jet UAVs, NOT missiles.
 
-Example 20: "🏍 Реактивний БпЛА в на межі Житомирської та Київської областей курс південний."
+Example 17: "🏍 Реактивний БпЛА в на межі Житомирської та Київської областей курс південний."
 - threat_kind: uav ("Реактивний БпЛА" = jet-powered UAV)
 - KEY: "курс південний" NAMES THE DIRECTION OF MOVEMENT — the movement from origin to target and the bearing must point SOUTH.
 - CURRENT LOCATION: "на межі Житомирської та Київської областей" → origin at the stated location (~50.25°N, 29.55°E)
@@ -230,6 +243,11 @@ COORDINATE REQUIREMENTS:
 
 GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
 
+GLOBAL INVARIANT (applies to EVERY threat, no exceptions):
+- Incoming threats NEVER fly from unoccupied Ukraine TOWARDS Russia, Belarus, occupied territories or out to the sea. The origin→target vector must always point AWAY from hostile territory, INTO Ukraine (or deeper along the front, away from it). A vector that starts inside unoccupied Ukraine and points toward the border / Russia / occupied territories is ALWAYS WRONG — the origin belongs on the hostile side.
+- An explicitly reported current position inside Ukraine IS a valid origin: "БпЛА над Днепром в напрямку Кам'янського" → origin = Dnipro (~48.47°N, 35.04°E), target = Kamianske (~48.51°N, 34.60°E), origin_inferred = FALSE. Movement deeper into Ukraine (away from the front) is correct and must not be "corrected".
+- An INFERRED origin (not explicitly reported) must NEVER be a point inside unoccupied Ukraine — no oblast centers, raion centers or Ukrainian cities. "Ракета на схід Харківщини" → inferred origin is NORTH of the target (Belgorod/Yeysk direction, ~50.4°N, 36.3°E), vector points south INTO the oblast; NOT Kharkiv city and NOT any point west of the target. "Чернігівщина: БпЛА курсом на Холми" → inferred origin is NORTH-EAST of Kholmy (Kursk/Halino direction, ~51.75°N, 36.30°E — the vector points WEST into Ukraine), NOT Chernihiv oblast center.
+
 1. For KAB/Missile Threats to Oblasts (Border Entry Points):
    - When KABs/Missiles target an OBLAST (not a specific city) and direction is not stated, place target coordinates at the BORDER ENTRY POINT from the most likely threat direction:
      * Dnipropetrovsk oblast: threats typically from EAST (Donetsk direction) → use eastern border entry point (~48.5°N, 36.5°E).
@@ -239,7 +257,7 @@ GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
      * Kyiv oblast: threats can be from north/east → infer from context.
      * Zaporizhzhia oblast: threats typically from SOUTH/EAST (Crimea/Donetsk) → use southern/eastern border entry point.
      * Mykolaiv/Kherson oblasts: threats typically from SOUTH/EAST (Crimea) → use southern border entry point.
-   - If direction is UNKNOWN and no context is available, use the oblast center coordinates.
+   - If direction is UNKNOWN and no context is available, still place the target at the border entry point facing the matching launch origin from rule 3; use the oblast center only as a last resort.
    - If threat targets a CITY (not oblast), use city coordinates.
    - For oblast-level targets, target_hint MUST be the oblast name (e.g. "Дніпропетровська область"), NEVER an invented city. Border entry points are approximate direction markers, not precise impact points.
 
@@ -252,11 +270,22 @@ GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
      * Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове"): from SOUTH-EAST (occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E)
      * Targets in Kharkiv oblast (e.g., "на Харків"): from NORTH (~50.4°N, 36.3°E)
      * Targets in Odesa/Mykolaiv/Kherson: from SOUTH (~45.5°N, 31.5°E)
-     * Targets in Sumy/Chernihiv: from NORTH-EAST (~51.5°N, 34.7°E)
-     * Targets in Kyiv oblast/city: from NORTH (~51.3°N, 30.5°E)
+     * Targets in Sumy/Chernihiv: from NORTH-EAST — Kursk/Halino or Bryansk direction (see rule 3)
+     * Targets in Kyiv oblast/city: from NORTH/NORTH-EAST — Bryansk/Shatalovo direction (see rule 3)
      * Targets in Poltava oblast (e.g., "на Полтавщині"): from EAST (~49.5°N, 35.5°E)
    - WRONG EXAMPLE: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини" → origin is on Sumy/Kharkiv border (~50.0°N, 34.0°E), NOT from Poltava entry vectors
    - RIGHT EXAMPLE: "БпЛА на Полтавщині" (no origin stated) → origin from EAST (~49.5°N, 35.5°E)
+
+3. KNOWN LAUNCH ORIGINS (Russia/occupied Crimea) — use as the inferred origin when it matches the target region:
+   - Халино, Курськ (~51.75°N, 36.30°E): main airbase for strikes on northern/central Ukraine. Missiles/drones enter through Sumy oblast heading SOUTH or SOUTH-WEST from the airfield. PREFERRED origin for targets in Sumy, Chernihiv, Kyiv, Poltava oblasts (e.g. "курсом на Холми", "на Чернігівщину", "на Суми").
+   - Шаталово, Смоленська обл. (~54.33°N, 32.07°E): main northern hub — mass launches of drones/missiles that fan out SOUTH over Kyiv/Chernihiv/Sumy/Poltava and continue deep WEST (Cherkasy, Kirovohrad, Vinnytsia, Khmelnytskyi, Rivne, Odesa). PREFERRED origin for long-range targets in central/western Ukraine when no closer site matches.
+   - Дронопорт на Брянщині (~53.0°N, 35.0°E, south of Bryansk): Shaheds heading SOUTH into Chernihiv/Sumy/northern Kyiv oblasts.
+   - Єйськ, Краснодарський край (~46.68°N, 38.21°E): Shaheds/missiles approaching from the EAST/NORTH-EAST over the Sea of Azov — Kharkiv, Sumy, Poltava, Dnipropetrovsk.
+   - Міллерово, Ростовська обл. (~48.95°N, 40.40°E): ballistic missiles / X-101 — Kharkiv, Dnipro, Zaporizhzhia (approach from the EAST).
+   - Приморсько-Ахтарськ (~46.05°N, 38.20°E): Shaheds over the Black Sea — Odesa, Mykolaiv, Kherson, Zaporizhzhia, Dnipro, Kirovohrad, Vinnytsia.
+   - Мис Чауда, Крим (~44.86°N, 35.42°E, near Koktebel): Shaheds/missiles from occupied Crimea — Odesa, Mykolaiv, Kherson; northbound to Kirovohrad/Vinnytsia.
+   - Новоросійськ (~44.72°N, 37.77°E): ship/submarine «Калібр» launches from the Black Sea — approach from the SOUTH. PREFERRED origin for sea-launched strikes on Odesa, Mykolaiv, Kherson and western Ukraine.
+   - When one of these launch origins matches the target's region, use its coordinates as the inferred origin (origin_inferred: true) instead of a generic entry vector.
 
 ORIGIN INFERENCE MARKER (origin_inferred) — REQUIRED in every threat object:
 - origin_inferred = FALSE when the message explicitly states WHERE the threat/drone IS or comes FROM as a NAMED PLACE: "над X", "в районі X", "біля X", "по межі X і Y", "з X"/"від X" with a named place, "в акваторії Чорного моря".
@@ -279,9 +308,10 @@ LOCATION RESOLUTION PRIORITY (single authority — apply in this order, stop at 
    - "на X" (when X is oblast/city and message says "БпЛА на X") = depends on context — could be AT or HEADING TO
    - CRITICAL: When explicit location is given, DO NOT apply regional entry vectors from rule 4. Use the stated location directly.
 
-2. EXPLICIT ORIGIN — when message states WHERE threat COMES FROM:
+2. EXPLICIT ORIGIN — when message states WHERE threat COMES FROM as a NAMED PLACE:
    - "з X" / "із X" = FROM X → use X coordinates as origin
    - "від X" = FROM X → use X coordinates as origin
+   - Compass directions ("з півночі", "з півдня") are NOT explicit origins — handle them in rule 3 and mark origin_inferred = TRUE.
 
 3. DIRECTIONAL PHRASES (only if no explicit origin/location):
    - "з півночі" = from north → infer from north of target
@@ -1130,6 +1160,37 @@ export class GeminiThreatParserService {
         }
       }
 
+      // Deterministic geopolitical sanity check: an INFERRED origin must never
+      // lie inside unoccupied Ukraine (incoming threats only fly from
+      // Russia / occupied territories / the sea inward). Re-anchor it to the
+      // nearest hostile border exit when the LLM still placed it inside.
+      if (
+        candidate.action === 'new' &&
+        candidate.origin_inferred === true &&
+        this.areValidCoordinates(originLat, originLng) &&
+        this.areValidCoordinates(targetLat, targetLng)
+      ) {
+        try {
+          const reanchored = await this.reanchorInferredOriginIfInsideUkraine(
+            client,
+            originLat,
+            originLng,
+            targetLat,
+            targetLng,
+          );
+          if (reanchored) {
+            originLat = reanchored.latitude;
+            originLng = reanchored.longitude;
+            candidate.origin_lat = reanchored.latitude;
+            candidate.origin_lng = reanchored.longitude;
+            candidate.movement_bearing_deg = null; // recompute below from the new origin
+            candidate.origin_reanchored = true;
+          }
+        } catch (error) {
+          this.logger.warn(`Inferred-origin re-anchor check failed: ${this.stringifyError(error)}`);
+        }
+      }
+
       // Get UIDs for database consistency (still needed for deduplication)
       const origin = await this.resolveRegionHint(client, candidate.origin_hint ?? fallbackHint);
       const target = await this.resolveRegionHint(client, candidate.target_hint ?? fallbackHint);
@@ -1741,6 +1802,201 @@ export class GeminiThreatParserService {
   private estimateExpiry(occurredAt: Date, threatKind: ParseCandidate['threat_kind'], hasTarget: boolean) {
     const ttlMinutes = getThreatTtlMinutes(threatKind, hasTarget);
     return new Date(occurredAt.getTime() + ttlMinutes * 60_000);
+  }
+
+  private hostileGeomCache: HostileGeometries | null = null;
+
+  /**
+   * Ukraine boundary (same union as /map/ukraine-boundary) + occupied
+   * territories geometry, cached for 10 minutes. Used by the deterministic
+   * geopolitical sanity check for inferred threat origins.
+   */
+  private async getHostileGeometries(client: PoolClient): Promise<HostileGeometries | null> {
+    if (this.hostileGeomCache && Date.now() - this.hostileGeomCache.loadedAt < 10 * 60 * 1000) {
+      return this.hostileGeomCache;
+    }
+
+    const boundaryResult = await client.query<{ geom_json: string | null }>(
+      `
+        SELECT ST_AsGeoJSON(
+          ST_Buffer(
+            ST_Collect(ST_Simplify(rg.geom, 0.01)),
+            0
+          )
+        ) AS geom_json
+        FROM region_geometry rg
+        JOIN region_catalog rc ON rc.uid = rg.uid
+        WHERE rc.is_active = TRUE
+          AND rc.region_type = ANY($1::text[])
+      `,
+      [['oblast', 'city']],
+    );
+
+    const ukraineGeoJson = boundaryResult.rows[0]?.geom_json;
+    if (!ukraineGeoJson) {
+      return null;
+    }
+
+    const occupiedGeoJsons: string[] = [];
+    const occupiedPath = resolveOccupiedTerritoriesDataPath();
+    if (occupiedPath) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(occupiedPath, 'utf8'));
+        const features = Array.isArray(parsed?.features) ? parsed.features : [];
+        for (const feature of features) {
+          if (feature?.geometry) {
+            occupiedGeoJsons.push(JSON.stringify(feature.geometry));
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to read occupied territories file: ${this.stringifyError(error)}`);
+      }
+    }
+
+    this.hostileGeomCache = { ukraineGeoJson, occupiedGeoJsons, loadedAt: Date.now() };
+    return this.hostileGeomCache;
+  }
+
+  /**
+   * Deterministic guard for the LLM: an INFERRED origin (no explicitly
+   * reported position) must never lie inside unoccupied Ukraine. When it does,
+   * re-anchor it to the nearest hostile border exit on the ray cast backwards
+   * from the target along the origin→target bearing.
+   */
+  private async reanchorInferredOriginIfInsideUkraine(
+    client: PoolClient,
+    originLat: number,
+    originLng: number,
+    targetLat: number,
+    targetLng: number,
+  ): Promise<{ latitude: number; longitude: number } | null> {
+    const geoms = await this.getHostileGeometries(client);
+    if (!geoms) {
+      return null;
+    }
+
+    const check = await client.query<{ needs_reanchor: boolean }>(
+      `
+        WITH ukr AS (SELECT ST_GeomFromGeoJSON($1) AS geom),
+             occ AS (
+               SELECT CASE
+                        WHEN cardinality($2::text[]) = 0 THEN NULL
+                        ELSE ST_Union(ARRAY(SELECT ST_GeomFromGeoJSON(g) FROM unnest($2::text[]) AS g))
+                      END AS geom
+             ),
+             origin_pt AS (SELECT ST_SetSRID(ST_MakePoint($3, $4), 4326) AS geom),
+             target_pt AS (SELECT ST_SetSRID(ST_MakePoint($5, $6), 4326) AS geom)
+        SELECT
+          ST_Covers(ukr.geom, origin_pt.geom)
+            AND (occ.geom IS NULL OR NOT ST_Covers(occ.geom, origin_pt.geom))
+            AND ST_Covers(ukr.geom, target_pt.geom) AS needs_reanchor
+        FROM ukr, occ, origin_pt, target_pt
+      `,
+      [geoms.ukraineGeoJson, geoms.occupiedGeoJsons, originLng, originLat, targetLng, targetLat],
+    );
+
+    if (!check.rows[0]?.needs_reanchor) {
+      return null;
+    }
+
+    const reverseBearing = Math.round(
+      (this.calculateBearing(originLat, originLng, targetLat, targetLng) + 180) % 360,
+    );
+    const exit = await this.findHostileExit(client, geoms, targetLat, targetLng, reverseBearing);
+    if (!exit) {
+      this.logger.warn(
+        `Inferred origin (${originLat},${originLng}) is inside unoccupied Ukraine but no hostile exit found from target (${targetLat},${targetLng}); keeping LLM coordinates`,
+      );
+      return null;
+    }
+
+    const anchor = this.destinationPoint(targetLat, targetLng, exit.azimuthDeg, exit.distanceMeters + 10000);
+    this.logger.log(
+      `Re-anchored inferred origin inside unoccupied Ukraine: (${originLat},${originLng}) -> (${anchor.latitude.toFixed(4)},${anchor.longitude.toFixed(4)}), azimuth=${exit.azimuthDeg}°, exitDistance=${Math.round(exit.distanceMeters / 1000)}km, target=(${targetLat},${targetLng})`,
+    );
+    return anchor;
+  }
+
+  private async findHostileExit(
+    client: PoolClient,
+    geoms: HostileGeometries,
+    targetLat: number,
+    targetLng: number,
+    reverseBearingDeg: number,
+  ): Promise<{ azimuthDeg: number; distanceMeters: number } | null> {
+    const query = `
+      WITH target_pt AS (SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS g),
+           ukr AS (SELECT ST_GeomFromGeoJSON($3) AS geom),
+           occ AS (
+             SELECT CASE
+                      WHEN cardinality($4::text[]) = 0 THEN NULL
+                      ELSE ST_Union(ARRAY(SELECT ST_GeomFromGeoJSON(g) FROM unnest($4::text[]) AS g))
+                    END AS geom
+           ),
+           sea AS (SELECT ST_GeomFromText($5, 4326) AS geom),
+           rays AS (
+             SELECT azimuth_deg,
+                    distance_m,
+                    ST_Project(target_pt.g, distance_m, radians(azimuth_deg::float8)) AS pt
+             FROM target_pt,
+                  LATERAL (SELECT mod(($6::int + off * 15) + 720, 360) AS azimuth_deg
+                           FROM generate_series(0, $7::int) AS off) az,
+                  generate_series(10000, 400000, 15000) AS distance_m
+           )
+      SELECT azimuth_deg, MIN(distance_m) AS distance_m
+      FROM rays, ukr, occ, sea
+      WHERE (occ.geom IS NOT NULL AND ST_Covers(occ.geom, rays.pt::geometry))
+         OR (
+              NOT ST_Covers(ukr.geom, rays.pt::geometry)
+              AND (
+                    azimuth_deg <= 135
+                    OR azimuth_deg >= 270
+                    OR ST_Covers(sea.geom, rays.pt::geometry)
+                  )
+            )
+      GROUP BY azimuth_deg
+      ORDER BY distance_m ASC,
+               LEAST(ABS(azimuth_deg - $8::int), 360 - ABS(azimuth_deg - $8::int)) ASC
+      LIMIT 1
+    `;
+
+    // Fan ±60° around the reverse bearing first; if nothing hostile is found
+    // there (LLM bearing pointed the wrong way), fall back to a full sweep.
+    const fan = await client.query<{ azimuth_deg: number; distance_m: string }>(
+      query,
+      [targetLng, targetLat, geoms.ukraineGeoJson, geoms.occupiedGeoJsons, HOSTILE_SEA_WKT, reverseBearingDeg - 60, 8, reverseBearingDeg],
+    );
+    let row = fan.rows[0];
+    if (!row) {
+      const sweep = await client.query<{ azimuth_deg: number; distance_m: string }>(
+        query,
+        [targetLng, targetLat, geoms.ukraineGeoJson, geoms.occupiedGeoJsons, HOSTILE_SEA_WKT, 0, 23, reverseBearingDeg],
+      );
+      row = sweep.rows[0];
+    }
+
+    return row ? { azimuthDeg: Number(row.azimuth_deg), distanceMeters: Number(row.distance_m) } : null;
+  }
+
+  private destinationPoint(lat: number, lng: number, bearingDeg: number, distanceMeters: number) {
+    const radius = 6371000;
+    const angular = distanceMeters / radius;
+    const bearing = (bearingDeg * Math.PI) / 180;
+    const lat1 = (lat * Math.PI) / 180;
+    const lng1 = (lng * Math.PI) / 180;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(angular) + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing),
+    );
+    const lng2 =
+      lng1 +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
+        Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2),
+      );
+    return {
+      latitude: (lat2 * 180) / Math.PI,
+      longitude: ((((lng2 * 180) / Math.PI) + 540) % 360) - 180,
+    };
   }
 
   private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number) {

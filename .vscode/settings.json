@@ -32,7 +32,7 @@
         }
     ],
     "chat.tools.terminal.autoApprove": {
-        "/^powershell -ExecutionPolicy Bypass -File \"E:\\\\Dev\\\\Projects\\\\Alerts\\\\check-deploy\\.ps1\"$/": {
+        "/^powershell -ExecutionPolicy Bypass -File \"D:\\\\Dev\\\\Projects\\\\Alerts\\\\check-deploy\\.ps1\"$/": {
             "approve": true,
             "matchCommandLine": true
         }

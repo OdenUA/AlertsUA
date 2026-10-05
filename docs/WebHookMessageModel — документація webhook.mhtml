@@ -1,0 +1,710 @@
+From: <Saved by Blink>
+Snapshot-Content-Location: https://api.ukrainealarm.com/webhook-message-model.html
+Subject: =?utf-8?Q?WebHookMessageModel=20=E2=80=94=20=D0=B4=D0=BE=D0=BA=D1=83=D0?=
+ =?utf-8?Q?=BC=D0=B5=D0=BD=D1=82=D0=B0=D1=86=D1=96=D1=8F=20webhook?=
+Date: Tue, 8 Sep 2026 18:17:00 +0300
+MIME-Version: 1.0
+Content-Type: multipart/related;
+	type="text/html";
+	boundary="----MultipartBoundary--d9LYc49jiL3OPvSvooVJibm1buDk3TrR1j5h9S4Fqh----"
+
+
+------MultipartBoundary--d9LYc49jiL3OPvSvooVJibm1buDk3TrR1j5h9S4Fqh----
+Content-Type: text/html
+Content-ID: <frame-ED6D4CCCC086BAC708DE38DC791F0860@mhtml.blink>
+Content-Transfer-Encoding: quoted-printable
+Content-Location: https://api.ukrainealarm.com/webhook-message-model.html
+
+<!DOCTYPE html><html lang=3D"uk" data-theme=3D"dark"><head><meta http-equiv=
+=3D"Content-Type" content=3D"text/html; charset=3DUTF-8"><link rel=3D"style=
+sheet" type=3D"text/css" href=3D"cid:css-29acfb73-62d8-4637-b3ce-7d585f2ef6=
+82@mhtml.blink" />
+ =20
+  <meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D=
+1">
+  <meta name=3D"description" content=3D"WebHookMessageModel payload and act=
+iveAlertLevels state documentation">
+  <title>WebHookMessageModel =E2=80=94 =D0=B4=D0=BE=D0=BA=D1=83=D0=BC=D0=B5=
+=D0=BD=D1=82=D0=B0=D1=86=D1=96=D1=8F webhook</title>
+ =20
+ =20
+</head>
+<body>
+  <main class=3D"container">
+    <header class=3D"hero">
+      <div class=3D"hero-controls">
+        <div class=3D"control-group">
+          <div class=3D"language-switch" aria-label=3D"Language / =D0=9C=D0=
+=BE=D0=B2=D0=B0">
+            <button class=3D"language-btn" type=3D"button" data-language=3D=
+"uk" aria-pressed=3D"true">UA</button>
+            <button class=3D"language-btn" type=3D"button" data-language=3D=
+"en" aria-pressed=3D"false">EN</button>
+          </div>
+          <button class=3D"theme-toggle" id=3D"themeToggle" type=3D"button"=
+ aria-label=3D"=D0=97=D0=BC=D1=96=D0=BD=D0=B8=D1=82=D0=B8 =D1=82=D0=B5=D0=
+=BC=D1=83" title=3D"=D0=97=D0=BC=D1=96=D0=BD=D0=B8=D1=82=D0=B8 =D1=82=D0=B5=
+=D0=BC=D1=83">=E2=98=80=EF=B8=8F</button>
+        </div>
+      </div>
+      <div data-language-panel=3D"uk">
+        <h1>=D0=9F=D0=BE=D0=B4=D1=96=D1=8F =D0=BF=D0=BE=D0=B2=D1=96=D0=B4=
+=D0=BE=D0=BC=D0=BB=D1=8F=D1=94, =D1=89=D0=BE =D0=B7=D0=BC=D1=96=D0=BD=D0=B8=
+=D0=BB=D0=BE=D1=81=D1=8F. Snapshot =D0=BF=D0=BE=D0=BA=D0=B0=D0=B7=D1=83=D1=
+=94, =D1=89=D0=BE =D0=B7=D0=B0=D0=BB=D0=B8=D1=88=D0=B8=D0=BB=D0=BE=D1=81=D1=
+=8F.</h1>
+        <p>=D0=94=D0=BE=D0=BA=D1=83=D0=BC=D0=B5=D0=BD=D1=82=D0=B0=D1=86=D1=
+=96=D1=8F =D1=81=D1=82=D1=80=D1=83=D0=BA=D1=82=D1=83=D1=80=D0=B8 webhook-=
+=D0=BF=D0=BE=D0=B2=D1=96=D0=B4=D0=BE=D0=BC=D0=BB=D0=B5=D0=BD=D0=BD=D1=8F.</=
+p>
+      </div>
+     =20
+    </header>
+
+    <article data-language-panel=3D"uk">
+      <section class=3D"section">
+        <h2>=D0=93=D0=BE=D0=BB=D0=BE=D0=B2=D0=BD=D0=B5 =D0=BF=D1=80=D0=B0=
+=D0=B2=D0=B8=D0=BB=D0=BE</h2>
+        <div class=3D"core-rule">
+          <div class=3D"rule-panel event">
+            <h3>=D0=9F=D0=BE=D0=B4=D1=96=D1=8F</h3>
+            <p><code>status</code>, <code>alertLevel</code> =D1=96 <code>re=
+ason</code> =D0=BE=D0=BF=D0=B8=D1=81=D1=83=D1=8E=D1=82=D1=8C =D0=BB=D0=B8=
+=D1=88=D0=B5 =D0=BF=D0=BE=D1=82=D0=BE=D1=87=D0=BD=D1=83 =D0=B7=D0=BC=D1=96=
+=D0=BD=D1=83, =D1=8F=D0=BA=D0=B0 =D1=89=D0=BE=D0=B9=D0=BD=D0=BE =D0=BD=D0=
+=B0=D0=B4=D1=96=D0=B9=D1=88=D0=BB=D0=B0.</p>
+          </div>
+          <div class=3D"rule-connector" aria-hidden=3D"true"><span>=E2=86=
+=92</span></div>
+          <div class=3D"rule-panel snapshot">
+            <h3>=D0=A1=D1=82=D0=B0=D0=BD =D0=BF=D1=96=D1=81=D0=BB=D1=8F =D0=
+=BF=D0=BE=D0=B4=D1=96=D1=97</h3>
+            <p><code>activeAlertLevels</code> =E2=80=94 =D1=86=D0=B5 snapsh=
+ot =D1=80=D1=96=D0=B2=D0=BD=D1=96=D0=B2 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=
+=B3=D0=B8 =D1=80=D0=B5=D0=B3=D1=96=D0=BE=D0=BD=D1=83 =D0=BF=D1=96=D1=81=D0=
+=BB=D1=8F =D0=B7=D0=B0=D1=81=D1=82=D0=BE=D1=81=D1=83=D0=B2=D0=B0=D0=BD=D0=
+=BD=D1=8F =D0=BF=D0=BE=D0=B4=D1=96=D1=97. =D0=9C=D0=B0=D1=81=D0=B8=D0=B2 =
+=D0=BC=D1=96=D1=81=D1=82=D0=B8=D1=82=D1=8C =D1=83=D1=81=D1=96 =D1=80=D1=96=
+=D0=B2=D0=BD=D1=96 =D0=B7=D0=B0=D0=B3=D1=80=D0=BE=D0=B7=D0=B8, =D1=8F=D0=BA=
+=D1=96 =D0=B7=D0=B0=D0=BB=D0=B8=D1=88=D0=B0=D1=8E=D1=82=D1=8C=D1=81=D1=8F =
+=D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=B8=D0=BC=D0=B8.</p>
+          </div>
+        </div>
+        <div class=3D"truth-table">
+          <div class=3D"truth-item present">
+            <strong><code>activeAlertLevels.length &gt; 0</code></strong>
+            <p>=D0=92 =D0=BE=D0=B1=D0=BB=D0=B0=D1=81=D1=82=D1=96, =D1=80=D0=
+=B0=D0=B9=D0=BE=D0=BD=D1=96 =D0=B0=D0=B1=D0=BE =D1=82=D0=B5=D1=80=D0=B8=D1=
+=82=D0=BE=D1=80=D1=96=D0=B0=D0=BB=D1=8C=D0=BD=D1=96=D0=B9 =D0=B3=D1=80=D0=
+=BE=D0=BC=D0=B0=D0=B4=D1=96 =D1=94 =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=
+=B0 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B0.</p>
+          </div>
+          <div class=3D"truth-item absent">
+            <strong><code>activeAlertLevels.length =3D=3D=3D 0</code></stro=
+ng>
+            <p>=D0=92 =D0=BE=D0=B1=D0=BB=D0=B0=D1=81=D1=82=D1=96, =D1=80=D0=
+=B0=D0=B9=D0=BE=D0=BD=D1=96 =D0=B0=D0=B1=D0=BE =D1=82=D0=B5=D1=80=D0=B8=D1=
+=82=D0=BE=D1=80=D1=96=D0=B0=D0=BB=D1=8C=D0=BD=D1=96=D0=B9 =D0=B3=D1=80=D0=
+=BE=D0=BC=D0=B0=D0=B4=D1=96 =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=BE=D1=
+=97 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B8 =D0=BD=D0=B5=D0=BC=D0=B0=D1=
+=94.</p>
+          </div>
+        </div>
+        <div class=3D"note">
+          <strong>=D0=9D=D0=B5 =D0=B2=D0=B8=D0=B7=D0=BD=D0=B0=D1=87=D0=B0=
+=D0=B9=D1=82=D0=B5 =D0=B7=D0=B0=D0=B3=D0=B0=D0=BB=D1=8C=D0=BD=D0=B8=D0=B9 =
+=D1=81=D1=82=D0=B0=D0=BD =D0=BB=D0=B8=D1=88=D0=B5 =D0=B7=D0=B0 =D0=BF=D0=BE=
+=D0=BB=D0=B5=D0=BC <code>status</code>.</strong>
+          =D0=9F=D0=BE=D0=B4=D1=96=D1=8F =D0=B7=D1=96 =D1=81=D1=82=D0=B0=D1=
+=82=D1=83=D1=81=D0=BE=D0=BC <code>DEACTIVATE</code> =D0=BC=D0=BE=D0=B6=D0=
+=B5 =D0=B2=D0=B8=D0=BC=D0=BA=D0=BD=D1=83=D1=82=D0=B8 =D0=BE=D0=B4=D0=BD=D1=
+=83 =D0=BF=D1=80=D0=B8=D1=87=D0=B8=D0=BD=D1=83, =D1=82=D0=BE=D0=B4=D1=96 =
+=D1=8F=D0=BA =D1=96=D0=BD=D1=88=D1=96 =D1=80=D1=96=D0=B2=D0=BD=D1=96 =D0=B7=
+=D0=B0=D0=B3=D1=80=D0=BE=D0=B7=D0=B8 =D0=B7=D0=B0=D0=BB=D0=B8=D1=88=D0=B0=
+=D1=82=D1=8C=D1=81=D1=8F =D0=B2 <code>activeAlertLevels</code>.
+        </div>
+      </section>
+
+      <section class=3D"section">
+        <h2>=D0=9F=D0=BE=D0=BB=D1=8F WebHookMessageModel</h2>
+        <div class=3D"table-scroll">
+          <table>
+            <thead><tr><th>=D0=9F=D0=BE=D0=BB=D0=B5</th><th>=D0=A2=D0=B8=D0=
+=BF</th><th>=D0=A0=D0=BE=D0=BB=D1=8C</th><th>=D0=9E=D0=BF=D0=B8=D1=81</th><=
+/tr></thead>
+            <tbody>
+              <tr>
+                <td><code>status</code></td><td>string</td><td><span class=
+=3D"role-badge role-event">=D0=9F=D0=BE=D0=B4=D1=96=D1=8F</span></td>
+                <td><code>Activate</code> =D0=B4=D0=BB=D1=8F =D0=B0=D0=BA=
+=D1=82=D0=B8=D0=B2=D0=B0=D1=86=D1=96=D1=97 =D0=B0=D0=B1=D0=BE <code>DEACTIV=
+ATE</code> =D0=B4=D0=BB=D1=8F =D0=B4=D0=B5=D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=
+=B0=D1=86=D1=96=D1=97 =D1=80=D1=96=D0=B2=D0=BD=D1=8F =D0=B7=D0=B0=D0=B3=D1=
+=80=D0=BE=D0=B7=D0=B8. =D0=9E=D0=BF=D0=B8=D1=81=D1=83=D1=94 =D0=BF=D0=BE=D1=
+=82=D0=BE=D1=87=D0=BD=D1=83 =D0=BF=D0=BE=D0=B4=D1=96=D1=8E, =D0=B0 =D0=BD=
+=D0=B5 =D0=B7=D0=B0=D0=B3=D0=B0=D0=BB=D1=8C=D0=BD=D0=B8=D0=B9 =D1=81=D1=82=
+=D0=B0=D0=BD =D1=80=D0=B5=D0=B3=D1=96=D0=BE=D0=BD=D1=83.</td>
+              </tr>
+              <tr>
+                <td><code>regionId</code></td><td>integer</td><td><span cla=
+ss=3D"role-badge role-meta">=D0=9A=D0=BE=D0=BD=D1=82=D0=B5=D0=BA=D1=81=D1=
+=82</span></td>
+                <td>=D0=86=D0=B4=D0=B5=D0=BD=D1=82=D0=B8=D1=84=D1=96=D0=BA=
+=D0=B0=D1=82=D0=BE=D1=80 =D0=BE=D0=B1=D0=BB=D0=B0=D1=81=D1=82=D1=96, =D1=80=
+=D0=B0=D0=B9=D0=BE=D0=BD=D1=83 =D0=B0=D0=B1=D0=BE =D1=82=D0=B5=D1=80=D0=B8=
+=D1=82=D0=BE=D1=80=D1=96=D0=B0=D0=BB=D1=8C=D0=BD=D0=BE=D1=97 =D0=B3=D1=80=
+=D0=BE=D0=BC=D0=B0=D0=B4=D0=B8, =D0=B4=D0=BE =D1=8F=D0=BA=D0=BE=D1=97 =D0=
+=BD=D0=B0=D0=BB=D0=B5=D0=B6=D0=B8=D1=82=D1=8C =D0=BF=D0=BE=D0=B4=D1=96=D1=
+=8F.</td>
+              </tr>
+              <tr>
+                <td><code>alarmType</code></td><td>string</td><td><span cla=
+ss=3D"role-badge role-meta">=D0=9A=D0=BE=D0=BD=D1=82=D0=B5=D0=BA=D1=81=D1=
+=82</span></td>
+                <td>=D0=A2=D0=B8=D0=BF =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=
+=D0=B8: <code>AIR</code>, <code>ARTILLERY</code>, <code>URBAN_FIGHTS</code>=
+, <code>CHEMICAL</code>, <code>NUCLEAR</code> =D0=B0=D0=B1=D0=BE <code>INFO=
+</code>.</td>
+              </tr>
+              <tr>
+                <td><code>createdAt</code></td><td>datetime</td><td><span c=
+lass=3D"role-badge role-meta">=D0=9A=D0=BE=D0=BD=D1=82=D0=B5=D0=BA=D1=81=D1=
+=82</span></td>
+                <td>=D0=A7=D0=B0=D1=81 =D1=84=D0=BE=D1=80=D0=BC=D1=83=D0=B2=
+=D0=B0=D0=BD=D0=BD=D1=8F webhook-=D0=BF=D0=BE=D0=B4=D1=96=D1=97 =D0=B2 UTC,=
+ =D1=81=D0=B5=D1=80=D1=96=D0=B0=D0=BB=D1=96=D0=B7=D0=BE=D0=B2=D0=B0=D0=BD=
+=D0=B8=D0=B9 =D1=83 =D1=84=D0=BE=D1=80=D0=BC=D0=B0=D1=82=D1=96 ISO 8601.</t=
+d>
+              </tr>
+              <tr>
+                <td><code>alertLevel</code></td><td>string</td><td><span cl=
+ass=3D"role-badge role-event">=D0=9F=D0=BE=D0=B4=D1=96=D1=8F</span></td>
+                <td>=D0=A0=D1=96=D0=B2=D0=B5=D0=BD=D1=8C =D0=B7=D0=B0=D0=B3=
+=D1=80=D0=BE=D0=B7=D0=B8 =D1=81=D0=B0=D0=BC=D0=B5 =D0=BF=D0=BE=D1=82=D0=BE=
+=D1=87=D0=BD=D0=BE=D1=97 =D0=BF=D0=BE=D0=B4=D1=96=D1=97: <code>Yellow</code=
+> =D0=B0=D0=B1=D0=BE <code>Red</code>.</td>
+              </tr>
+              <tr>
+                <td><code>reason</code></td><td>string</td><td><span class=
+=3D"role-badge role-event">=D0=9F=D0=BE=D0=B4=D1=96=D1=8F</span></td>
+                <td>=D0=9F=D1=80=D0=B8=D1=87=D0=B8=D0=BD=D0=B0 =D0=BF=D0=BE=
+=D1=82=D0=BE=D1=87=D0=BD=D0=BE=D1=97 =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=B0=
+=D1=86=D1=96=D1=97 =D0=B0=D0=B1=D0=BE =D0=B4=D0=B5=D0=B0=D0=BA=D1=82=D0=B8=
+=D0=B2=D0=B0=D1=86=D1=96=D1=97. =D0=9C=D0=BE=D0=B6=D0=B5 =D0=B1=D1=83=D1=82=
+=D0=B8 =D0=BF=D0=BE=D1=80=D0=BE=D0=B6=D0=BD=D1=96=D0=BC =D1=80=D1=8F=D0=B4=
+=D0=BA=D0=BE=D0=BC, =D1=8F=D0=BA=D1=89=D0=BE =D0=B4=D0=B6=D0=B5=D1=80=D0=B5=
+=D0=BB=D0=BE =D0=BD=D0=B5 =D0=BF=D0=B5=D1=80=D0=B5=D0=B4=D0=B0=D0=BB=D0=BE =
+=D0=B4=D0=B5=D1=82=D0=B0=D0=BB=D1=96=D0=B7=D0=BE=D0=B2=D0=B0=D0=BD=D1=83 =
+=D0=BF=D1=80=D0=B8=D1=87=D0=B8=D0=BD=D1=83.</td>
+              </tr>
+              <tr>
+                <td><code>activeAlertLevels</code></td><td>array</td><td><s=
+pan class=3D"role-badge role-state">Snapshot</span></td>
+                <td>=D0=9F=D0=BE=D0=B2=D0=BD=D0=B8=D0=B9 =D0=BD=D0=B0=D0=B1=
+=D1=96=D1=80 =D1=80=D1=96=D0=B2=D0=BD=D1=96=D0=B2 =D0=B7=D0=B0=D0=B3=D1=80=
+=D0=BE=D0=B7=D0=B8, =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=B8=D1=85 =D0=BF=
+=D1=96=D1=81=D0=BB=D1=8F =D0=B7=D0=B0=D1=81=D1=82=D0=BE=D1=81=D1=83=D0=B2=
+=D0=B0=D0=BD=D0=BD=D1=8F =D0=BF=D0=BE=D1=82=D0=BE=D1=87=D0=BD=D0=BE=D1=97 =
+=D0=BF=D0=BE=D0=B4=D1=96=D1=97 =D0=B4=D0=BB=D1=8F =D1=86=D1=8C=D0=BE=D0=B3=
+=D0=BE =D1=80=D0=B5=D0=B3=D1=96=D0=BE=D0=BD=D1=83 =D1=82=D0=B0 =D1=82=D0=B8=
+=D0=BF=D1=83 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B8.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class=3D"section">
+        <h2>=D0=95=D0=BB=D0=B5=D0=BC=D0=B5=D0=BD=D1=82 activeAlertLevels</h=
+2>
+        <div class=3D"table-scroll">
+          <table>
+            <thead><tr><th>=D0=9F=D0=BE=D0=BB=D0=B5</th><th>=D0=A2=D0=B8=D0=
+=BF</th><th>=D0=9E=D0=BF=D0=B8=D1=81</th></tr></thead>
+            <tbody>
+              <tr><td><code>alertLevel</code></td><td>string</td><td>=D0=90=
+=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=B8=D0=B9 =D1=80=D1=96=D0=B2=D0=B5=D0=BD=
+=D1=8C <code>Yellow</code> =D0=B0=D0=B1=D0=BE <code>Red</code>.</td></tr>
+              <tr><td><code>reason</code></td><td>string</td><td>=D0=9F=D1=
+=80=D0=B8=D1=87=D0=B8=D0=BD=D0=B0, =D1=87=D0=B5=D1=80=D0=B5=D0=B7 =D1=8F=D0=
+=BA=D1=83 =D1=86=D0=B5=D0=B9 =D1=80=D1=96=D0=B2=D0=B5=D0=BD=D1=8C =D0=B7=D0=
+=B0=D0=BB=D0=B8=D1=88=D0=B0=D1=94=D1=82=D1=8C=D1=81=D1=8F =D0=B0=D0=BA=D1=
+=82=D0=B8=D0=B2=D0=BD=D0=B8=D0=BC.</td></tr>
+              <tr><td><code>createdAt</code></td><td>datetime</td><td>UTC-=
+=D1=87=D0=B0=D1=81, =D0=B7=D0=B1=D0=B5=D1=80=D0=B5=D0=B6=D0=B5=D0=BD=D0=B8=
+=D0=B9 =D0=B4=D0=BB=D1=8F =D1=86=D1=8C=D0=BE=D0=B3=D0=BE =D0=B0=D0=BA=D1=82=
+=D0=B8=D0=B2=D0=BD=D0=BE=D0=B3=D0=BE =D1=80=D1=96=D0=B2=D0=BD=D1=8F. =D0=A6=
+=D0=B5 =D0=BD=D0=B5 =D0=BE=D0=B1=D0=BE=D0=B2=E2=80=99=D1=8F=D0=B7=D0=BA=D0=
+=BE=D0=B2=D0=BE =D1=87=D0=B0=D1=81 =D0=BF=D0=BE=D1=82=D0=BE=D1=87=D0=BD=D0=
+=BE=D1=97 webhook-=D0=BF=D0=BE=D0=B4=D1=96=D1=97.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class=3D"consumer-rule">
+          <div class=3D"icon" aria-hidden=3D"true">=E2=89=A0</div>
+          <p><strong>=D0=9C=D0=B0=D1=81=D0=B8=D0=B2 =D0=BD=D0=B5 =D0=BE=D0=
+=B1=D0=BC=D0=B5=D0=B6=D0=B5=D0=BD=D0=B8=D0=B9 =D0=BE=D0=B4=D0=BD=D0=B8=D0=
+=BC =D0=B5=D0=BB=D0=B5=D0=BC=D0=B5=D0=BD=D1=82=D0=BE=D0=BC =D0=BD=D0=B0 =D1=
+=80=D1=96=D0=B2=D0=B5=D0=BD=D1=8C.</strong> =D0=9E=D0=B4=D0=BD=D0=BE=D1=87=
+=D0=B0=D1=81=D0=BD=D0=BE =D0=BC=D0=BE=D0=B6=D1=83=D1=82=D1=8C =D0=B1=D1=83=
+=D1=82=D0=B8 <code>Yellow</code> =D1=96 <code>Red</code>, =D0=BA=D1=96=D0=
+=BB=D1=8C=D0=BA=D0=B0 <code>Red</code> =D1=96=D0=B7 =D1=80=D1=96=D0=B7=D0=
+=BD=D0=B8=D0=BC=D0=B8 =D0=BF=D1=80=D0=B8=D1=87=D0=B8=D0=BD=D0=B0=D0=BC=D0=
+=B8 =D1=82=D0=B0 =D0=BE=D0=B4=D0=B8=D0=BD <code>Yellow</code>, =D0=B0=D0=B1=
+=D0=BE =D0=B1=D1=83=D0=B4=D1=8C-=D1=8F=D0=BA=D0=B0 =D1=96=D0=BD=D1=88=D0=B0=
+ =D0=BA=D0=BE=D0=BC=D0=B1=D1=96=D0=BD=D0=B0=D1=86=D1=96=D1=8F =D0=B0=D0=BA=
+=D1=82=D0=B8=D0=B2=D0=BD=D0=B8=D1=85 =D0=BF=D0=B0=D1=80 <code>alertLevel + =
+reason</code>.</p>
+        </div>
+      </section>
+
+      <section class=3D"section">
+        <h2>=D0=9F=D1=80=D0=B8=D0=BA=D0=BB=D0=B0=D0=B4=D0=B8</h2>
+        <div class=3D"example-heading">
+          <h3>=D0=9A=D1=96=D0=BB=D1=8C=D0=BA=D0=B0 =D1=80=D1=96=D0=B2=D0=BD=
+=D1=96=D0=B2 =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D1=96 =D0=BE=D0=B4=D0=BD=
+=D0=BE=D1=87=D0=B0=D1=81=D0=BD=D0=BE</h3>
+          <p>=D0=9F=D0=BE=D1=82=D0=BE=D1=87=D0=BD=D0=B0 =D0=BF=D0=BE=D0=B4=
+=D1=96=D1=8F =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D1=83=D0=B2=D0=B0=D0=BB=D0=B0 =
+=D1=89=D0=B5 =D0=BE=D0=B4=D0=B8=D0=BD <code>Red</code>; snapshot =D1=83=D0=
+=B6=D0=B5 =D0=BC=D1=96=D1=81=D1=82=D0=B8=D1=82=D1=8C <code>Yellow</code> =
+=D1=82=D0=B0 =D1=96=D0=BD=D1=88=D0=B8=D0=B9 <code>Red</code>.</p>
+        </div>
+        <div class=3D"code-block">
+          <div class=3D"code-header"><span>JSON</span><button class=3D"copy=
+-btn" type=3D"button" data-copy=3D"">=D0=9A=D0=BE=D0=BF=D1=96=D1=8E=D0=B2=
+=D0=B0=D1=82=D0=B8</button></div>
+          <pre><code>{
+  <span class=3D"json-key">"status"</span>: <span class=3D"json-string">"Ac=
+tivate"</span>,
+  <span class=3D"json-key">"regionId"</span>: <span class=3D"json-number">1=
+4</span>,
+  <span class=3D"json-key">"alarmType"</span>: <span class=3D"json-string">=
+"AIR"</span>,
+  <span class=3D"json-key">"createdAt"</span>: <span class=3D"json-string">=
+"2026-09-07T12:05:00Z"</span>,
+  <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-string"=
+>"Red"</span>,
+  <span class=3D"json-key">"reason"</span>: <span class=3D"json-string">"Ba=
+llistic missile threat"</span>,
+  <span class=3D"json-key">"activeAlertLevels"</span>: [
+    { <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-str=
+ing">"Yellow"</span>, <span class=3D"json-key">"reason"</span>: <span class=
+=3D"json-string">"UAV activity"</span>, <span class=3D"json-key">"createdAt=
+"</span>: <span class=3D"json-string">"2026-09-07T11:42:00Z"</span> },
+    { <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-str=
+ing">"Red"</span>, <span class=3D"json-key">"reason"</span>: <span class=3D=
+"json-string">"Missile threat"</span>, <span class=3D"json-key">"createdAt"=
+</span>: <span class=3D"json-string">"2026-09-07T11:55:00Z"</span> },
+    { <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-str=
+ing">"Red"</span>, <span class=3D"json-key">"reason"</span>: <span class=3D=
+"json-string">"Ballistic missile threat"</span>, <span class=3D"json-key">"=
+createdAt"</span>: <span class=3D"json-string">"2026-09-07T12:05:00Z"</span=
+> }
+  ]
+}</code></pre>
+        </div>
+
+        <div class=3D"example-heading">
+          <h3>=D0=9E=D0=B4=D0=BD=D1=83 =D0=BF=D1=80=D0=B8=D1=87=D0=B8=D0=BD=
+=D1=83 =D0=B4=D0=B5=D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BE=D0=B2=D0=B0=D0=BD=
+=D0=BE, =D0=B0=D0=BB=D0=B5 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B0 =D1=
+=82=D1=80=D0=B8=D0=B2=D0=B0=D1=94</h3>
+          <p><code>status</code> =D0=BE=D0=BF=D0=B8=D1=81=D1=83=D1=94 =D0=
+=B4=D0=B5=D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=B0=D1=86=D1=96=D1=8E =C2=ABMissi=
+le threat=C2=BB. Snapshot =D1=83=D1=81=D0=B5 =D1=89=D0=B5 =D0=BD=D0=B5=D0=
+=BF=D0=BE=D1=80=D0=BE=D0=B6=D0=BD=D1=96=D0=B9, =D1=82=D0=BE=D0=BC=D1=83 =D1=
+=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B0 =D0=B7=D0=B0=D0=BB=D0=B8=D1=88=D0=
+=B0=D1=94=D1=82=D1=8C=D1=81=D1=8F =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=
+=BE=D1=8E.</p>
+        </div>
+        <div class=3D"code-block">
+          <div class=3D"code-header"><span>JSON</span><button class=3D"copy=
+-btn" type=3D"button" data-copy=3D"">=D0=9A=D0=BE=D0=BF=D1=96=D1=8E=D0=B2=
+=D0=B0=D1=82=D0=B8</button></div>
+          <pre><code>{
+  <span class=3D"json-key">"status"</span>: <span class=3D"json-string">"DE=
+ACTIVATE"</span>,
+  <span class=3D"json-key">"regionId"</span>: <span class=3D"json-number">1=
+4</span>,
+  <span class=3D"json-key">"alarmType"</span>: <span class=3D"json-string">=
+"AIR"</span>,
+  <span class=3D"json-key">"createdAt"</span>: <span class=3D"json-string">=
+"2026-09-07T12:18:00Z"</span>,
+  <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-string"=
+>"Red"</span>,
+  <span class=3D"json-key">"reason"</span>: <span class=3D"json-string">"Mi=
+ssile threat"</span>,
+  <span class=3D"json-key">"activeAlertLevels"</span>: [
+    { <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-str=
+ing">"Yellow"</span>, <span class=3D"json-key">"reason"</span>: <span class=
+=3D"json-string">"UAV activity"</span>, <span class=3D"json-key">"createdAt=
+"</span>: <span class=3D"json-string">"2026-09-07T11:42:00Z"</span> },
+    { <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-str=
+ing">"Red"</span>, <span class=3D"json-key">"reason"</span>: <span class=3D=
+"json-string">"Ballistic missile threat"</span>, <span class=3D"json-key">"=
+createdAt"</span>: <span class=3D"json-string">"2026-09-07T12:05:00Z"</span=
+> }
+  ]
+}</code></pre>
+        </div>
+
+        <div class=3D"example-heading">
+          <h3>=D0=94=D0=B5=D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BE=D0=B2=D0=B0=
+=D0=BD=D0=BE =D0=BE=D1=81=D1=82=D0=B0=D0=BD=D0=BD=D1=96=D0=B9 =D1=80=D1=96=
+=D0=B2=D0=B5=D0=BD=D1=8C</h3>
+          <p>=D0=9F=D0=BE=D1=80=D0=BE=D0=B6=D0=BD=D1=96=D0=B9 snapshot =D0=
+=BE=D0=B7=D0=BD=D0=B0=D1=87=D0=B0=D1=94, =D1=89=D0=BE =D0=B0=D0=BA=D1=82=D0=
+=B8=D0=B2=D0=BD=D0=BE=D1=97 =D1=82=D1=80=D0=B8=D0=B2=D0=BE=D0=B3=D0=B8 =D0=
+=B1=D1=96=D0=BB=D1=8C=D1=88=D0=B5 =D0=BD=D0=B5=D0=BC=D0=B0=D1=94.</p>
+        </div>
+        <div class=3D"code-block">
+          <div class=3D"code-header"><span>JSON</span><button class=3D"copy=
+-btn" type=3D"button" data-copy=3D"">=D0=9A=D0=BE=D0=BF=D1=96=D1=8E=D0=B2=
+=D0=B0=D1=82=D0=B8</button></div>
+          <pre><code>{
+  <span class=3D"json-key">"status"</span>: <span class=3D"json-string">"DE=
+ACTIVATE"</span>,
+  <span class=3D"json-key">"regionId"</span>: <span class=3D"json-number">1=
+4</span>,
+  <span class=3D"json-key">"alarmType"</span>: <span class=3D"json-string">=
+"AIR"</span>,
+  <span class=3D"json-key">"createdAt"</span>: <span class=3D"json-string">=
+"2026-09-07T12:32:00Z"</span>,
+  <span class=3D"json-key">"alertLevel"</span>: <span class=3D"json-string"=
+>"Yellow"</span>,
+  <span class=3D"json-key">"reason"</span>: <span class=3D"json-string">"UA=
+V activity"</span>,
+  <span class=3D"json-key">"activeAlertLevels"</span>: []
+}</code></pre>
+        </div>
+      </section>
+
+      <section class=3D"section">
+        <h2>=D0=A0=D0=B5=D0=BA=D0=BE=D0=BC=D0=B5=D0=BD=D0=B4=D0=B0=D1=86=D1=
+=96=D1=97 =D0=B4=D0=BB=D1=8F =D0=BE=D1=82=D1=80=D0=B8=D0=BC=D1=83=D0=B2=D0=
+=B0=D1=87=D0=B0 webhook</h2>
+        <ol class=3D"logic-list">
+          <li>=D0=9F=D1=96=D1=81=D0=BB=D1=8F =D0=BA=D0=BE=D0=B6=D0=BD=D0=BE=
+=D0=B3=D0=BE =D0=BF=D0=BE=D0=B2=D1=96=D0=B4=D0=BE=D0=BC=D0=BB=D0=B5=D0=BD=
+=D0=BD=D1=8F =D0=B7=D0=B0=D0=BC=D1=96=D0=BD=D1=8E=D0=B9=D1=82=D0=B5 =D0=BB=
+=D0=BE=D0=BA=D0=B0=D0=BB=D1=8C=D0=BD=D0=B8=D0=B9 =D1=81=D1=82=D0=B0=D0=BD =
+=D1=80=D0=B5=D0=B3=D1=96=D0=BE=D0=BD=D1=83 =D0=B7=D0=BD=D0=B0=D1=87=D0=B5=
+=D0=BD=D0=BD=D1=8F=D0=BC <code>activeAlertLevels</code>, =D0=B0 =D0=BD=D0=
+=B5 =D0=B2=D1=96=D0=B4=D0=BD=D0=BE=D0=B2=D0=BB=D1=8E=D0=B9=D1=82=D0=B5 =D0=
+=B9=D0=BE=D0=B3=D0=BE =D0=BB=D0=B8=D1=88=D0=B5 =D0=B7 <code>status</code>.<=
+/li>
+          <li>=D0=92=D0=B2=D0=B0=D0=B6=D0=B0=D0=B9=D1=82=D0=B5 =D1=82=D1=80=
+=D0=B8=D0=B2=D0=BE=D0=B3=D1=83 =D0=B0=D0=BA=D1=82=D0=B8=D0=B2=D0=BD=D0=BE=
+=D1=8E, =D1=8F=D0=BA=D1=89=D0=BE =D0=BC=D0=B0=D1=81=D0=B8=D0=B2 =D0=BC=D1=
+=96=D1=81=D1=82=D0=B8=D1=82=D1=8C =D1=85=D0=BE=D1=87=D0=B0 =D0=B1 =D0=BE=D0=
+=B4=D0=B8=D0=BD =D0=B5=D0=BB=D0=B5=D0=BC=D0=B5=D0=BD=D1=82.</li>
+          <li>=D0=9D=D0=B5 =D0=B7=D0=B3=D0=BE=D1=80=D1=82=D0=B0=D0=B9=D1=82=
+=D0=B5 =D0=BC=D0=B0=D1=81=D0=B8=D0=B2 =D0=B4=D0=BE =D0=BE=D0=B4=D0=BD=D0=BE=
+=D0=B3=D0=BE =C2=AB=D0=BD=D0=B0=D0=B9=D0=B2=D0=B8=D1=89=D0=BE=D0=B3=D0=BE=
+=C2=BB =D1=80=D1=96=D0=B2=D0=BD=D1=8F, =D1=8F=D0=BA=D1=89=D0=BE =D0=B7=D0=
+=B0=D1=81=D1=82=D0=BE=D1=81=D1=83=D0=BD=D0=BA=D1=83 =D0=BF=D0=BE=D1=82=D1=
+=80=D1=96=D0=B1=D0=BD=D1=96 =D0=B2=D1=81=D1=96 =D0=BF=D1=80=D0=B8=D1=87=D0=
+=B8=D0=BD=D0=B8.</li>
+          <li>=D0=9D=D0=B5 =D0=BF=D0=BE=D0=BA=D0=BB=D0=B0=D0=B4=D0=B0=D0=B9=
+=D1=82=D0=B5=D1=81=D1=8F =D0=BD=D0=B0 =D0=BF=D0=BE=D1=80=D1=8F=D0=B4=D0=BE=
+=D0=BA =D0=B5=D0=BB=D0=B5=D0=BC=D0=B5=D0=BD=D1=82=D1=96=D0=B2. =D0=9E=D0=B1=
+=D1=80=D0=BE=D0=B1=D0=BB=D1=8F=D0=B9=D1=82=D0=B5 =D0=BA=D0=BE=D0=B6=D0=BD=
+=D1=83 =D0=BF=D0=B0=D1=80=D1=83 <code>alertLevel + reason</code> =D0=BD=D0=
+=B5=D0=B7=D0=B0=D0=BB=D0=B5=D0=B6=D0=BD=D0=BE.</li>
+        </ol>
+      </section>
+    </article>
+
+   =20
+
+    <footer class=3D"footer">
+      <span data-language-panel=3D"uk">=D0=94=D0=B8=D0=B2. =D1=82=D0=B0=D0=
+=BA=D0=BE=D0=B6: <a href=3D"https://api.ukrainealarm.com/webhook-signature-=
+validation.html">=D0=BF=D0=B5=D1=80=D0=B5=D0=B2=D1=96=D1=80=D0=BA=D0=B0 =D0=
+=BF=D1=96=D0=B4=D0=BF=D0=B8=D1=81=D1=83 webhook</a>.</span>
+     =20
+    </footer>
+  </main>
+
+ =20
+
+
+
+</body></html>
+------MultipartBoundary--d9LYc49jiL3OPvSvooVJibm1buDk3TrR1j5h9S4Fqh----
+Content-Type: text/css
+Content-Transfer-Encoding: quoted-printable
+Content-Location: cid:css-29acfb73-62d8-4637-b3ce-7d585f2ef682@mhtml.blink
+
+@charset "utf-8";
+
+:root { color-scheme: light; --page-start: #f5f7fa; --page-end: #eef2f7; --=
+surface: #ffffff; --surface-subtle: #f8fafc; --code: #0f172a; --text: #1f29=
+37; --muted: #526072; --soft: #64748b; --line: #dfe5ed; --indigo: #6366f1; =
+--indigo-strong: #4f46e5; --event: #b45309; --event-bg: #fff7e6; --snapshot=
+: #047857; --snapshot-bg: #ecfdf5; --danger: #be123c; --danger-bg: #fff1f2;=
+ --shadow: 0 3px 14px rgba(15, 23, 42, 0.07); }
+
+html[data-theme=3D"dark"] { color-scheme: dark; --page-start: #0f172a; --pa=
+ge-end: #171d34; --surface: #1e293b; --surface-subtle: #182235; --code: #09=
+0f1e; --text: #f1f5f9; --muted: #cbd5e1; --soft: #94a3b8; --line: #334155; =
+--indigo: #818cf8; --indigo-strong: #a5b4fc; --event: #fbbf24; --event-bg: =
+rgba(245, 158, 11, 0.12); --snapshot: #6ee7b7; --snapshot-bg: rgba(16, 185,=
+ 129, 0.11); --danger: #fda4af; --danger-bg: rgba(244, 63, 94, 0.1); --shad=
+ow: 0 6px 22px rgba(0, 0, 0, 0.24); }
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body { margin: 0px; min-height: 100vh; padding: 40px 20px 64px; color: var(=
+--text); background: linear-gradient(135deg, var(--page-start), var(--page-=
+end)); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, =
+Oxygen, Ubuntu, Cantarell, sans-serif; line-height: 1.65; }
+
+button, a { -webkit-tap-highlight-color: transparent; }
+
+button:focus-visible, a:focus-visible { outline: rgba(99, 102, 241, 0.45) s=
+olid 3px; outline-offset: 3px; }
+
+.container { width: min(100%, 980px); margin: 0px auto; }
+
+.hero { position: relative; overflow: hidden; margin-bottom: 24px; padding:=
+ 38px 40px 40px; color: rgb(248, 250, 252); background: linear-gradient(rgb=
+(30, 41, 59) 0%, rgb(15, 23, 42) 100%); border: 1px solid rgb(51, 65, 85); =
+border-radius: 10px; box-shadow: rgba(0, 0, 0, 0.26) 0px 20px 40px, rgba(25=
+5, 255, 255, 0.08) 0px 1px 0px inset; }
+
+.hero::before { content: ""; position: absolute; inset: 0px 0px auto; heigh=
+t: 1px; background: linear-gradient(90deg, transparent, rgba(148, 163, 184,=
+ 0.45), transparent); }
+
+.hero-controls { display: flex; align-items: center; justify-content: space=
+-between; gap: 16px; margin-bottom: 24px; }
+
+.model-name { color: rgb(165, 180, 252); font-family: SFMono-Regular, Conso=
+las, "Liberation Mono", monospace; font-size: 0.85rem; font-weight: 700; }
+
+.control-group { display: flex; align-items: center; gap: 8px; }
+
+.language-switch { display: inline-flex; padding: 3px; background: rgba(99,=
+ 102, 241, 0.16); border: 1px solid rgba(129, 140, 248, 0.34); border-radiu=
+s: 999px; }
+
+.language-btn, .theme-toggle { border: 0px; color: rgb(203, 213, 225); back=
+ground: transparent; cursor: pointer; font: inherit; }
+
+.language-btn { min-width: 42px; padding: 5px 11px; border-radius: 999px; f=
+ont-size: 0.8rem; font-weight: 700; }
+
+.language-btn[aria-pressed=3D"true"] { color: rgb(255, 255, 255); backgroun=
+d: rgb(99, 102, 241); }
+
+.theme-toggle { display: grid; width: 36px; height: 36px; place-items: cent=
+er; background: rgba(99, 102, 241, 0.16); border: 1px solid rgba(129, 140, =
+248, 0.34); border-radius: 50%; font-size: 1rem; }
+
+.hero h1 { max-width: 760px; margin: 0px 0px 10px; color: rgb(248, 250, 252=
+); font-size: clamp(1.8rem, 4vw, 2.55rem); line-height: 1.15; letter-spacin=
+g: -0.035em; }
+
+.hero p { max-width: 760px; margin: 0px; color: rgb(203, 213, 225); }
+
+.section { margin-bottom: 24px; padding: 34px 38px; color: var(--text); bac=
+kground: var(--surface); border: 1px solid var(--line); border-radius: 12px=
+; box-shadow: var(--shadow); }
+
+h2, h3 { color: var(--text); line-height: 1.3; }
+
+h2 { margin: 0px 0px 22px; padding-bottom: 12px; border-bottom: 2px solid v=
+ar(--line); font-size: 1.45rem; letter-spacing: -0.015em; }
+
+h2::before { content: ""; display: inline-block; width: 4px; height: 24px; =
+margin-right: 12px; vertical-align: -4px; background: var(--indigo); border=
+-radius: 2px; }
+
+h3 { margin: 0px 0px 10px; font-size: 1.05rem; }
+
+p { max-width: 78ch; margin: 0px 0px 16px; color: var(--muted); }
+
+p:last-child { margin-bottom: 0px; }
+
+code { padding: 0.18em 0.42em; color: var(--indigo-strong); background: rgb=
+a(99, 102, 241, 0.1); border-radius: 5px; font-family: SFMono-Regular, Cons=
+olas, "Liberation Mono", monospace; font-size: 0.9em; font-weight: 600; }
+
+.core-rule { display: grid; grid-template-columns: 1fr 66px 1fr; align-item=
+s: stretch; margin: 4px 0px 18px; }
+
+.rule-panel { padding: 24px; border: 1px solid var(--line); }
+
+.rule-panel.event { background: var(--event-bg); border-color: var(--event)=
+; border-radius: 10px 0px 0px 10px; }
+
+.rule-panel.snapshot { background: var(--snapshot-bg); border-color: var(--=
+snapshot); border-radius: 0px 10px 10px 0px; }
+
+.event h3 { color: var(--event); }
+
+.snapshot h3 { color: var(--snapshot); }
+
+.rule-panel p { margin: 0px; font-size: 0.95rem; }
+
+.rule-connector { display: grid; place-items: center; color: var(--soft); b=
+ackground: var(--surface-subtle); border-top: 1px solid var(--line); border=
+-bottom: 1px solid var(--line); font-size: 1.35rem; font-weight: 800; }
+
+.truth-table { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.truth-item { padding: 16px 18px; background: var(--surface-subtle); border=
+: 1px solid var(--line); border-radius: 8px; }
+
+.truth-item strong { display: block; margin-bottom: 3px; color: var(--text)=
+; }
+
+.truth-item.present { border-left: 4px solid var(--snapshot); }
+
+.truth-item.absent { border-left: 4px solid var(--danger); }
+
+.truth-item p { margin: 0px; font-size: 0.93rem; }
+
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-rad=
+ius: 9px; }
+
+table { width: 100%; min-width: 720px; border-collapse: collapse; font-size=
+: 0.94rem; }
+
+th, td { padding: 14px 16px; text-align: left; vertical-align: top; border-=
+bottom: 1px solid var(--line); }
+
+th { color: var(--text); background: var(--surface-subtle); font-size: 0.82=
+rem; }
+
+tr:last-child td { border-bottom: 0px; }
+
+td { color: var(--muted); }
+
+td:first-child { white-space: nowrap; }
+
+.role-badge { display: inline-flex; padding: 3px 9px; border-radius: 999px;=
+ font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+
+.role-event { color: var(--event); background: var(--event-bg); border: 1px=
+ solid var(--event); }
+
+.role-state { color: var(--snapshot); background: var(--snapshot-bg); borde=
+r: 1px solid var(--snapshot); }
+
+.role-meta { color: var(--indigo-strong); background: rgba(99, 102, 241, 0.=
+1); border: 1px solid var(--indigo); }
+
+.note { margin: 20px 0px 0px; padding: 16px 18px; color: var(--muted); back=
+ground: var(--event-bg); border-top-color: ; border-top-style: ; border-top=
+-width: ; border-right-color: ; border-right-style: ; border-right-width: ;=
+ border-bottom-color: ; border-bottom-style: ; border-bottom-width: ; borde=
+r-left-color: ; border-left-style: ; border-image-source: ; border-image-sl=
+ice: ; border-image-width: ; border-image-outset: ; border-image-repeat: ; =
+border-left-width: 4px; border-radius: 8px; }
+
+.note strong { color: var(--text); }
+
+.logic-list { display: grid; gap: 12px; margin: 0px; padding: 0px; list-sty=
+le: none; counter-reset: rules 0; }
+
+.logic-list li { position: relative; min-height: 48px; padding: 12px 14px 1=
+2px 54px; color: var(--muted); background: var(--surface-subtle); border: 1=
+px solid var(--line); border-radius: 8px; counter-increment: rules 1; }
+
+.logic-list li::before { content: counter(rules); position: absolute; top: =
+12px; left: 14px; display: grid; width: 26px; height: 26px; place-items: ce=
+nter; color: rgb(255, 255, 255); background: var(--indigo); border-radius: =
+50%; font-size: 0.78rem; font-weight: 800; }
+
+.consumer-rule { display: grid; grid-template-columns: auto 1fr; gap: 14px;=
+ align-items: start; margin-top: 18px; padding: 18px; color: var(--muted); =
+background: var(--snapshot-bg); border: 1px solid var(--snapshot); border-r=
+adius: 8px; }
+
+.consumer-rule .icon { display: grid; width: 34px; height: 34px; place-item=
+s: center; color: var(--snapshot); background: var(--surface); border: 1px =
+solid var(--snapshot); border-radius: 50%; font-weight: 900; }
+
+.consumer-rule p { margin: 0px; }
+
+.consumer-rule strong { color: var(--text); }
+
+.example-heading { margin: 28px 0px 12px; }
+
+.example-heading:first-of-type { margin-top: 4px; }
+
+.example-heading h3, .example-heading p { margin: 0px; }
+
+.example-heading p { font-size: 0.9rem; }
+
+.code-block { overflow: hidden; border: 1px solid rgb(51, 65, 85); border-r=
+adius: 8px; box-shadow: rgba(15, 23, 42, 0.13) 0px 4px 12px; }
+
+.code-header { display: flex; align-items: center; justify-content: space-b=
+etween; padding: 10px 14px; color: rgb(148, 163, 184); background: rgb(30, =
+41, 59); border-bottom: 1px solid rgb(51, 65, 85); font-size: 0.78rem; font=
+-weight: 700; }
+
+.copy-btn { padding: 5px 10px; color: rgb(199, 210, 254); background: rgba(=
+99, 102, 241, 0.2); border: 1px solid rgba(129, 140, 248, 0.4); border-radi=
+us: 4px; cursor: pointer; font: inherit; }
+
+.copy-btn.copied { color: rgb(167, 243, 208); border-color: rgb(52, 211, 15=
+3); }
+
+pre { margin: 0px; padding: 20px; overflow-x: auto; color: rgb(226, 232, 24=
+0); background: var(--code); font: 0.84rem / 1.65 SFMono-Regular, Consolas,=
+ "Liberation Mono", monospace; tab-size: 2; }
+
+pre code { padding: 0px; color: inherit; background: transparent; font-styl=
+e: inherit; font-variant: inherit; font-stretch: inherit; font-size: inheri=
+t; line-height: inherit; font-family: inherit; font-optical-sizing: inherit=
+; font-size-adjust: inherit; font-kerning: inherit; font-feature-settings: =
+inherit; font-variation-settings: inherit; font-language-override: inherit;=
+ font-weight: 400; white-space: pre; }
+
+.json-key { color: rgb(147, 197, 253); }
+
+.json-string { color: rgb(190, 242, 100); }
+
+.json-number { color: rgb(165, 180, 252); }
+
+.footer { padding-top: 8px; color: var(--soft); font-size: 0.86rem; text-al=
+ign: center; }
+
+.footer a { color: var(--indigo-strong); font-weight: 700; text-decoration:=
+ none; }
+
+[data-language-panel][hidden] { display: none !important; }
+
+@media (max-width: 760px) {
+  body { padding: 20px 14px 44px; }
+  .hero, .section { padding: 26px 22px; }
+  .hero-controls { align-items: flex-start; flex-direction: column; }
+  .control-group { align-self: stretch; justify-content: space-between; }
+  .core-rule { grid-template-columns: 1fr; }
+  .rule-panel.event { border-radius: 10px 10px 0px 0px; }
+  .rule-panel.snapshot { border-radius: 0px 0px 10px 10px; }
+  .rule-connector { min-height: 48px; border-top: 0px; border-bottom: 0px; =
+border-image: none; border-right: 1px solid var(--line); border-left: 1px s=
+olid var(--line); }
+  .rule-connector span { transform: rotate(90deg); }
+  .truth-table { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .hero, .section { padding: 22px 17px; }
+  .model-name { overflow-wrap: anywhere; }
+  h2 { font-size: 1.2rem; }
+  pre { padding: 16px; font-size: 0.76rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+------MultipartBoundary--d9LYc49jiL3OPvSvooVJibm1buDk3TrR1j5h9S4Fqh------

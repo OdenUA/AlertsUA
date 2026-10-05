@@ -11,8 +11,8 @@ for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
     if not "!_ln:~0,1!"=="#" if not "!_ln!"=="" set "%%A=%%B"
 )
 
-set "EMULATOR_EXE=E:\Dev\Android\SDK\emulator\emulator.exe"
-set "ADB=E:\Dev\Android\SDK\platform-tools\adb.exe"
+set "EMULATOR_EXE=D:\Dev\Android\SDK\emulator\emulator.exe"
+set "ADB=D:\Dev\Android\SDK\platform-tools\adb.exe"
 
 rem Change AVD_NAME to Medium_Phone_API_36.1 if you prefer a different device.
 set "AVD_NAME=Pixel_6"

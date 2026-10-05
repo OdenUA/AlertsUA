@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.os.SystemClock
 import android.util.Log
 import com.google.gson.JsonObject
@@ -17,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.maplibre.android.geometry.LatLng
@@ -152,29 +154,41 @@ class ThreatLayersManager(
     private var layersInstalled = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var loadJob: Job? = null
+    private var fetchJob: Job? = null
     private var pollJob: Job? = null
     private var lastFetchAtMs = 0L
+    // Конкурентные fetch'и (ON_START + ON_RESUME + FCM стреляют одновременно)
+    // не должны гонять сеть параллельно: более медленный ответ со старыми
+    // данными перезаписывал бы свежий.
+    private val fetchMutex = Mutex()
+    // В фоне (ON_STOP) карта на паузе: FCM-обновления в это время мутировали
+    // бы источники без перерисовки кадра — видимые иконки расходились с
+    // данными hit-test'а. Поэтому push-refresh работает только на экране.
+    private var hostStarted = false
 
     init {
         // Первичный fetch не зависит от карты/стиля — стартуем сразу
         MapPerf.log("ThreatLayers", "manager created, starting overlays fetch")
-        loadJob = scope.launch { fetchAndRender() }
+        launchFetch()
         // FCM-пуш → немедленное обновление угроз, не дожидаясь тика poll
         scope.launch {
             AlertUpdateBus.updates.collect {
+                if (!hostStarted) return@collect
                 runCatching { fetchAndRender() }
                     .onFailure { Log.w("ThreatLayers", "Push-triggered refresh failed: ${it.message}") }
             }
         }
     }
 
+    /** Пропускает запуск, если fetch уже идёт (ON_START и ON_RESUME стреляют вместе). */
+    private fun launchFetch() {
+        if (fetchJob?.isActive == true) return
+        fetchJob = scope.launch { fetchAndRender() }
+    }
+
     private var overlays: List<ThreatOverlay> = emptyList()
     private var visibleOverlays: List<ThreatOverlay> = emptyList()
     private var activeChannels: Set<String> = setOf(CHANNEL_DEFAULT)
-    // Текущие экранные позиции иконок (overlayId → lat/lng) — обновляются при
-    // каждой перерисовке; hitTest собирает по ним все иконки в радиусе тапа.
-    private var iconPositions: Map<String, Pair<Double, Double>> = emptyMap()
 
     private data class ThreatOverlay(
         val overlayId: String,
@@ -209,10 +223,8 @@ class ThreatLayersManager(
     fun onMapReady(map: MapLibreMap) {
         this.map = map
         map.addOnCameraIdleListener(cameraIdleListener)
-        if (loadJob?.isActive != true &&
-            SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS
-        ) {
-            loadJob = scope.launch { fetchAndRender() }
+        if (SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS) {
+            launchFetch()
         }
     }
 
@@ -228,7 +240,7 @@ class ThreatLayersManager(
 
     fun detach() {
         pollJob?.cancel()
-        loadJob?.cancel()
+        fetchJob?.cancel()
         stopIconPulse()
         map?.removeOnCameraIdleListener(cameraIdleListener)
         map = null
@@ -241,23 +253,21 @@ class ThreatLayersManager(
         this.apiBaseUrl = apiBaseUrl
         this.darkMode = darkMode
         // Первичный fetch уже делает init — не дублируем запрос
-        if (baseChanged && loadJob?.isActive != true &&
-            SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS
-        ) {
-            refreshNow()
+        if (baseChanged && SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS) {
+            launchFetch()
         }
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     fun onHostStart() {
+        hostStarted = true
         startIconPulse()
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
-            // Первичный fetch уже делает loadJob (init) — не дублируем запрос
-            if (loadJob?.isActive != true &&
-                SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS
-            ) {
+            // Первичный fetch уже делает init; параллельный fetch от ON_RESUME
+            // отсечёт fetchMutex внутри fetchAndRender
+            if (SystemClock.elapsedRealtime() - lastFetchAtMs > POLL_INTERVAL_MS) {
                 fetchAndRender()
             }
             while (isActive) {
@@ -268,13 +278,14 @@ class ThreatLayersManager(
     }
 
     fun onHostStop() {
+        hostStarted = false
         pollJob?.cancel()
         pollJob = null
         stopIconPulse()
     }
 
     fun refreshNow() {
-        scope.launch { fetchAndRender() }
+        launchFetch()
     }
 
     /**
@@ -312,7 +323,7 @@ class ThreatLayersManager(
         val iconFeatures: List<Feature>,
     )
 
-    /** Дуги/стрелки/иконки по visibleOverlays + обновление iconPositions. */
+    /** Дуги/стрелки/иконки по visibleOverlays. */
     private fun buildDynamicFeatures(now: Long): DynamicFeatures {
         val directionFeatures = ArrayList<Feature>()
         val arrowFeatures = ArrayList<Feature>()
@@ -322,13 +333,10 @@ class ThreatLayersManager(
         }
 
         val iconFeatures = ArrayList<Feature>()
-        val positions = HashMap<String, Pair<Double, Double>>()
         visibleOverlays.forEach { o ->
             val pos = iconPosition(o, now, arcPointsById) ?: return@forEach
-            positions[o.overlayId] = pos
             buildIconFeature(o, pos)?.let(iconFeatures::add)
         }
-        iconPositions = positions
         return DynamicFeatures(directionFeatures, arrowFeatures, iconFeatures)
     }
 
@@ -416,25 +424,34 @@ class ThreatLayersManager(
 
     // ── Hit test (тап по угрозе) ─────────────────────────────────────────────
 
-    /** Возвращает сообщения ВСЕХ иконок в радиусе тапа (сортировка — свежие первыми). */
+    /**
+     * Возвращает сообщения ВСЕХ иконок в радиусе тапа (сортировка — свежие первыми).
+     *
+     * Тап сверяется с тем, что РЕАЛЬНО ОТРИСОВАНО (queryRenderedFeatures по слою
+     * иконок), а не с in-memory позициями: пока приложение было в фоне, кадр и
+     * данные могли разойтись, и тап по видимой иконке проваливался в выбор точки
+     * (bottom-sheet). Данные попапа ищутся в полном кэше overlays — протухшая,
+     * но ещё видимая на экране иконка тоже даёт попап со своим сообщением.
+     */
     fun hitTest(latLng: LatLng): List<ThreatInfo> {
         val map = this.map ?: return emptyList()
         if (activeChannels.isEmpty()) return emptyList()
-        if (iconPositions.isEmpty()) return emptyList()
+        val style = this.style ?: return emptyList()
+        if (!layersInstalled || style.getLayer(LAYER_ICONS) == null) return emptyList()
 
         val density = appContext.resources.displayMetrics.density
         val screen = map.projection.toScreenLocation(latLng)
         val r = TAP_TOLERANCE_DP * density
-
-        val hitIds = iconPositions.filter { (id, pos) ->
-            val overlay = visibleOverlays.firstOrNull { it.overlayId == id } ?: return@filter false
-            if (!overlay.hasPopup) return@filter false
-            val iconScreen = map.projection.toScreenLocation(LatLng(pos.first, pos.second))
-            Math.abs(iconScreen.x - screen.x) <= r && Math.abs(iconScreen.y - screen.y) <= r
-        }.keys
-
+        val rect = RectF(screen.x - r, screen.y - r, screen.x + r, screen.y + r)
+        val features = runCatching { map.queryRenderedFeatures(rect, LAYER_ICONS) }
+            .getOrElse { return emptyList() }
+        // Фичи дублируются на границах тайлов — дедупликация по overlay_id
+        val hitIds = features.mapNotNullTo(LinkedHashSet<String>()) { feature ->
+            feature.properties()?.get("overlay_id")?.takeUnless { it.isJsonNull }?.asString
+        }
         if (hitIds.isEmpty()) return emptyList()
-        return visibleOverlays
+
+        return overlays
             .filter { it.overlayId in hitIds }
             .sortedByDescending { it.occurredAtMs }
             .map { it.toThreatInfo() }
@@ -466,19 +483,26 @@ class ThreatLayersManager(
     // ── Fetch ────────────────────────────────────────────────────────────────
 
     private suspend fun fetchAndRender() {
-        if (!awaitApiBase()) return
-        val fetched = withContext(Dispatchers.IO) {
-            runCatching { fetchOverlays() }
-                .onFailure { Log.w("ThreatLayers", "Threat overlays fetch failed: ${it.message}") }
-                .getOrNull()
+        // Конкурентный запуск (ON_START poll + ON_RESUME refresh + FCM) не нужен:
+        // пропускаем, пока идёт предыдущий fetch — данные будут свежими из него.
+        if (!fetchMutex.tryLock()) return
+        try {
+            if (!awaitApiBase()) return
+            val fetched = withContext(Dispatchers.IO) {
+                runCatching { fetchOverlays() }
+                    .onFailure { Log.w("ThreatLayers", "Threat overlays fetch failed: ${it.message}") }
+                    .getOrNull()
+            }
+            lastFetchAtMs = SystemClock.elapsedRealtime()
+            if (fetched != null) {
+                overlays = fetched
+                MapPerf.log("ThreatLayers", "overlays fetched: ${fetched.size}")
+            }
+            // Рендерим даже при неудачном fetch: протухшие по времени должны исчезать
+            renderFromCache()
+        } finally {
+            fetchMutex.unlock()
         }
-        lastFetchAtMs = SystemClock.elapsedRealtime()
-        if (fetched != null) {
-            overlays = fetched
-            MapPerf.log("ThreatLayers", "overlays fetched: ${fetched.size}")
-        }
-        // Рендерим даже при неудачном fetch: протухшие по времени должны исчезать
-        renderFromCache()
     }
 
     // apiBaseUrl приходит из SideEffect чуть позже конструктора — ждём его

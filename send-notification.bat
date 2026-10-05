@@ -6,7 +6,7 @@ if "%~1"=="" goto usage
 if "%~2"=="" goto usage
 if "%~3"=="" goto usage
 
-set "SSH_KEY=E:\Dev\Projects\Alerts\VPS-54592"
+set "SSH_KEY=D:\Dev\Projects\Alerts\VPS-54592"
 set "SSH_USER=root@173.242.53.129"
 set TUNNEL_PORT=15432
 
@@ -37,7 +37,7 @@ echo ✅ Туннель создан (порт %TUNNEL_PORT%)
 echo.
 
 set "DATABASE_URL=postgresql://alerts_ua_app:luz1NE2fde1vOd9e0@127.0.0.1:%TUNNEL_PORT%/alerts_ua"
-set "FIREBASE_SERVICE_ACCOUNT_PATH=E:\Dev\Projects\Alerts\alert-ua-app-firebase-adminsdk-fbsvc-48f98daed8.json"
+set "FIREBASE_SERVICE_ACCOUNT_PATH=D:\Dev\Projects\Alerts\alert-ua-app-firebase-adminsdk-fbsvc-48f98daed8.json"
 
 cd backend
 npm run send-notification -- %~1 "%~2" "%~3"
