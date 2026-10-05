@@ -126,210 +126,128 @@ export function buildGeminiThreatPrompt(messageText: string) {
 CRITICAL: Distinguish between ORIGIN (where threat comes FROM) and TARGET (where threat is GOING TO).
 
 LINGUISTIC PATTERNS (Ukrainian):
-
-ORIGIN INDICATORS (source/launch point):
-- "з [місце]" = from [place] (e.g., "з Черкащини" = from Cherkasy region)
-- "від [місце]" = from [place]
-- "із [місце]" = from [place]
-- "з-під [місце]" = from under [place]
-- "з-за [місце]" = from behind [place]
-
-TARGET INDICATORS (destination):
-- "на [місце]" = to [place] (e.g., "на Кіровоградщину" = to Kirovohrad region)
-- "в [місце]" = to/in [place]
-- "у [місце]" = to/in [place]
-- "в напрямку [місце]" = towards [place]
-- "курсом на [місце]" = course towards [place]
-
-CURRENT LOCATION & DIRECTION PATTERNS (where threat IS now / where it is HEADING):
-- "БпЛА по межі X і Y" / "БпЛА на межі X та Y" = UAV ON THE BORDER between X and Y → use border coordinates as origin
-- "БпЛА в районі [місто]" = UAV currently IN/AT area of [city] → use city coordinates as origin
-- "БпЛА над [місто/область]" = UAV currently OVER [city/oblast] → use those coordinates as origin
-- "БпЛА біля [місто]" = UAV currently NEAR [city] → use city coordinates as origin
-- "БпЛА в сторону X" = heading TOWARDS X → X is target, not current location
-- "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
-- "вектор - [city1]/[city2]" = exact movement direction towards those towns.
-- "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
-- COMPASS COURSE ("курс південний" / "рух на схід" etc.) = the threat is at the stated location and heads along the NAMED COMPASS DIRECTION — full handling in rule 0 of LOCATION RESOLUTION PRIORITY below.
-- Priority among these patterns is defined in LOCATION RESOLUTION PRIORITY below.
+- ORIGIN (comes from): "з X" / "із X" / "від X" / "з-під X" / "з-за X" ("з Черкащини" = from Cherkasy region)
+- TARGET (goes to): "на X" / "в X" / "у X" / "в напрямку X" / "в сторону X" / "курсом на X" ("на Кіровоградщину" = to Kirovohrad region)
+- CURRENT LOCATION (threat is there NOW → use as origin): "над X", "в районі X", "біля X", "по межі X і Y" / "на межі X та Y" (= ON the border between X and Y), "БпЛА на X" (context-dependent: AT or HEADING TO)
+- "вектор - [city1]/[city2]" = exact movement direction towards those towns (use their coordinates as target)
+- COMPASS COURSE ("курс південний" / "рух на схід") = the threat heads along the NAMED COMPASS DIRECTION — see rule 0 of LOCATION RESOLUTION PRIORITY
+- When patterns conflict, LOCATION RESOLUTION PRIORITY below is the single authority.
 
 SECTION HEADERS (REGION PREFIXES) — CRITICAL:
-- A line starting with "Харківщина:", "Дніпропетровщина:", "Сумщина:", "Запорізька область:" etc. is a SECTION HEADER naming the oblast that the lines below it belong to. Colloquial "-щина"/"-цина" names map to official oblast names (Харківщина = Харківська область, Полтавщина = Полтавська область, Запоріжжя = Запорізька область).
-- The threat's location MUST be consistent with its section header: the drone/threat origin or current location belongs to the oblast named in the header.
-- Set region_hint to the official oblast name from the section header (e.g. "Харківська область").
-- DISAMBIGUATE ambiguous toponyms using the section header FIRST. Similar-sounding town names in different oblasts are DIFFERENT places (Васильківка in Dnipropetrovsk oblast is NOT Василівка in Zaporizhzhia oblast). Choose the town consistent with the header. If no town with that name exists in the header oblast, do NOT silently relocate the threat to another oblast — use the header oblast for the coordinates and put the literal place name in target_hint.
-- A course INTO a different oblast is allowed only when the text explicitly names that other oblast/city as the destination ("курсом на Полтавщину"). Then the target coordinates must be inside the DESTINATION oblast, while region_hint stays the header oblast.
+- A line starting with "Харківщина:", "Дніпропетровщина:", "Запорізька область:" etc. is a SECTION HEADER naming the oblast that the lines below it belong to. Colloquial "-щина"/"-цина" names map to official oblast names (Харківщина = Харківська область, Полтавщина = Полтавська область, Запоріжжя = Запорізька область).
+- The threat's location MUST be consistent with its section header; set region_hint to the official oblast name from the header.
+- DISAMBIGUATE ambiguous toponyms using the section header FIRST. Similar-sounding towns in different oblasts are DIFFERENT places (Васильківка in Dnipropetrovsk oblast is NOT Василівка in Zaporizhzhia oblast). If no town with that name exists in the header oblast, do NOT relocate the threat — use the header oblast for the coordinates and put the literal place name in target_hint.
+- A course INTO a different oblast is allowed only when the text explicitly names it as the destination ("курсом на Полтавщину") — then target coordinates lie in the DESTINATION oblast, region_hint stays the header oblast.
 
-Example 10: "🛵 БпЛА на Запоріжжі (Тернувате-Новомиколаївка)"
-- ORIGIN: "окупована Запорізька область" (implied/inferred occupied south, ~46.8°N, 35.5°E), origin_inferred: true
-- TARGET: "Тернувате-Новомиколаївка" → Ternuvate (~47.82°N, 36.13°E)
-- Bearing: ~355° (north/north-west)
-- CRITICAL: Since UAV is heading towards Ternuvate/Novomykolaivka in Zaporizhzhia oblast, the origin MUST NOT be set to Zaporizhzhia center. Infer it from the occupied south (~80km away) so the vector points from occupied territory towards the target.
-
-Example 11: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
+Example 1: "🛵 БпЛА ➡️ курсом на Синельникове на Дніпропетровщині"
 - ORIGIN: "окупований південний схід" (implied/inferred occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E), origin_inferred: true
 - TARGET: "курсом на Синельникове" → Synelnykove (~48.32°N, 35.53°E)
 - Bearing: ~330° (north-west)
-- CRITICAL: Synelnykove is in Dnipropetrovsk oblast. Since origin is not specified, do NOT use Dnipropetrovsk center. Infer origin from the occupied Zaporizhzhia/Donetsk frontline to point the flight vector from occupied territories towards Synelnykove.
+- CRITICAL: origin not specified → do NOT use Dnipropetrovsk center; infer from the occupied frontline so the vector points from hostile territory towards the target.
 
-Example 12: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
-- CURRENT LOCATION: "по межі Сумщини і Харківщини" = ON THE BORDER between Sumy and Kharkiv oblasts → origin at border area (~50.0°N, 34.0°E)
-- TARGET/DIRECTION: "в напрямку Полтавщини (вектор - Котельва/Опішня)" = heading towards Poltava oblast, specifically towards Kotelva/Opishnia towns (~50.0°N, 34.5°E)
+Example 2: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини (вектор - Котельва/Опішня)"
+- CURRENT LOCATION: ON THE BORDER of Sumy/Kharkiv oblasts → origin (~50.0°N, 34.0°E); do NOT place it in a different oblast
+- TARGET: "в напрямку Полтавщини (вектор - Котельва/Опішня)" → Kotelva/Opishnia (~50.0°N, 34.5°E); "в напрямку [область]" = heading TOWARDS it, not inside it — entry vectors do not apply when the location is explicit
 - Bearing: ~135° (south-east)
-- CRITICAL: "по межі X і Y" means the UAV is ON THE BORDER between those two oblasts. Do NOT place it in a completely different oblast like Dnipropetrovsk!
-- CRITICAL: "в напрямку [область]" means heading TOWARDS that oblast, not currently inside it. The Poltava entry vector rule does NOT apply here because the current location is explicitly stated.
-- CRITICAL: "вектор - [city1]/[city2]" specifies the exact movement direction towards those towns. Use their coordinates as target.
 
-Example 13: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
-- ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E)
-- TARGET: "курс на Полтавщину" = heading TO Poltava oblast (~49.5°N, 34.5°E)
+Example 3: "🛵 БпЛА над Сумською областю, курс на Полтавщину"
+- ORIGIN: "над Сумською областю" = OVER Sumy oblast (~50.3°N, 34.0°E) — explicit position, do NOT use an inferred origin
+- TARGET: "курс на Полтавщину" → Poltava oblast (~49.5°N, 34.5°E)
 - Bearing: ~160° (south)
-- CRITICAL: "над [область]" means OVER that oblast — current position is there. Do NOT use inferred origin from occupied territories.
 
-Example 14: "БпЛА в районі Сум, рухається в сторону Харкова"
-- CURRENT LOCATION: "в районі Сум" = in area of Sumy city (~50.9°N, 34.8°E)
-- TARGET: "в сторону Харкова" = towards Kharkiv city (~50.0°N, 36.2°E)
-- Bearing: ~135° (south-east)
-- CRITICAL: "в районі [місто]" = currently NEAR that city. Do NOT move it to another oblast!
-
-Example 15: "Каб з півночі Харківщини по Слов'янську"
-- ORIGIN: "з півночі Харківщини" = from north of Kharkiv oblast (~49.5°N, 37.6°E)
-- TARGET: "по Слов'янську" = at/over Sloviansk city (~48.9°N, 37.6°E)
+Example 4: "Каб з півночі Харківщини по Слов'янську"
+- ORIGIN: "з півночі Харківщини" → north of Kharkiv oblast (~49.5°N, 37.6°E)
+- TARGET: "по Слов'янську" = AT Sloviansk (~48.9°N, 37.6°E) — "по [місто]" = the city itself
 - Bearing: ~180° (south)
-- CRITICAL: "по [місто]" means AT that city. Target is the city itself.
 
-Example 16: "Дніпропетровщина: 🔄 7х реактивів в сектор Перещепине / Магдалинівка."
-- threat_kind: uav ("реактиви" = jet-powered UAVs)
-- CURRENT LOCATION: "в сектор Перещепине / Магдалинівка" = in the sector of those towns → use midpoint (~49.0°N, 35.3°E) as origin
-- TARGET: not stated → null
-- CRITICAL: monitoring-channel slang "реактиви" means jet UAVs, NOT missiles.
+Example 5: "🏍 Реактивний БпЛА в на межі Житомирської та Київської областей курс південний."
+- threat_kind: uav ("Реактивний БпЛА" = jet UAV); "курс південний" NAMES THE DIRECTION OF MOVEMENT — origin→target and bearing MUST point SOUTH
+- ORIGIN: stated location (~50.25°N, 29.55°E); TARGET: a point ~70 km SOUTH along the 180° line (~49.55°N, 29.55°E) — NOT Kyiv (that lies NORTH-EAST, the opposite way)
+- Bearing: 180° — exactly the named course; a named compass course is NOT a destination, the target lies ON the named bearing
 
-Example 17: "🏍 Реактивний БпЛА в на межі Житомирської та Київської областей курс південний."
-- threat_kind: uav ("Реактивний БпЛА" = jet-powered UAV)
-- KEY: "курс південний" NAMES THE DIRECTION OF MOVEMENT — the movement from origin to target and the bearing must point SOUTH.
-- CURRENT LOCATION: "на межі Житомирської та Київської областей" → origin at the stated location (~50.25°N, 29.55°E)
-- TARGET: a point ~70 km SOUTH of the origin along the 180° line (~49.55°N, 29.55°E) — NOT Kyiv oblast center (which lies EAST), NOT any other place
-- Bearing: 180° (south) — exactly the named compass course
-- CRITICAL: a named compass course is NOT a destination. Kyiv city (~50.45°N, 30.5°E) would be ~NORTH-EAST of the origin — an origin→target direction there points the OPPOSITE way and contradicts the message. The target always lies ON the named bearing from the current location.
+Example 6: "Київ: 🛵 Реактивний БпЛА в напрямку міста" (SHORT APPROACH ARC; same for "на Жуляни" → target = Zhuliany ~50.40°N, 30.45°E)
+- SECTION HEADER "Київ:" = the UAV is ALREADY inside Kyiv oblast, closing in on the city
+- TARGET: Kyiv city (~50.45°N, 30.52°E)
+- ORIGIN (inferred): ~45 km NORTH-EAST of the target INSIDE Kyiv oblast (~50.72°N, 30.88°E), on the Bryansk/Shatalovo approach bearing — NOT Shatalovo itself (~450 km away)
+- Bearing: ~215° (south-west, into the city)
+- CRITICAL: launch origins define the DIRECTION of the arc, not its START — an approach report means the drone is minutes from the target, the arc must be short and start inside the section-header oblast.
 
-TERMINOLOGY (monitoring channel slang):
-- "Бандеролі" / "Бандероль" = jet-powered UAV (реактивний БпЛА) → threat_kind "uav"
-- "реактив" / "реактиви" / "реактивний" = jet-powered UAV → threat_kind "uav" (even without the word "БпЛА")
-- "дорозвідка" = reconnaissance activity. It is NOT a threat by itself — NEVER emit a threat object for a recon mention alone ("Київ дорозвідка", "дорозвідка до відбою", "дорозвідка по Бандеролях", "дорозвідка БПЛА" = no threat object). In a mixed post (recon + strike report), quote and emit ONLY the strike lines
-- "мгКР" / "КР" / "крилаті ракети" / "крилата ракета" = cruise missile(s) → threat_kind "missile"
-- "Увага по крилатим ракетам" = cruise missile warning for the named place → threat_kind "missile"
-- "балістична ракета" / "балістика" / "загроза балістичного удару" / "пуски балістики" = ballistic missile → threat_kind "ballistic"
-- "Іскандер" / "Кинджал" / "Циркон" / "KN-23" = specific ballistic missile types → threat_kind "ballistic"
-- "тактична авіація" / "активність тактичної авіації" = tactical aviation activity → threat_kind "tactical_aviation"
-- "МіГ-31К" / "МіГ-31" / "зліт МіГ" = MiG-31K interceptor takeoff (often carries Kinzhal) → threat_kind "tactical_aviation"
-- "Ту-22М3" / "Ту-95" / "Ту-160" / "зліт стратегічної авіації" = strategic bomber activity → threat_kind "tactical_aviation"
-- "Су-34" / "Су-25" / "Су-35" / "зліт винищувача" = fighter jet takeoff → threat_kind "tactical_aviation"
-- "ракетна небезпека" / "ракетна загроза" when paired with aircraft mention (МіГ-31К, Ту-22М3, etc.) → threat_kind "tactical_aviation" (NOT "missile")
-- "ракета-носій" / "авіаційна ракета" when the launch platform is an aircraft → threat_kind "tactical_aviation"
-- CRITICAL PRIORITY RULE: If the message mentions an aircraft takeoff ("зліт МіГ-31К", "зліт Ту-22М3", "зліт Су-34", etc.), classify as "tactical_aviation" EVEN IF the message also contains "ракетна", "Кинджал", "ракета", or other missile keywords. The aircraft is the threat carrier, not the missile itself. Only classify as "missile" when cruise missiles are explicitly reported in flight (e.g., "КР у повітрі", "крилата ракета на маршруті") WITHOUT an aircraft takeoff context.
-- Emoji "🅿️" marks a threat position/update, "🔄" marks maneuvering — treat them as formatting, not content
-- "Уважно до відбою" / "дорозвідка до відбою" = the threat remains active until all-clear — it is NOT a cancellation
-- "зараз чисто" / "чисто" = all-clear → action "clear"
+TERMINOLOGY (monitoring channel slang → threat_kind):
+- uav: "Бандеролі" / "Бандероль", "реактив" / "реактиви" / "реактивний" = jet-powered UAV (even without the word "БпЛА"; "реактиви" are NOT missiles)
+- missile: "мгКР" / "КР" / "крилаті ракети", "Увага по крилатим ракетам", "Швидкісна ціль" (high-speed target)
+- ballistic: "балістична ракета" / "балістика" / "загроза балістичного удару" / "пуски балістики"; "Іскандер" / "Кинджал" / "Циркон" / "KN-23"
+- tactical_aviation: "тактична авіація"; takeoffs "МіГ-31(К)", "Ту-22М3", "Ту-95", "Ту-160", "Су-34/25/35"; "ракетна небезпека" / "ракетна загроза" / "ракета-носій" / "авіаційна ракета" with aircraft context
+- CRITICAL PRIORITY RULE: an aircraft takeoff ("зліт МіГ-31К", "зліт Ту-22М3", "зліт Су-34" etc.) = "tactical_aviation" EVEN IF the message also mentions "ракетна" / "Кинджал" / "ракета" — the aircraft is the threat carrier. Classify as "missile" only when cruise missiles are explicitly reported in flight ("КР у повітрі", "крилата ракета на маршруті") WITHOUT an aircraft takeoff context.
+- "дорозвідка" = reconnaissance, NOT a threat — NEVER emit a threat object for a recon mention alone ("Київ дорозвідка", "дорозвідка до відбою", "дорозвідка по Бандеролях"); in a mixed post (recon + strike report) quote and emit ONLY the strike lines
+- Emoji "🅿️" (threat position/update) and "🔄" (maneuvering) = formatting, not content
+- "Уважно до відбою" / "дорозвідка до відбою" = the threat remains active until all-clear — NOT a cancellation; "зараз чисто" / "чисто" = all-clear → action "clear"
 
 COORDINATE REQUIREMENTS:
-- You MUST provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng
-- Hints and coordinates are validated together server-side: coordinates MUST match the places named in origin_hint/target_hint/region_hint. Keep hints accurate even when you are unsure about coordinates.
-- If you are NOT confident in exact coordinates (ambiguous toponym, unsure which same-named town, uncertain oblast), output NULL coordinates for that point — the server will resolve them from your hints. NEVER fabricate precise-looking coordinates for a place you are unsure about.
-- If both origin and target are specified, they MUST be different coordinates (>1km apart)
-- If exact coordinates are unknown, provide approximate center coordinates of the region/city
-- Coordinates: latitude (-90 to 90), longitude (-180 to 180)
-- NEVER use 0.0, 0.0 as fallback - use null instead
-- VERIFY every toponym before assigning coordinates: Ukraine has many same-named towns, and similar-sounding names in different oblasts are different places (Васильківка vs Василівка, Кам'янка, Новомиколаївка, etc.). Coordinates must match the place named in the text AND be consistent with the section header oblast. When unsure between two same-named places, prefer the one inside the section header oblast.
+- Provide correct WGS84 coordinates directly in origin_lat/lng and target_lat/lng; they are validated server-side against origin_hint/target_hint/region_hint and MUST match the named places
+- NOT confident in exact coordinates (ambiguous or same-named toponym, uncertain oblast) → output NULL for that point, the server resolves it from your hints; otherwise approximate region/city center coordinates are acceptable. NEVER fabricate precise-looking coordinates, NEVER use 0.0, 0.0
+- If both origin and target are specified, they MUST be different coordinates (>1 km apart)
+- Same-named towns are common (Васильківка vs Василівка, Кам'янка, Новомиколаївка): coordinates must match the place named in the text AND be consistent with the section header oblast; when unsure between two same-named places, prefer the one inside the header oblast
 
-GEOPOLITICAL INFERENCE RULES (When origin/direction is not explicitly stated):
+GEOPOLITICAL INFERENCE RULES (when origin/direction is not explicitly stated):
 
 GLOBAL INVARIANT (applies to EVERY threat, no exceptions):
 - Incoming threats NEVER fly from unoccupied Ukraine TOWARDS Russia, Belarus, occupied territories or out to the sea. The origin→target vector must always point AWAY from hostile territory, INTO Ukraine (or deeper along the front, away from it). A vector that starts inside unoccupied Ukraine and points toward the border / Russia / occupied territories is ALWAYS WRONG — the origin belongs on the hostile side.
 - An explicitly reported current position inside Ukraine IS a valid origin: "БпЛА над Днепром в напрямку Кам'янського" → origin = Dnipro (~48.47°N, 35.04°E), target = Kamianske (~48.51°N, 34.60°E), origin_inferred = FALSE. Movement deeper into Ukraine (away from the front) is correct and must not be "corrected".
-- An INFERRED origin (not explicitly reported) must NEVER be a point inside unoccupied Ukraine — no oblast centers, raion centers or Ukrainian cities. "Ракета на схід Харківщини" → inferred origin is NORTH of the target (Belgorod/Yeysk direction, ~50.4°N, 36.3°E), vector points south INTO the oblast; NOT Kharkiv city and NOT any point west of the target. "Чернігівщина: БпЛА курсом на Холми" → inferred origin is NORTH-EAST of Kholmy (Kursk/Halino direction, ~51.75°N, 36.30°E — the vector points WEST into Ukraine), NOT Chernihiv oblast center.
+- An INFERRED origin (not explicitly reported) must NEVER be a distant point deep inside unoccupied Ukraine — no oblast centers, raion centers or Ukrainian cities. "Ракета на схід Харківщини" → inferred origin is NORTH of the target (Belgorod/Yeysk direction, ~50.4°N, 36.3°E), vector points south INTO the oblast; NOT Kharkiv city and NOT any point west of the target. "Чернігівщина: БпЛА курсом на Холми" → inferred origin is NORTH-EAST of Kholmy (Kursk/Halino direction, ~51.75°N, 36.30°E — the vector points WEST into Ukraine), NOT Chernihiv oblast center.
+- EXCEPTION (rule 4, SHORT APPROACH ARC): when the message reports the threat already closing in on a specific place, the inferred origin is a point 40-80 km from the target on the approach bearing — it represents the drone's current approach position, not a launch site, and MAY lie inside unoccupied Ukraine.
 
-1. For KAB/Missile Threats to Oblasts (Border Entry Points):
-   - When KABs/Missiles target an OBLAST (not a specific city) and direction is not stated, place target coordinates at the BORDER ENTRY POINT from the most likely threat direction:
-     * Dnipropetrovsk oblast: threats typically from EAST (Donetsk direction) → use eastern border entry point (~48.5°N, 36.5°E).
-     * Kharkiv oblast: threats typically from NORTH (Belgorod direction) → use northern border entry point (~50.0°N, 36.5°E).
-     * Sumy oblast: threats typically from NORTH/EAST (Russia direction) → use northeastern border entry point (~51.0°N, 34.5°E).
-     * Chernihiv oblast: threats typically from NORTH (Russia/Belarus direction) → use northern border entry point.
-     * Kyiv oblast: threats can be from north/east → infer from context.
-     * Zaporizhzhia oblast: threats typically from SOUTH/EAST (Crimea/Donetsk) → use southern/eastern border entry point.
-     * Mykolaiv/Kherson oblasts: threats typically from SOUTH/EAST (Crimea) → use southern border entry point.
-   - If direction is UNKNOWN and no context is available, still place the target at the border entry point facing the matching launch origin from rule 3; use the oblast center only as a last resort.
-   - If threat targets a CITY (not oblast), use city coordinates.
-   - For oblast-level targets, target_hint MUST be the oblast name (e.g. "Дніпропетровська область"), NEVER an invented city. Border entry points are approximate direction markers, not precise impact points.
+APPROACH DIRECTIONS BY TARGET REGION (shared by rules 1-4):
+- Zaporizhzhia oblast: from SOUTH (occupied south, ~46.8°N, 35.5°E)
+- Dnipropetrovsk oblast: from EAST/SOUTH-EAST (occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E); border entry ~48.5°N, 36.5°E
+- Kharkiv oblast: from NORTH (Belgorod direction, ~50.4°N, 36.3°E); border entry ~50.0°N, 36.5°E
+- Sumy oblast: from NORTH/EAST; border entry ~51.0°N, 34.5°E
+- Chernihiv oblast: from NORTH (Russia/Belarus direction)
+- Kyiv oblast/city: from NORTH/NORTH-EAST (Bryansk/Shatalovo direction, rule 3)
+- Poltava oblast: from EAST (~49.5°N, 35.5°E)
+- Odesa/Mykolaiv/Kherson: from SOUTH (Crimea/Black Sea, ~45.5°N, 31.5°E)
 
-2. For UAV (Drone) Threats (Inferred Entry Vectors) — ONLY when origin is NOT explicitly stated:
-   - CRITICAL: These rules apply ONLY when the message does NOT explicitly state WHERE the drone currently is.
-   - If the message says "по межі X і Y", "над X", "в районі X", "біля X" — the origin is EXPLICIT. Do NOT use these entry vectors. Use the stated location directly.
-   - "в напрямку [область]" means heading TOWARDS that oblast, NOT that the drone is currently there. Do NOT apply that oblast's entry vector when "в напрямку" is used.
-   - If origin IS NOT stated and no direction phrases are present, use these regional entry vectors as fallback ONLY:
-     * Targets in Zaporizhzhia oblast (e.g., "на Запоріжжі", "Тернувате"): from SOUTH (occupied southern Zaporizhzhia, ~46.8°N, 35.5°E)
-     * Targets in Dnipropetrovsk oblast (e.g., "на Дніпропетровщині", "Синельникове"): from SOUTH-EAST (occupied Zaporizhzhia/Donetsk frontline, ~47.6°N, 36.7°E)
-     * Targets in Kharkiv oblast (e.g., "на Харків"): from NORTH (~50.4°N, 36.3°E)
-     * Targets in Odesa/Mykolaiv/Kherson: from SOUTH (~45.5°N, 31.5°E)
-     * Targets in Sumy/Chernihiv: from NORTH-EAST — Kursk/Halino or Bryansk direction (see rule 3)
-     * Targets in Kyiv oblast/city: from NORTH/NORTH-EAST — Bryansk/Shatalovo direction (see rule 3)
-     * Targets in Poltava oblast (e.g., "на Полтавщині"): from EAST (~49.5°N, 35.5°E)
-   - WRONG EXAMPLE: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини" → origin is on Sumy/Kharkiv border (~50.0°N, 34.0°E), NOT from Poltava entry vectors
-   - RIGHT EXAMPLE: "БпЛА на Полтавщині" (no origin stated) → origin from EAST (~49.5°N, 35.5°E)
-
-3. KNOWN LAUNCH ORIGINS (Russia/occupied Crimea) — use as the inferred origin when it matches the target region:
-   - Халино, Курськ (~51.75°N, 36.30°E): main airbase for strikes on northern/central Ukraine. Missiles/drones enter through Sumy oblast heading SOUTH or SOUTH-WEST from the airfield. PREFERRED origin for targets in Sumy, Chernihiv, Kyiv, Poltava oblasts (e.g. "курсом на Холми", "на Чернігівщину", "на Суми").
-   - Шаталово, Смоленська обл. (~54.33°N, 32.07°E): main northern hub — mass launches of drones/missiles that fan out SOUTH over Kyiv/Chernihiv/Sumy/Poltava and continue deep WEST (Cherkasy, Kirovohrad, Vinnytsia, Khmelnytskyi, Rivne, Odesa). PREFERRED origin for long-range targets in central/western Ukraine when no closer site matches.
-   - Дронопорт на Брянщині (~53.0°N, 35.0°E, south of Bryansk): Shaheds heading SOUTH into Chernihiv/Sumy/northern Kyiv oblasts.
-   - Єйськ, Краснодарський край (~46.68°N, 38.21°E): Shaheds/missiles approaching from the EAST/NORTH-EAST over the Sea of Azov — Kharkiv, Sumy, Poltava, Dnipropetrovsk.
-   - Міллерово, Ростовська обл. (~48.95°N, 40.40°E): ballistic missiles / X-101 — Kharkiv, Dnipro, Zaporizhzhia (approach from the EAST).
-   - Приморсько-Ахтарськ (~46.05°N, 38.20°E): Shaheds over the Black Sea — Odesa, Mykolaiv, Kherson, Zaporizhzhia, Dnipro, Kirovohrad, Vinnytsia.
-   - Мис Чауда, Крим (~44.86°N, 35.42°E, near Koktebel): Shaheds/missiles from occupied Crimea — Odesa, Mykolaiv, Kherson; northbound to Kirovohrad/Vinnytsia.
-   - Новоросійськ (~44.72°N, 37.77°E): ship/submarine «Калібр» launches from the Black Sea — approach from the SOUTH. PREFERRED origin for sea-launched strikes on Odesa, Mykolaiv, Kherson and western Ukraine.
-   - When one of these launch origins matches the target's region, use its coordinates as the inferred origin (origin_inferred: true) instead of a generic entry vector.
+1. KAB/Missile targeting an OBLAST (not a specific city), direction not stated → place the target at the oblast's border entry point facing the approach direction (use the oblast center only as a last resort); target_hint MUST be the oblast name (e.g. "Дніпропетровська область"), NEVER an invented city — border entry points are approximate direction markers, not precise impact points. If the threat targets a CITY, use city coordinates.
+2. UAV with NO stated origin/current location → inferred origin = a point on the matching approach direction above (occupied/hostile side). An explicit current location ("над X", "по межі X і Y", "в районі X", "біля X") overrides this entirely — use the stated place. RIGHT: "БпЛА на Полтавщині" (no origin stated) → origin from EAST (~49.5°N, 35.5°E). WRONG: "БпЛА по межі Сумщини і Харківщини в напрямку Полтавщини" → origin on the Sumy/Kharkiv border (~50.0°N, 34.0°E), NOT the Poltava entry vector.
+3. KNOWN LAUNCH ORIGINS (Russia/occupied Crimea):
+   - Халино, Курськ (~51.75°N, 36.30°E): main airbase for northern/central Ukraine; entry through Sumy heading S/SW — Sumy, Chernihiv, Kyiv, Poltava
+   - Шаталово, Смоленська обл. (~54.33°N, 32.07°E): northern hub fanning SOUTH over Kyiv/Chernihiv/Sumy/Poltava and deep WEST (Cherkasy, Kirovohrad, Vinnytsia, Khmelnytskyi, Rivne, Odesa) — default for long-range central/western targets
+   - Дронопорт на Брянщині (~53.0°N, 35.0°E): Shaheds SOUTH into Chernihiv/Sumy/northern Kyiv oblast
+   - Єйськ, Краснодарський край (~46.68°N, 38.21°E): from E/NE over the Sea of Azov — Kharkiv, Sumy, Poltava, Dnipropetrovsk
+   - Міллерово, Ростовська обл. (~48.95°N, 40.40°E): ballistic / X-101 from the EAST — Kharkiv, Dnipro, Zaporizhzhia
+   - Приморсько-Ахтарськ (~46.05°N, 38.20°E): Shaheds over the Black Sea — Odesa, Mykolaiv, Kherson, Zaporizhzhia, Dnipro, Kirovohrad, Vinnytsia
+   - Мис Чауда, Крим (~44.86°N, 35.42°E): from occupied Crimea — Odesa, Mykolaiv, Kherson; northbound Kirovohrad/Vinnytsia
+   - Новоросійськ (~44.72°N, 37.77°E): sea-launched «Калібр» from the SOUTH — Odesa, Mykolaiv, Kherson, western Ukraine
+   These launch origins define the DIRECTION of approach. Use a launch site's own coordinates as the inferred origin ONLY when the message reports the launch or the entry into Ukraine itself ("пуски", "зліт", "зі сторони X", "з акваторії", "з боку РФ"); for approach reports apply rule 4.
+4. SHORT APPROACH ARC (threat already closing in on a specific place) — the default for approach reports:
+   - Applies when the message reports the threat already heading to/onto a specific place ("БпЛА на Жуляни", "реактивний БпЛА в напрямку міста", "курсом на X") and no origin is explicitly stated. Such a report means the threat is ALREADY deep inside Ukraine, minutes from the target — a 300-500 km arc from Shatalovo/Yeysk/Bryansk to the target is WRONG.
+   - Take the matching approach direction (list above / rule 3) as the DIRECTION only: place the inferred origin 40-80 km from the target on the REVERSE of that approach bearing, so the short arc keeps the real-world direction.
+   - When a SECTION HEADER names the oblast and the target lies in the same oblast, the origin MUST stay inside that oblast ("Київ: ... в напрямку міста" → origin inside Kyiv oblast).
+   - Still mark origin_inferred = true (the exact point is an inference; the direction is what matters).
 
 ORIGIN INFERENCE MARKER (origin_inferred) — REQUIRED in every threat object:
-- origin_inferred = FALSE when the message explicitly states WHERE the threat/drone IS or comes FROM as a NAMED PLACE: "над X", "в районі X", "біля X", "по межі X і Y", "з X"/"від X" with a named place, "в акваторії Чорного моря".
-- origin_inferred = TRUE when the origin was GUESSED by inference: occupied-territory guesses ("окупований південь/схід"), regional entry vectors, or direction-only phrases without a named place ("з півночі", "з півдня").
-- Never guess when the location is stated: if the text says where the drone is, that place IS the origin and origin_inferred = FALSE.
+- FALSE = the message explicitly states WHERE the threat IS or comes FROM as a NAMED PLACE ("над X", "в районі X", "біля X", "по межі X і Y", "з X"/"від X" with a named place, "в акваторії Чорного моря"). Never guess when the location is stated — that place IS the origin.
+- TRUE = the origin was GUESSED by inference: occupied-territory guesses, regional entry vectors, launch origins, direction-only phrases ("з півночі", "з півдня"), short approach arcs (rule 4).
 
 LOCATION RESOLUTION PRIORITY (single authority — apply in this order, stop at first match):
 
-0. EXPLICIT COMPASS COURSE — "курс південний" / "рух на схід" etc. NAMES THE DIRECTION OF MOVEMENT:
-   - When the message names a compass course (курс/рух/напрямок + північ/південь/схід/захід or intercardinal), the direction FROM origin TO target MUST follow that bearing.
-   - If the current location is also stated: origin = stated location; target = a point 60-100 km from the origin ALONG the named bearing.
-   - movement_bearing_deg MUST equal the named compass direction (South=180, North=0, East=90, West=270, SE=135, SW=225, NE=45, NW=315). An origin→target direction pointing anywhere else is WRONG, even if some region center lies in that other direction.
+0. EXPLICIT COMPASS COURSE ("курс південний" / "рух на схід" etc.) NAMES THE DIRECTION OF MOVEMENT:
+   - The direction FROM origin TO target MUST follow the named bearing; movement_bearing_deg MUST equal the named compass direction (North=0, NE=45, East=90, SE=135, South=180, SW=225, West=270, NW=315). An origin→target direction pointing anywhere else is WRONG, even if some region center lies that way.
+   - If the current location is also stated: origin = stated location; target = a point 60-100 km from it ALONG the named bearing.
    - NEVER replace the named course with an entry vector, an oblast center, or a city in a different direction.
 
-1. EXPLICIT CURRENT LOCATION — when message states WHERE the drone IS RIGHT NOW:
-   - "по межі X і Y" / "на межі X та Y" = ON THE BORDER between X and Y → use border coordinates as origin
-   - "над X" / "над [область]" = OVER X → use X coordinates as origin
-   - "в районі X" = IN AREA of X → use X coordinates as origin
-   - "біля X" = NEAR X → use X coordinates as origin
-   - "на X" (when X is oblast/city and message says "БпЛА на X") = depends on context — could be AT or HEADING TO
-   - CRITICAL: When explicit location is given, DO NOT apply regional entry vectors from rule 4. Use the stated location directly.
-
-2. EXPLICIT ORIGIN — when message states WHERE threat COMES FROM as a NAMED PLACE:
-   - "з X" / "із X" = FROM X → use X coordinates as origin
-   - "від X" = FROM X → use X coordinates as origin
-   - Compass directions ("з півночі", "з півдня") are NOT explicit origins — handle them in rule 3 and mark origin_inferred = TRUE.
-
-3. DIRECTIONAL PHRASES (only if no explicit origin/location):
-   - "з півночі" = from north → infer from north of target
-   - "з півдня" = from south → infer from south of target
-
-4. REGIONAL ENTRY VECTORS (fallback only, when nothing else is stated)
+1. EXPLICIT CURRENT LOCATION ("над X", "в районі X", "біля X", "по межі X і Y") → origin = the stated place; entry vectors and launch origins do NOT apply.
+2. EXPLICIT ORIGIN ("з X" / "із X" / "від X" with a named place) → origin = X. Compass directions ("з півночі", "з півдня") are NOT explicit origins → rule 3.
+3. DIRECTIONAL PHRASES ("з півночі" = from north, "з півдня" = from south) → infer from that side of the target, origin_inferred = TRUE.
+4. Fallback: approach direction by target region (GEOPOLITICAL rules 1-2). Approach reports with no stated origin ("в напрямку міста", "на Жуляни", "курсом на X") → SHORT APPROACH ARC (GEOPOLITICAL rule 4): origin 40-80 km from the target on the approach bearing, never the distant launch site.
 
 BEARING CALCULATION:
-- movement_bearing_deg = direction FROM origin TO target (0-360 degrees)
-- Formula: calculate bearing from (origin_lat, origin_lng) to (target_lat, target_lng)
-- Directions: North=0, North-East=45, East=90, South-East=135, South=180, South-West=225, West=270, North-West=315
-- Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°
-- CRITICAL: when the message names a compass course ("курс південний" etc.), movement_bearing_deg MUST be the NAMED compass value. The target is chosen to lie on that bearing — never pick a target first and let the bearing drift away from the named course.
+- movement_bearing_deg = direction FROM origin TO target (0-360 degrees). Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°
+- CRITICAL: when the message names a compass course, movement_bearing_deg MUST be the NAMED compass value — the target is chosen to lie on that bearing, never pick a target first and let the bearing drift away from the named course.
 
 OTHER RULES:
 - Combine context from multiple lines if they describe the same event
 - If one post describes several simultaneous threats, return one threat object per independently trackable threat
-- "Швидкісна ціль" (high-speed target) = missile threat
+- "в сектор X / Y" = maneuvering in the area of those towns → origin = their midpoint, target = null
 - Action: "new" for new threats, "update" for updates, "clear" for cancellations/destroyed (Відбій, Збито, Чисто)
 - Confidence calibration (set honestly per threat):
   * 0.9–1.0: explicit named place(s), coordinates certain, unambiguous text
@@ -1161,9 +1079,11 @@ export class GeminiThreatParserService {
       }
 
       // Deterministic geopolitical sanity check: an INFERRED origin must never
-      // lie inside unoccupied Ukraine (incoming threats only fly from
+      // lie DEEP inside unoccupied Ukraine (incoming threats only fly from
       // Russia / occupied territories / the sea inward). Re-anchor it to the
       // nearest hostile border exit when the LLM still placed it inside.
+      // Short approach arcs (<90 km from the target) are exempt — there the
+      // origin is the threat's current approach position, not a launch site.
       if (
         candidate.action === 'new' &&
         candidate.origin_inferred === true &&
@@ -1859,9 +1779,12 @@ export class GeminiThreatParserService {
 
   /**
    * Deterministic guard for the LLM: an INFERRED origin (no explicitly
-   * reported position) must never lie inside unoccupied Ukraine. When it does,
-   * re-anchor it to the nearest hostile border exit on the ray cast backwards
-   * from the target along the origin→target bearing.
+   * reported position) must never lie DEEP inside unoccupied Ukraine. When it
+   * does, re-anchor it to the nearest hostile border exit on the ray cast
+   * backwards from the target along the origin→target bearing.
+   * Exception: origins within 90 km of the target are left as-is — a short
+   * arc near the target is an approach report ("в напрямку міста"), where the
+   * origin represents the threat's current approach position, not a launch site.
    */
   private async reanchorInferredOriginIfInsideUkraine(
     client: PoolClient,
@@ -1889,7 +1812,8 @@ export class GeminiThreatParserService {
         SELECT
           ST_Covers(ukr.geom, origin_pt.geom)
             AND (occ.geom IS NULL OR NOT ST_Covers(occ.geom, origin_pt.geom))
-            AND ST_Covers(ukr.geom, target_pt.geom) AS needs_reanchor
+            AND ST_Covers(ukr.geom, target_pt.geom)
+            AND ST_Distance(origin_pt.geom::geography, target_pt.geom::geography) > 90000 AS needs_reanchor
         FROM ukr, occ, origin_pt, target_pt
       `,
       [geoms.ukraineGeoJson, geoms.occupiedGeoJsons, originLng, originLat, targetLng, targetLat],
