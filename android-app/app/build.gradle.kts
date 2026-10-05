@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
     id("com.google.gms.google-services")
     id("org.jetbrains.kotlin.plugin.compose")
+    // Потребляет baseline-prof.txt из модуля :baselineprofile
+    id("androidx.baselineprofile")
 }
 
 fun getSigningValue(name: String): String? {
@@ -32,9 +34,9 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
+        versionCode = 47
 
-        versionName = "0.8.5"
+        versionName = "0.8.7"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -87,6 +89,11 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    aaptOptions {
+        // GeoJSON читаются через readBytes/mmap — не сжимаем в APK
+        noCompress += listOf("geojson", "json")
+    }
 }
 
 tasks.whenTaskAdded {
@@ -108,7 +115,11 @@ tasks.whenTaskAdded {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
 
+    baselineProfile(project(":baselineprofile"))
+
     implementation("androidx.core:core-ktx:1.15.0")
+    // SplashScreen API: брендированный первый кадр вместо чёрного окна на cold start
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.fragment:fragment-ktx:1.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
@@ -129,6 +140,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.foundation:foundation")
+    // Coil: загрузка/кэширование изображений с даунсэмплингом (Play Console: bitmap memory)
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

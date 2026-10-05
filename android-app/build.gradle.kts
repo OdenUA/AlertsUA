@@ -5,4 +5,5 @@ plugins {
     // больше не применяется. Compose-компилятор подключается отдельным плагином
     // той же версии, что и встроенный Kotlin.
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10" apply false
+    id("androidx.baselineprofile") version "1.5.0" apply false
 }

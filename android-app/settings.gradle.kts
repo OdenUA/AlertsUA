@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AlertsUa"
 include(":app")
+include(":baselineprofile")

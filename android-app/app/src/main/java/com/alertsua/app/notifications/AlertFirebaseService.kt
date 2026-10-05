@@ -1,6 +1,7 @@
 package com.alertsua.app.notifications
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -14,6 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class AlertFirebaseService : FirebaseMessagingService() {
+
+    companion object {
+        private var largeIconBitmap: Bitmap? = null
+    }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -42,7 +47,9 @@ class AlertFirebaseService : FirebaseMessagingService() {
         val isStart = dispatchKind == "start"
 
         val color = if (isStart) 0xFFD32F2F.toInt() else 0xFF388E3C.toInt()
-        val largeIcon = BitmapFactory.decodeResource(resources, R.drawable.ic_notification_large)
+        // largeIcon декодируем один раз за процесс, а не на каждый push
+        val largeIcon = largeIconBitmap
+            ?: BitmapFactory.decodeResource(resources, R.drawable.ic_notification_large)?.also { largeIconBitmap = it }
 
         val builder = NotificationCompat.Builder(this, settingsManager.getNotificationChannelId())
             .setSmallIcon(R.drawable.ic_notification_small)

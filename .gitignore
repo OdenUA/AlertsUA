@@ -60,3 +60,4 @@ backend/tmp_*.sql
 
 # Full VPS backups (contain secrets, multi-GB)
 backups/
+android-app/baselineprofile/build/

@@ -3,8 +3,6 @@ package com.alertsua.app.map
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,7 +37,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -106,6 +103,7 @@ import com.alertsua.app.data.SubscriptionPin
 import com.alertsua.app.location.getCurrentLocation
 import com.alertsua.app.location.locationUpdates
 import com.alertsua.app.ui.faq.FaqBottomSheet
+import coil.compose.AsyncImage
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -922,11 +920,6 @@ private fun CriticalThreatIndicator(
         label = "pulse-alpha",
     )
 
-    val context = LocalContext.current
-    val bitmap = remember {
-        decodeSampledAsset(context, "map/icons/exclamation.png", 46)?.asImageBitmap()
-    }
-
     Box(
         modifier = modifier
             .padding(start = 12.dp, top = 56.dp)
@@ -934,19 +927,17 @@ private fun CriticalThreatIndicator(
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center,
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = "Critical threat",
-                modifier = Modifier
-                    .size(46.dp)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        this.alpha = alpha
-                    },
-            )
-        }
+        AsyncImage(
+            model = "file:///android_asset/map/icons/exclamation.png",
+            contentDescription = "Critical threat",
+            modifier = Modifier
+                .size(46.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    this.alpha = alpha
+                },
+        )
     }
 }
 
@@ -1363,7 +1354,6 @@ private fun AggregatedRaionCard(
 
 @Composable
 private fun AlertTypeIcon(alertType: String) {
-    val context = LocalContext.current
     val assetPath = when (alertType) {
         "air_raid"           -> "map/icons/air-raid.png"
         "artillery_shelling" -> "map/icons/artillery-shelling.png"
@@ -1378,10 +1368,6 @@ private fun AlertTypeIcon(alertType: String) {
     }
     val badgeBg = alertTypeBadgeColor(alertType)
 
-    val bitmap = remember(assetPath) {
-        runCatching { decodeSampledAsset(context, assetPath, 16) }.getOrNull()
-    }
-
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
@@ -1390,41 +1376,18 @@ private fun AlertTypeIcon(alertType: String) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = label,
-                modifier = Modifier.size(16.dp),
-                contentScale = ContentScale.Fit,
-            )
-        }
+        AsyncImage(
+            model = "file:///android_asset/$assetPath",
+            contentDescription = label,
+            modifier = Modifier.size(16.dp),
+            contentScale = ContentScale.Fit,
+        )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = Color(0xFFE9EDF2),
         )
     }
-}
-
-/**
- * Декодирует иконку из assets в пониженном разрешении (inSampleSize),
- * чтобы не держать в памяти полноразмерный bitmap для отображения в [sizeDp].
- */
-private fun decodeSampledAsset(context: Context, assetPath: String, sizeDp: Int): Bitmap? {
-    val targetPx = (sizeDp * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
-
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    context.assets.open(assetPath).use { BitmapFactory.decodeStream(it, null, bounds) }
-
-    var inSampleSize = 1
-    while (bounds.outWidth / (inSampleSize * 2) >= targetPx &&
-        bounds.outHeight / (inSampleSize * 2) >= targetPx
-    ) {
-        inSampleSize *= 2
-    }
-
-    val options = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
-    return context.assets.open(assetPath).use { BitmapFactory.decodeStream(it, null, options) }
 }
 
 private fun formatHistoryPointInTime(startedAt: String): String {
@@ -1676,19 +1639,14 @@ private fun ThreatPopupDialog(
     threats: List<ThreatInfo>,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
     // Первый элемент — самый свежий (hitTest сортирует по occurredAtMs desc)
     val primary = threats.first()
     // Аватар канала: @kpszsu — векторный порт THREAT_LAYER_TELEGRAM_ICON_MARKUP,
-    // @war_monitor — PNG из assets, @rozvidkaneba — JPG из drawable.
-    val channelAvatarBitmap = remember(primary.channelRef) {
-        when (primary.channelRef) {
-            ThreatLayersManager.CHANNEL_WAR_MONITOR ->
-                runCatching { decodeSampledAsset(context, "map/icons/war-monitor.png", 40) }.getOrNull()
-            ThreatLayersManager.CHANNEL_ROZVIDKANEBA ->
-                runCatching { decodeSampledAsset(context, "map/icons/rozvidkaneba.jpg", 40) }.getOrNull()
-            else -> null
-        }
+    // @war_monitor — PNG из assets, @rozvidkaneba — JPG из assets (Coil кэширует).
+    val channelAvatarUrl = when (primary.channelRef) {
+        ThreatLayersManager.CHANNEL_WAR_MONITOR -> "file:///android_asset/map/icons/war-monitor.png"
+        ThreatLayersManager.CHANNEL_ROZVIDKANEBA -> "file:///android_asset/map/icons/rozvidkaneba.jpg"
+        else -> null
     }
 
     AlertDialog(
@@ -1707,9 +1665,9 @@ private fun ThreatPopupDialog(
                 val avatarModifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(8.dp))
-                if (channelAvatarBitmap != null) {
-                    Image(
-                        bitmap = channelAvatarBitmap.asImageBitmap(),
+                if (channelAvatarUrl != null) {
+                    AsyncImage(
+                        model = channelAvatarUrl,
                         contentDescription = null,
                         modifier = avatarModifier,
                         contentScale = ContentScale.Fit,

@@ -2,7 +2,6 @@ package com.alertsua.app.map
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -170,7 +169,15 @@ class AlertLayersManager(
     private var initialStatusesApplied = false
     private var appliedStateVersion: Long = -1
     private var lastFetchAtMs = 0L
-    private var layersInstalledForStyle: Style? = null
+
+    // Прогрессивная установка слоёв: oblast встаёт первым (первый осмысленный
+    // кадр карты), raion/hromada доустанавливаются по мере чтения geojson.
+    private var oblastReady = false
+    private var raionReady = false
+    private var hromadaReady = false
+    private var baseLayersInstalled = false
+    private var raionLayerInstalled = false
+    private var hromadaLayersInstalled = false
 
     // «Сырые» FeatureCollection-строки: pristine (из assets) и со встроенными
     // status/alert_type/alert_level (результат инъекции, отдаётся в источники)
@@ -214,6 +221,10 @@ class AlertLayersManager(
 
     fun onStyleLoaded(style: Style) {
         this.style = style
+        // Новый стиль (старт/смена темы) — все фазы ставим заново
+        baseLayersInstalled = false
+        raionLayerInstalled = false
+        hromadaLayersInstalled = false
         installLayersIfReady()
     }
 
@@ -223,7 +234,9 @@ class AlertLayersManager(
         onStatusesApplied = null
         map = null
         style = null
-        layersInstalledForStyle = null
+        baseLayersInstalled = false
+        raionLayerInstalled = false
+        hromadaLayersInstalled = false
     }
 
     fun updateConfig(apiBaseUrl: String, darkMode: Boolean) {
@@ -345,8 +358,9 @@ class AlertLayersManager(
     }
 
     private suspend fun loadStaticGeometry() {
-        // Читаем три слоя параллельно (каждый read — UTF-8 decode, CPU-bound);
-        // boundary/occupied тоже в параллель
+        // Тяжёлые чтения гоним параллельно (IO-bound), но устанавливаем слои
+        // по мере готовности: oblast (180 KB) даёт первый осмысленный кадр,
+        // raion/hromada догружаются следом — не ждём самый тяжёлый файл.
         val oblastDeferred = scope.async(Dispatchers.IO) { readLayerAssetRaw("map/data/oblast.geojson") }
         val raionDeferred = scope.async(Dispatchers.IO) { readLayerAssetRaw("map/data/raion.geojson") }
         val hromadaDeferred = scope.async(Dispatchers.IO) { readLayerAssetRaw("map/data/hromada.geojson") }
@@ -357,12 +371,12 @@ class AlertLayersManager(
         val occupiedDeferred = scope.async(Dispatchers.IO) {
             normalizeOccupied(readAsset("map/data/occupied-territories.geojson"))
         }
+
+        // Фаза 1: oblast + маска + occupied + meta
         oblastRawJson = oblastDeferred.await()
-        raionRawJson = raionDeferred.await()
-        hromadaRawJson = hromadaDeferred.await()
-        oblastJson = oblastRawJson
-        raionJson = raionRawJson
-        hromadaJson = hromadaRawJson
+        oblastJson = withContext(Dispatchers.Default) {
+            injectStatuses(oblastRawJson, resolvedStatuses)
+        }
         loadLayerMeta()
 
         val boundaryFeature = boundaryDeferred.await()
@@ -371,6 +385,24 @@ class AlertLayersManager(
             maskFeature = buildMaskFeature(ukraineBoundaryGeometry)
         }
         occupiedCollectionJson = occupiedDeferred.await()
+        oblastReady = true
+        installLayersIfReady()
+
+        // Фаза 2: raion
+        raionRawJson = raionDeferred.await()
+        raionJson = withContext(Dispatchers.Default) {
+            injectStatuses(raionRawJson, resolvedStatuses)
+        }
+        raionReady = true
+        installLayersIfReady()
+
+        // Фаза 3: hromada (1.2 MB — самый тяжёлый, чаще всего дочитывает последним)
+        hromadaRawJson = hromadaDeferred.await()
+        hromadaJson = withContext(Dispatchers.Default) {
+            injectStatuses(hromadaRawJson, resolvedStatuses)
+        }
+        hromadaReady = true
+        installLayersIfReady()
     }
 
     // Assets хранят {"layer":...,"features":[...]} без type — собираем
@@ -649,15 +681,59 @@ class AlertLayersManager(
     private fun normalizeRegionTitle(value: String?): String =
         (value ?: "").lowercase().replace(Regex("\\s+"), " ").trim()
 
-    // ── Layer installation ───────────────────────────────────────────────────
+    // ── Layer installation (прогрессивная: oblast → raion → hromada) ────────
 
     private fun installLayersIfReady() {
         val style = this.style ?: return
-        if (!geometryLoaded) return
-        if (layersInstalledForStyle === style) return
-        val installStart = SystemClock.elapsedRealtime()
 
-        style.addImage(IMAGE_OCCUPIED_HATCH, createOccupiedHatchBitmap())
+        // Фаза 1: изображения, маска вне Украины, oblast-границы/заливки,
+        // occupied territories, подписи областей. Первый осмысленный кадр.
+        if (oblastReady && !baseLayersInstalled) {
+            val t0 = SystemClock.elapsedRealtime()
+            installBaseLayers(style)
+            baseLayersInstalled = true
+            // Слои угроз и пины подписок должны оставаться поверх базовых —
+            // контроллер переустановит их при необходимости (z-order).
+            mapController.onBaseLayersReinstalled(style)
+            MapPerf.log("AlertLayers", "base layers installed (took " +
+                "${SystemClock.elapsedRealtime() - t0} ms)")
+        }
+
+        // Фаза 2: заливки raion'ов. Встают ПОД occupied (как при монолитной
+        // установке) через addLayerBelow.
+        if (raionReady && !raionLayerInstalled) {
+            val t0 = SystemClock.elapsedRealtime()
+            if (raionJson.isNotEmpty()) {
+                style.addSource(GeoJsonSource(SOURCE_RAION, raionJson))
+                addAlertFillLayerBelow(style, LAYER_FILL_RAION, SOURCE_RAION,
+                    statusActiveFilter(), LAYER_OCCUPIED_FILL)
+            }
+            raionLayerInstalled = true
+            MapPerf.log("AlertLayers", "raion layer installed (took " +
+                "${SystemClock.elapsedRealtime() - t0} ms)")
+        }
+
+        // Фаза 3: заливки hromada + special + иконки типов тривог
+        if (hromadaReady && !hromadaLayersInstalled) {
+            val t0 = SystemClock.elapsedRealtime()
+            if (hromadaJson.isNotEmpty()) {
+                style.addSource(GeoJsonSource(SOURCE_HROMADA, hromadaJson))
+                addAlertFillLayerBelow(style, LAYER_FILL_HROMADA, SOURCE_HROMADA,
+                    statusActiveFilter(), LAYER_OCCUPIED_FILL)
+                addAlertFillLayerBelow(style, LAYER_FILL_SPECIAL, SOURCE_HROMADA,
+                    specialActiveFilter(), LAYER_OCCUPIED_FILL)
+            }
+            installAlertTypeIconLayer(style)
+            hromadaLayersInstalled = true
+            MapPerf.log("AlertLayers", "hromada layers installed (took " +
+                "${SystemClock.elapsedRealtime() - t0} ms)")
+        }
+    }
+
+    private fun installBaseLayers(style: Style) {
+        if (style.getImage(IMAGE_OCCUPIED_HATCH) == null) {
+            style.addImage(IMAGE_OCCUPIED_HATCH, createOccupiedHatchBitmap())
+        }
         installAlertTypeIcons(style)
 
         maskFeature?.let { mask ->
@@ -673,8 +749,6 @@ class AlertLayersManager(
         }
 
         if (oblastJson.isNotEmpty()) style.addSource(GeoJsonSource(SOURCE_OBLAST, oblastJson))
-        if (raionJson.isNotEmpty()) style.addSource(GeoJsonSource(SOURCE_RAION, raionJson))
-        if (hromadaJson.isNotEmpty()) style.addSource(GeoJsonSource(SOURCE_HROMADA, hromadaJson))
 
         style.addLayer(LineLayer(LAYER_OBLAST_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(COLOR_OBLAST_BORDER),
@@ -682,9 +756,6 @@ class AlertLayersManager(
         ))
 
         addAlertFillLayer(style, LAYER_FILL_OBLAST, SOURCE_OBLAST, statusActiveFilter())
-        addAlertFillLayer(style, LAYER_FILL_RAION, SOURCE_RAION, statusActiveFilter())
-        addAlertFillLayer(style, LAYER_FILL_HROMADA, SOURCE_HROMADA, statusActiveFilter())
-        addAlertFillLayer(style, LAYER_FILL_SPECIAL, SOURCE_HROMADA, specialActiveFilter())
 
         style.addLayer(LineLayer(LAYER_OBLAST_STATUS_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(oblastStatusBorderColor()),
@@ -709,15 +780,7 @@ class AlertLayersManager(
             ))
         }
 
-        style.addSource(GeoJsonSource(SOURCE_ALERT_ICONS, FeatureCollection.fromFeatures(buildIconFeatures())))
-        style.addLayer(SymbolLayer(LAYER_ALERT_TYPE_ICONS, SOURCE_ALERT_ICONS).withProperties(
-            PropertyFactory.iconImage(Expression.get("icon")),
-            PropertyFactory.iconSize(1.0f),
-            PropertyFactory.iconAllowOverlap(true),
-            PropertyFactory.iconIgnorePlacement(true),
-        ))
-
-        // Подписи областей — поверх всех слоёв
+        // Подписи областей — поверх базовых слоёв, под пинами/угрозами
         val labelFeatures = buildOblastLabelFeatures()
         if (labelFeatures.isNotEmpty()) {
             style.addSource(GeoJsonSource(SOURCE_OBLAST_LABELS,
@@ -742,13 +805,22 @@ class AlertLayersManager(
             ).apply { maxZoom = 7f })
             Log.d("AlertLayers", "label layer: features=${labelFeatures.size}")
         }
+    }
 
-        // Слои угроз и пины подписок должны оставаться поверх базовых —
-        // контроллер переустановит их при необходимости (z-order).
-        mapController.onBaseLayersReinstalled(style)
-        layersInstalledForStyle = style
-        MapPerf.log("AlertLayers", "alert layers installed (install took " +
-            "${SystemClock.elapsedRealtime() - installStart} ms)")
+    // Иконки спец-тривог: поверх occupied-заливок, под подписями областей
+    private fun installAlertTypeIconLayer(style: Style) {
+        style.addSource(GeoJsonSource(SOURCE_ALERT_ICONS, FeatureCollection.fromFeatures(buildIconFeatures())))
+        val layer = SymbolLayer(LAYER_ALERT_TYPE_ICONS, SOURCE_ALERT_ICONS).withProperties(
+            PropertyFactory.iconImage(Expression.get("icon")),
+            PropertyFactory.iconSize(1.0f),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconIgnorePlacement(true),
+        )
+        if (style.getLayer(LAYER_OBLAST_LABELS) != null) {
+            style.addLayerBelow(layer, LAYER_OBLAST_LABELS)
+        } else {
+            style.addLayer(layer)
+        }
     }
 
     private fun addAlertFillLayer(style: Style, layerId: String, sourceId: String, filter: Expression) {
@@ -756,6 +828,27 @@ class AlertLayersManager(
             PropertyFactory.fillColor(alertFillColor()),
             PropertyFactory.fillOpacity(alertFillOpacity()),
         ).apply { setFilter(filter) })
+    }
+
+    // Заливка дочернего слоя (raion/hromada), доустанавливаемого после базовых:
+    // встаёт под указанный якорь, чтобы сохранить z-order монолитной установки.
+    // Якорь может отсутствовать (например, occupied не распарсился) — тогда вверх.
+    private fun addAlertFillLayerBelow(
+        style: Style,
+        layerId: String,
+        sourceId: String,
+        filter: Expression,
+        belowLayerId: String,
+    ) {
+        val layer = FillLayer(layerId, sourceId).withProperties(
+            PropertyFactory.fillColor(alertFillColor()),
+            PropertyFactory.fillOpacity(alertFillOpacity()),
+        ).apply { setFilter(filter) }
+        if (style.getLayer(belowLayerId) != null) {
+            style.addLayerBelow(layer, belowLayerId)
+        } else {
+            style.addLayer(layer)
+        }
     }
 
     private fun statusActiveFilter(): Expression =
@@ -811,7 +904,7 @@ class AlertLayersManager(
 
     private fun pushStatusesToSources() {
         val style = this.style ?: return
-        if (style.getLayer(LAYER_FILL_OBLAST) == null) return
+        // Источники доустанавливаются фазами — обновляем только существующие
         style.getSourceAs<GeoJsonSource>(SOURCE_OBLAST)?.setGeoJson(oblastJson)
         style.getSourceAs<GeoJsonSource>(SOURCE_RAION)?.setGeoJson(raionJson)
         style.getSourceAs<GeoJsonSource>(SOURCE_HROMADA)?.setGeoJson(hromadaJson)
@@ -865,39 +958,16 @@ class AlertLayersManager(
     }
 
     private fun installAlertTypeIcons(style: Style) {
-        val density = appContext.resources.displayMetrics.density
         mapOf(
             "air_raid" to "map/icons/air-raid.png",
             "artillery_shelling" to "map/icons/artillery-shelling.png",
             "urban_fights" to "map/icons/urban-fights.png",
         ).forEach { (alertType, path) ->
-            val bitmap = loadScaledIcon(path, 24f, density) ?: return@forEach
-            style.addImage(IMAGE_ICON_PREFIX + alertType, bitmap)
+            val name = IMAGE_ICON_PREFIX + alertType
+            if (style.getImage(name) != null) return@forEach
+            val bitmap = MapIconBitmapCache.get(appContext, path, 24f) ?: return@forEach
+            style.addImage(name, bitmap)
         }
-    }
-
-    private fun loadScaledIcon(path: String, sizeDp: Float, density: Float): Bitmap? {
-        val target = (sizeDp * density).roundToInt().coerceAtLeast(1)
-        val raw = runCatching {
-            appContext.assets.open(path).use { stream ->
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeStream(stream, null, bounds)
-                var sample = 1
-                while (bounds.outWidth / (sample * 2) >= target &&
-                    bounds.outHeight / (sample * 2) >= target
-                ) {
-                    sample *= 2
-                }
-                appContext.assets.open(path).use { s2 ->
-                    BitmapFactory.decodeStream(s2, null, BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                    })
-                }
-            }
-        }.getOrNull() ?: return null
-        val scaled = Bitmap.createScaledBitmap(raw, target, target, true)
-        if (scaled !== raw) raw.recycle()
-        return scaled
     }
 
     // Диагональная штриховка оккупированных территорий (порт OccupiedHatchLayer)

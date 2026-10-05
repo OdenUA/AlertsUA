@@ -152,6 +152,7 @@ fun NativeMapView(
 
                     map.setStyle(Style.Builder().fromUri(styleUri(darkMode))) { style ->
                         MapPerf.log("NativeMap", "style loaded: ${styleUri(darkMode)}")
+                        MapReadyState.isMapReady = true
                         state.appliedDarkMode = darkMode
                         localizeLabelsToUkrainian(style)
                         hideHeavyBaseLayers(style)

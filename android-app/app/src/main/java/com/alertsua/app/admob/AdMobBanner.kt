@@ -24,12 +24,16 @@ fun AdMobBanner(
     }
 
     // AdView создаётся один раз и живёт независимо от рекомпозиций:
-    // обновление карты, смена темы и т.п. на баннер не влияют
+    // обновление карты, смена темы и т.п. на баннер не влияют.
+    // Размер — адаптивный на всю ширину экрана (вместо фиксированных 320dp).
     val adView = remember {
         Log.d("AdMob", "Creating AdView")
+        val metrics = context.resources.displayMetrics
+        val widthDp = (metrics.widthPixels / metrics.density).toInt()
+        val adSize = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, widthDp)
         AdView(context).apply {
             adUnitId = "ca-app-pub-7267693224424927/6615114075"
-            setAdSize(AdSize.BANNER)
+            setAdSize(adSize)
             loadAd(AdRequest.Builder().build())
         }
     }

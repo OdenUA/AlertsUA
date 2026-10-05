@@ -2,7 +2,6 @@ package com.alertsua.app.map
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -964,7 +963,7 @@ class ThreatLayersManager(
         listOf("uav", "kab", "missile").forEach { kind ->
             val name = IMAGE_THREAT_PREFIX + kind
             if (style.getImage(name) != null) return@forEach
-            val bitmap = loadScaledIcon(threatIconAssetPath(kind, darkMode), THREAT_ICON_SIZE_DP)
+            val bitmap = MapIconBitmapCache.get(appContext, threatIconAssetPath(kind, darkMode), THREAT_ICON_SIZE_DP)
                 ?: return@forEach
             style.addImage(name, bitmap)
         }
@@ -975,31 +974,6 @@ class ThreatLayersManager(
         "kab" -> if (dark) "map/icons/kab-grey.png" else "map/icons/kab-black.png"
         "missile" -> if (dark) "map/icons/missile-grey.png" else "map/icons/missile-black.png"
         else -> if (dark) "map/icons/shahed-dark.png" else "map/icons/shahed-light.png"
-    }
-
-    private fun loadScaledIcon(path: String, sizeDp: Float): Bitmap? {
-        val density = appContext.resources.displayMetrics.density
-        val target = (sizeDp * density).roundToInt().coerceAtLeast(1)
-        val raw = runCatching {
-            appContext.assets.open(path).use { stream ->
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeStream(stream, null, bounds)
-                var sample = 1
-                while (bounds.outWidth / (sample * 2) >= target &&
-                    bounds.outHeight / (sample * 2) >= target
-                ) {
-                    sample *= 2
-                }
-                appContext.assets.open(path).use { s2 ->
-                    BitmapFactory.decodeStream(s2, null, BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                    })
-                }
-            }
-        }.getOrNull() ?: return null
-        val scaled = Bitmap.createScaledBitmap(raw, target, target, true)
-        if (scaled !== raw) raw.recycle()
-        return scaled
     }
 
     // Треугольник-стрелка (в JS — L.polygon в конце дуги): остриё вверх (bearing 0),

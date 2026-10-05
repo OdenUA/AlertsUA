@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -15,8 +16,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import com.alertsua.app.data.AlertsRepository
+import com.alertsua.app.map.MapReadyState
 import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.AlertsUaApp
 import com.google.firebase.messaging.FirebaseMessaging
@@ -25,6 +28,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        // Страховочный лимит удержания splash (стиль онлайн, офлайн может не загрузиться)
+        private const val SPLASH_TIMEOUT_MS = 12_000L
+    }
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
             Log.i("AlertsUaFirebase", "POST_NOTIFICATIONS granted=$isGranted")
@@ -50,6 +58,14 @@ class MainActivity : ComponentActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // SplashScreen API: ставится до super.onCreate/setContent.
+        // Держим splash, пока карта не загрузила стиль; страховочный таймаут —
+        // чтобы без сети (OpenFreeMap не грузится) экран не висел вечно.
+        val splashScreen = installSplashScreen()
+        val splashDeadline = SystemClock.elapsedRealtime() + SPLASH_TIMEOUT_MS
+        splashScreen.setKeepOnScreenCondition {
+            !MapReadyState.isMapReady && SystemClock.elapsedRealtime() < splashDeadline
+        }
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdgeManually()
