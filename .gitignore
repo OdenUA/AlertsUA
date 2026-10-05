@@ -8,6 +8,7 @@ GEMINI.md
 QWEN.md
 AGENTS.md
 .claude/
+.mimocode/
 build-debug.bat
 build-release.bat
 
