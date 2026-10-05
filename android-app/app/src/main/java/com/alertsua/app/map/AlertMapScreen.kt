@@ -308,11 +308,13 @@ fun AlertMapScreen(
 
     // Обновляет статус-пилюлю баннера из AlertLayersManager (null = нет тривоги).
     // Вызывается при смене leafUid и после каждого применения статусов бандлом.
-    fun updateBannerAlertStatus() {
-        val uid = CurrentAlertBannerState.leafUid ?: return
-        CurrentAlertBannerState.alertStatus =
-            mapController.alertLayersManager?.statusForUid(uid.toString())
-    }
+    // Лямбда вместо локальной функции: updateBannerAlertStatus и
+    // resolveCurrentHromada вызывают друг друга, а локальные функции
+    // не умеют в forward reference. Присваивается ниже, при композиции.
+    var updateBannerAlertStatus: (() -> Unit)? = null
+    // Предыдущий активный статус баннера: при смене тревоги activeFrom из
+    // прошлого резолва протухает (новая тревога унаследовала бы старт старой).
+    var bannerWasActive by remember { mutableStateOf<Boolean?>(null) }
 
     // Резолв текущей громады по GPS: обновляет CurrentAlertBannerState и локальный
     // кеш экрана. Сетевой запрос делается только если громада ещё не определена
@@ -343,13 +345,33 @@ fun AlertMapScreen(
                 resolvedHromada = region.hromadaTitleUk
                 CurrentAlertBannerState.hromadaTitle = region.hromadaTitleUk
                 CurrentAlertBannerState.leafUid = region.leafUid
-                CurrentAlertBannerState.activeFrom = region.activeFrom
-                updateBannerAlertStatus()
+                CurrentAlertBannerState.activeFrom = region.leafActiveFrom
+                updateBannerAlertStatus?.invoke()
             }
             return resolvedLocation
         } finally {
             isResolvingLocation = false
             locationResolveInFlight = false
+        }
+    }
+
+    // При смене тревоги activeFrom из прошлого резолва протухает (новая
+    // унаследовала бы старт старой): A→N — сбрасываем время, N→A —
+    // перерезолвливаем точку за started_at именно новой тревоги (leafActiveFrom).
+    updateBannerAlertStatus = bannerStatus@{
+        val uid = CurrentAlertBannerState.leafUid ?: return@bannerStatus
+        val status = mapController.alertLayersManager?.statusForUid(uid.toString())
+        CurrentAlertBannerState.alertStatus = status
+        val isActive = status?.status == "A"
+        val wasActive = bannerWasActive
+        bannerWasActive = isActive
+        if (wasActive != null && wasActive != isActive &&
+            CurrentAlertBannerState.hromadaTitle != null
+        ) {
+            if (!isActive) {
+                CurrentAlertBannerState.activeFrom = null
+            }
+            coroutineScope.launch { resolveCurrentHromada(force = true) }
         }
     }
 
@@ -510,7 +532,7 @@ fun AlertMapScreen(
         CurrentAlertBannerState.locationPermissionGranted = locationPermissionGranted
         if (locationPermissionGranted) {
             resolveCurrentHromada()
-            updateBannerAlertStatus()
+            updateBannerAlertStatus?.invoke()
             // Живой трекинг: маркер на карте и перепроверка громады баннера
             // при заметном сдвиге GPS (эмиссия от locationUpdates каждые 250 м/30 с)
             locationUpdates(context).collect { location ->
@@ -576,7 +598,7 @@ fun AlertMapScreen(
         mapController.onMapPageReady = { mapPageReady = true }
         // Статусы применились (poll / FCM / ручной refresh) — обновляем пилюлю
         val layersManager = mapController.alertLayersManager
-        layersManager?.onStatusesApplied = { updateBannerAlertStatus() }
+        layersManager?.onStatusesApplied = { updateBannerAlertStatus?.invoke() }
         onDispose {
             mapController.onMapPageReady = null
             layersManager?.onStatusesApplied = null
@@ -1005,9 +1027,7 @@ private fun AlertBottomSheetContent(
         RegionHierarchySection(region = region)
 
         // ── Alert duration ───────────────────────────────────────────────────
-        if (region.activeFrom != null) {
-            AlertDurationRow(activeFrom = region.activeFrom)
-        }
+        region.leafActiveFrom?.let { AlertDurationRow(activeFrom = it) }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 

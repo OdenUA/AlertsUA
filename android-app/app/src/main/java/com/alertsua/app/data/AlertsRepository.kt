@@ -55,7 +55,38 @@ data class ResolvedRegion(
   val activeFrom: String?,
   // Oblast-wide alert history (active/today/yesterday)
   val oblastHistory: OblastAlertHistory,
-)
+) {
+    /**
+     * Время начала текущей тривоги именно для leaf-региона (баннер и bottom
+     * sheet «Триває вже …»). Серверный `active_from` — минимум среди ВСЕХ
+     * уровней иерархии со статусом A, поэтому при активной области он отдаёт
+     * самую долгую тревогу в области (для м. Дніпро — «18 днів» при свежей
+     * локальной тревоге). Берём `started_at` из `oblast_history.active`:
+     * сначала запись с названием громады, иначе — с названием района; из
+     * нескольких — самую позднюю (рядом с текущей может идти давняя тревога
+     * другого типа). Строки сравниваются лексикографически — в пределах одного
+     * ответа сервера формат и tz-offset у всех одинаковые. Если ничего не
+     * подошло (или громада не A) — серверный `active_from`.
+     */
+    val leafActiveFrom: String?
+        get() {
+            if (hromadaStatus != "A") return activeFrom
+            fun OblastAlertHistoryItem.titleMatches(title: String?): Boolean =
+                title != null && regionTitleUk.trim().equals(title.trim(), ignoreCase = true)
+
+            val byHromada = oblastHistory.active
+                .filter { it.titleMatches(hromadaTitleUk) }
+                .maxByOrNull { it.startedAt }
+            if (byHromada != null) return byHromada.startedAt
+
+            val byRaion = raionTitleUk?.let { raion ->
+                oblastHistory.active
+                    .filter { it.titleMatches(raion) }
+                    .maxByOrNull { it.startedAt }
+            }
+            return byRaion?.startedAt ?: activeFrom
+        }
+}
 
 data class ResolvedPoint(
     val latitude: Double,
