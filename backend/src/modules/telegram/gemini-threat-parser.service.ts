@@ -111,7 +111,7 @@ TARGET INDICATORS (destination):
 - "курсом на [місце]" = course towards [place]
 
 CURRENT LOCATION & DIRECTION PATTERNS (where threat IS now / where it is HEADING):
-- "БпЛА по межі X і Y" = UAV ON THE BORDER between X and Y → use border coordinates as origin
+- "БпЛА по межі X і Y" / "БпЛА на межі X та Y" = UAV ON THE BORDER between X and Y → use border coordinates as origin
 - "БпЛА в районі [місто]" = UAV currently IN/AT area of [city] → use city coordinates as origin
 - "БпЛА над [місто/область]" = UAV currently OVER [city/oblast] → use those coordinates as origin
 - "БпЛА біля [місто]" = UAV currently NEAR [city] → use city coordinates as origin
@@ -119,6 +119,7 @@ CURRENT LOCATION & DIRECTION PATTERNS (where threat IS now / where it is HEADING
 - "в напрямку [область]" = heading TOWARDS that oblast, not currently there. This is a DIRECTION indicator, not a location.
 - "вектор - [city1]/[city2]" = exact movement direction towards those towns.
 - "БпЛА на [місто/область]" = depends on context — could mean AT or heading TO.
+- COMPASS COURSE: "курс південний" / "курс на південь" / "рух південний" / "напрямок південний" (and північ/схід/захід + intercardinals: північний схід, південний захід, ...) = the threat IS at the stated location and heads along the NAMED COMPASS DIRECTION. Keep the stated location as origin; target = a point 60-100 km from the origin ALONG that compass direction. NEVER use an oblast/city center as the target when a compass course is named. movement_bearing_deg MUST equal that compass direction (південь=180, північ=0, схід=90, захід=270, південний схід=135, південний захід=225, північний схід=45, північний захід=315).
 - Priority among these patterns is defined in LOCATION RESOLUTION PRIORITY below.
 
 SECTION HEADERS (REGION PREFIXES) — CRITICAL:
@@ -190,6 +191,14 @@ Example 19: "Дніпропетровщина: 🔄 7х реактивів в с
 - TARGET: not stated → null
 - CRITICAL: monitoring-channel slang "реактиви" means jet UAVs, NOT missiles.
 
+Example 20: "🏍 Реактивний БпЛА в на межі Житомирської та Київської областей курс південний."
+- threat_kind: uav ("Реактивний БпЛА" = jet-powered UAV)
+- KEY: "курс південний" NAMES THE DIRECTION OF MOVEMENT — the movement from origin to target and the bearing must point SOUTH.
+- CURRENT LOCATION: "на межі Житомирської та Київської областей" → origin at the stated location (~50.25°N, 29.55°E)
+- TARGET: a point ~70 km SOUTH of the origin along the 180° line (~49.55°N, 29.55°E) — NOT Kyiv oblast center (which lies EAST), NOT any other place
+- Bearing: 180° (south) — exactly the named compass course
+- CRITICAL: a named compass course is NOT a destination. Kyiv city (~50.45°N, 30.5°E) would be ~NORTH-EAST of the origin — an origin→target direction there points the OPPOSITE way and contradicts the message. The target always lies ON the named bearing from the current location.
+
 TERMINOLOGY (monitoring channel slang):
 - "Бандеролі" / "Бандероль" = jet-powered UAV (реактивний БпЛА) → threat_kind "uav"
 - "реактив" / "реактиви" / "реактивний" = jet-powered UAV → threat_kind "uav" (even without the word "БпЛА")
@@ -256,13 +265,19 @@ ORIGIN INFERENCE MARKER (origin_inferred) — REQUIRED in every threat object:
 
 LOCATION RESOLUTION PRIORITY (single authority — apply in this order, stop at first match):
 
+0. EXPLICIT COMPASS COURSE — "курс південний" / "рух на схід" etc. NAMES THE DIRECTION OF MOVEMENT:
+   - When the message names a compass course (курс/рух/напрямок + північ/південь/схід/захід or intercardinal), the direction FROM origin TO target MUST follow that bearing.
+   - If the current location is also stated: origin = stated location; target = a point 60-100 km from the origin ALONG the named bearing.
+   - movement_bearing_deg MUST equal the named compass direction (South=180, North=0, East=90, West=270, SE=135, SW=225, NE=45, NW=315). An origin→target direction pointing anywhere else is WRONG, even if some region center lies in that other direction.
+   - NEVER replace the named course with an entry vector, an oblast center, or a city in a different direction.
+
 1. EXPLICIT CURRENT LOCATION — when message states WHERE the drone IS RIGHT NOW:
-   - "по межі X і Y" = ON THE BORDER between X and Y → use border coordinates as origin
+   - "по межі X і Y" / "на межі X та Y" = ON THE BORDER between X and Y → use border coordinates as origin
    - "над X" / "над [область]" = OVER X → use X coordinates as origin
    - "в районі X" = IN AREA of X → use X coordinates as origin
    - "біля X" = NEAR X → use X coordinates as origin
    - "на X" (when X is oblast/city and message says "БпЛА на X") = depends on context — could be AT or HEADING TO
-   - CRITICAL: When explicit location is given, DO NOT apply regional entry vectors from rule 2. Use the stated location directly.
+   - CRITICAL: When explicit location is given, DO NOT apply regional entry vectors from rule 4. Use the stated location directly.
 
 2. EXPLICIT ORIGIN — when message states WHERE threat COMES FROM:
    - "з X" / "із X" = FROM X → use X coordinates as origin
@@ -279,6 +294,7 @@ BEARING CALCULATION:
 - Formula: calculate bearing from (origin_lat, origin_lng) to (target_lat, target_lng)
 - Directions: North=0, North-East=45, East=90, South-East=135, South=180, South-West=225, West=270, North-West=315
 - Example: Black Sea (45.0°N, 31.0°E) → Odesa (46.5°N, 30.7°E) ≈ 320°
+- CRITICAL: when the message names a compass course ("курс південний" etc.), movement_bearing_deg MUST be the NAMED compass value. The target is chosen to lie on that bearing — never pick a target first and let the bearing drift away from the named course.
 
 OTHER RULES:
 - Combine context from multiple lines if they describe the same event
