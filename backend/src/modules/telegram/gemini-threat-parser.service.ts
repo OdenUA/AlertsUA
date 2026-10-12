@@ -970,6 +970,7 @@ export class GeminiThreatParserService {
   }
 
   private deriveMessageHeaderTitle(messageText: string, excerpt: string): string | null {
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
     const lines = messageText
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -978,22 +979,68 @@ export class GeminiThreatParserService {
       return null;
     }
 
-    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
-    const headerLine = lines[0]!;
-    // Excerpt already contains the header (e.g. single-threat full-message quote).
-    if (normalize(excerpt).includes(normalize(headerLine))) {
-      return null;
-    }
-
     // Strip leading emoji/symbols; a section header must end with ':'.
-    const headerCore = headerLine
-      .replace(/^[^\p{L}\p{N}]+/u, '')
-      .replace(/[\s\p{Extended_Pictographic}\uFE0F]+$/u, '')
-      .trim();
-    if (!headerCore.endsWith(':')) {
+    const headerCoreOf = (line: string): string | null => {
+      const core = line
+        .replace(/^[^\p{L}\p{N}]+/u, '')
+        .replace(/[\s\p{Extended_Pictographic}\uFE0F]+$/u, '')
+        .trim();
+      return core.endsWith(':') ? core : null;
+    };
+
+    // The excerpt already carries its own "Дніпропетровщина:" / "Ситуація по ...:"
+    // prefix — nothing to prepend.
+    const excerptFirstLine = excerpt.split(/\r?\n/)[0] ?? '';
+    const excerptOwnHeaderPrefix = /^[^:]{0,60}\p{L}[^:]{0,60}:/u.test(
+      excerptFirstLine.replace(/^[^\p{L}\p{N}]+/u, ''),
+    );
+    if (excerptOwnHeaderPrefix) {
       return null;
     }
 
+    // Locate the verbatim excerpt inside the message and map its offset back to
+    // the raw line it starts at.
+    const normalizedMessage = lines.join(' ');
+    const normalizedExcerpt = normalize(excerpt);
+    const excerptOffset = normalizedMessage.indexOf(normalizedExcerpt);
+    if (excerptOffset < 0) {
+      return null;
+    }
+
+    let excerptLineIndex = -1;
+    let consumed = 0;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (excerptOffset < consumed + lines[i]!.length) {
+        excerptLineIndex = i;
+        break;
+      }
+      consumed += lines[i]!.length + 1;
+    }
+    if (excerptLineIndex < 0) {
+      excerptLineIndex = lines.length - 1;
+    }
+
+    // Multi-section posts ("Черкащина:\n…\nДніпропетровщина:\n…") — attribute the
+    // excerpt to the nearest header line ABOVE it; using lines[0] here would label
+    // every threat with the first region of the post.
+    let headerLine: string | null = null;
+    for (let i = excerptLineIndex - 1; i >= 0; i -= 1) {
+      if (headerCoreOf(lines[i]!)) {
+        headerLine = lines[i]!;
+        break;
+      }
+    }
+
+    if (!headerLine) {
+      return null;
+    }
+
+    // Excerpt already contains the header (e.g. single-threat full-message quote).
+    if (normalizedExcerpt.includes(normalize(headerLine))) {
+      return null;
+    }
+
+    const headerCore = headerCoreOf(headerLine)!;
     const headerBody = headerCore.slice(0, -1).trim();
     const strippedBody = headerBody
       .replace(/^(?:ситуація|обстановка|інформація|дані)\s+(?:станом\s+на|по|щодо|про)\s+/iu, '')
