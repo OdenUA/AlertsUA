@@ -1,38 +1,15 @@
 @echo off
-setlocal enabledelayedexpansion
+rem --- Емулятор Android: AVD Pixel_6 живе не в дефолтному %USERPROFILE%\.android\avd,
+rem     тому ANDROID_AVD_HOME задаємо явно ---
+set "ANDROID_AVD_HOME=D:\Dev\Android\.android\avd"
+set "EMULATOR=D:\Dev\Android\SDK\emulator\emulator.exe"
 
-if not exist "%~dp0secrets.env" (
-    echo [!] secrets.env not found. Copy secrets.env.example to secrets.env and fill in values.
+if not exist "%EMULATOR%" (
+    echo [!] Emulator not found: %EMULATOR%
+    echo     Перевірте шлях до Android SDK.
     pause
     exit /b 1
 )
-for /f "usebackq tokens=1* delims==" %%A in ("%~dp0secrets.env") do (
-    set "_ln=%%A"
-    if not "!_ln:~0,1!"=="#" if not "!_ln!"=="" set "%%A=%%B"
-)
 
-set "EMULATOR_EXE=D:\Dev\Android\SDK\emulator\emulator.exe"
-set "ADB=D:\Dev\Android\SDK\platform-tools\adb.exe"
-
-rem Change AVD_NAME to Medium_Phone_API_36.1 if you prefer a different device.
-set "AVD_NAME=Pixel_6"
-
-echo [*] Starting emulator: %AVD_NAME% (cold boot)
-rem Размер userdata-раздела берется из AVD config.ini (disk.dataPartition.size)
-rem -no-snapshot: полный cold boot — снапшот не загружается и не сохраняется
-start "" "%EMULATOR_EXE%" -avd %AVD_NAME% -no-snapshot
-
-rem Единый adb для всех скриптов: поднимаем сервер той же версии,
-rem что и в install-debug.bat (иначе чужой adb пересоздаст сервер
-rem другой версии и эмулятор уйдёт в offline)
-"%ADB%" start-server >nul 2>&1
-
-echo [*] Waiting for emulator to boot...
-:wait_loop
-    timeout /t 3 /nobreak >nul
-    "%ADB%" -s emulator-5554 shell getprop sys.boot_completed 2>nul | findstr /x "1" >nul
-    if %ERRORLEVEL% neq 0 goto wait_loop
-
-echo.
-echo [+] Emulator is ready.
-endlocal
+echo [*] Запуск емулятора Pixel_6 (AVD: %ANDROID_AVD_HOME%)...
+start "" "%EMULATOR%" -avd Pixel_6 %*
