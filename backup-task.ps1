@@ -1,7 +1,7 @@
-# Scheduled-task wrapper for vps-backup.ps1.
+﻿# Scheduled-task wrapper for vps-backup.ps1.
 # Runs the full VPS backup, appends output to backups\backup-task.log,
 # and shows a notification about the result.
-# Used by the "Alerts VPS Full Backup" scheduled task (every 2 days, 21:00 local).
+# Used by the "Alerts VPS Full Backup" scheduled task (every 2 days, 18:00 local).
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -14,8 +14,14 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Add-Content -Path $logFile -Value "===== $timestamp backup started =====" -Encoding UTF8
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -Action Backup *>> $logFile
+# Скрипт сохранён в UTF-8 c BOM: без BOM Windows PowerShell 5.1 читает файл
+# в ANSI (windows-1251) и ломает кириллицу в title/text попапа.
+
+# Вывод бэкапа перехватываем и дописываем явным UTF-8: перенаправление "*>>"
+# в PS 5.1 пишет UTF-16 и портит UTF-8 файл лога кракозябрами.
+$backupOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -Action Backup 2>&1 | Out-String
 $exitCode = $LASTEXITCODE
+Add-Content -Path $logFile -Value ($backupOutput.TrimEnd()) -Encoding UTF8
 
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 if ($exitCode -eq 0) {
