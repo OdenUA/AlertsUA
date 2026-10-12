@@ -152,10 +152,17 @@ $scpExe = Find-SSHTool -Name 'scp'
 $tarExe = Find-SSHTool -Name 'tar'
 $npmCmd = Get-RequiredTool -Name 'npm'
 
-# SSH configuration
-$sshCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30')
+# SSH configuration.
+# NOTE 1: LogLevel=ERROR silences the benign "post-quantum key exchange"
+#         warning that Git's OpenSSH prints on every connection.
+# NOTE 2: never merge stderr into the pipeline (2>&1) on native ssh/scp calls
+#         in this script: under Windows PowerShell 5.1 with
+#         $ErrorActionPreference='Stop' a merged stderr line becomes a
+#         terminating ErrorRecord and kills the script mid-deploy. stderr is
+#         left flowing to the console; only stdout is captured for parsing.
+$sshCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR')
 $sshExecArgs = $sshCommonArgs + @('-n')
-$scpCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30')
+$scpCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR')
 
 # Release configuration
 if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
@@ -178,7 +185,7 @@ $bundleEntries = @(
 )
 
 Write-Step "========================================="
-Write-Step "РўСЂРёРІРѕРіР° UA - Backend Deployment"
+Write-Step "Тривога UA - Backend Deployment"
 Write-Step "========================================="
 Write-Step "Release name: $ReleaseName"
 Write-Step "SSH target: $sshUser"
@@ -355,27 +362,14 @@ try {
     $forceInstallFlag = if ($ForceInstallDependencies) { '1' } else { '0' }
     $remoteCommand = "FORCE_NPM_INSTALL=$forceInstallFlag bash $remoteScriptPath --archive $remoteArchivePath --release-name $ReleaseName"
 
-    # Execute deployment (ignore npm warnings in stderr)
-    $deploymentOutput = ""
-
-    try {
-        # Redirect stderr to suppress PowerShell exceptions - NO FILTER for debugging
-        $deploymentOutput = & $sshExe @sshExecArgs $sshUser $remoteCommand 2>&1 | Out-String
-        $deploymentExitCode = $LASTEXITCODE
-    }
-    catch {
-        $deploymentOutput = $_.Exception.Message
-        $deploymentExitCode = 1
-    }
+    # No 2>&1 (see NOTE 2 above): stdout is captured for parsing, stderr
+    # flows to the console; $LASTEXITCODE keeps the real remote exit code.
+    $deploymentOutput = & $sshExe @sshExecArgs $sshUser $remoteCommand | Out-String
+    $deploymentExitCode = $LASTEXITCODE
 
     # Always show deployment output for debugging
     Write-Host "Deployment output:" -ForegroundColor Gray
     Write-Host $deploymentOutput
-
-    # Show output if detailed
-    if ($DetailedOutput) {
-        Write-Host $deploymentOutput
-    }
 
     # Any non-zero exit code from the remote deploy script is a real failure.
     # npm warnings go to stderr but keep exit code 0, so there is nothing to whitelist.
@@ -413,11 +407,11 @@ try {
     Write-Host "  Health check: $healthStatus"
     Write-Host ""
 
-    # Step 8: Cleanup old releases
-    Write-Step "Step 8/8: Cleaning up old releases..."
+    # Step 7: Cleanup old releases
+    Write-Step "Step 7/8: Cleaning up old releases..."
 
     $cleanupCommand = 'cd /srv/alerts-ua/app/releases && CURRENT=$(basename $(readlink -f /srv/alerts-ua/app/current)) && ls -1t | tail -n +11 | while read rel; do if [ "$rel" != "$CURRENT" ]; then rm -rf "$rel"; fi; done && echo "Cleanup complete"'
-    $cleanupOutput = & $sshExe @sshExecArgs $sshUser $cleanupCommand 2>&1 | Out-String
+    $cleanupOutput = & $sshExe @sshExecArgs $sshUser $cleanupCommand | Out-String
     Write-Host $cleanupOutput
     Write-Success "Old releases cleaned up"
 
@@ -428,7 +422,7 @@ try {
     $healthOk = $false
 
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-        $healthCheckResult = & $sshExe @sshExecArgs $sshUser "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/v1/map/regions" 2>&1
+        $healthCheckResult = & $sshExe @sshExecArgs $sshUser "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/v1/map/regions"
 
         if ($healthCheckResult -match '^200$') {
             Write-Success "API is responding correctly (attempt $attempt/$maxAttempts)"
@@ -444,8 +438,8 @@ try {
         Fail "Health check did not pass after $maxAttempts attempts. Last response: $healthCheckResult"
     }
 
-    # Step 7: Install occupied territories timer
-    Write-Step "Step 7/8: Installing occupied territories update timer..."
+    # Step 8: Install occupied territories timer
+    Write-Step "Step 8/8: Installing occupied territories update timer..."
 
     $setupTimerScript = Join-Path $repoRoot 'infra\vps\scripts\setup-occupied-timer.sh'
     if (Test-Path $setupTimerScript) {
@@ -458,13 +452,13 @@ try {
             'alerts-ua-fetch-occupied.timer'
         ) | ForEach-Object { Join-Path $repoRoot "infra\vps\scripts\$_" }
 
-        & $sshExe @sshExecArgs $sshUser "mkdir -p $remoteSetupDir" 2>&1 | Out-Null
+        & $sshExe @sshExecArgs $sshUser "mkdir -p $remoteSetupDir" | Out-Null
         Invoke-ExternalCommand -Command $scpExe -Arguments ($scpCommonArgs + $setupBundle + @("${sshUser}:$remoteSetupDir/")) -WorkingDirectory $repoRoot
 
-        $timerOutput = & $sshExe @sshExecArgs $sshUser "bash $remoteSetupDir/setup-occupied-timer.sh" 2>&1 | Out-String
+        $timerOutput = & $sshExe @sshExecArgs $sshUser "bash $remoteSetupDir/setup-occupied-timer.sh" | Out-String
         Write-Host $timerOutput
 
-        & $sshExe @sshExecArgs $sshUser "rm -rf $remoteSetupDir" 2>&1 | Out-Null
+        & $sshExe @sshExecArgs $sshUser "rm -rf $remoteSetupDir" | Out-Null
         Write-Success "Occupied territories timer installed"
     }
     else {
@@ -479,16 +473,12 @@ finally {
     }
 
     if (-not $DryRun) {
-        try {
-            & $sshExe @sshExecArgs $sshUser "rm -f $remoteScriptPath $remoteArchivePath" 2>&1 | Out-Null
-            Write-Host "  - Cleaned remote files" -ForegroundColor Gray
-        }
-        catch {
-            Write-Host '[!] Failed to clean remote files:' $_ -ForegroundColor Yellow
-        }
+        # No 2>&1 (see NOTE 2 above): a benign ssh warning must not surface
+        # here as a fake "failed to clean" error.
+        & $sshExe @sshExecArgs $sshUser "rm -f $remoteScriptPath $remoteArchivePath" | Out-Null
+        Write-Host "  - Cleaned remote files" -ForegroundColor Gray
     }
 
     Write-Host ""
     Write-Success "Deploy script completed"
 }
-
