@@ -50,7 +50,15 @@ fun locationUpdates(context: Context): Flow<Location> = callbackFlow {
             result.lastLocation?.let { trySend(it) }
         }
     }
-    client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    // Битые/отсутствующие Play Services: без catch исключение уйдёт в
+    // коллектор locationUpdates (LaunchedEffect на экране карты) и крашнёт app
+    try {
+        client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    } catch (e: Exception) {
+        Log.w("LocationService", "requestLocationUpdates failed", e)
+        close()
+        return@callbackFlow
+    }
     awaitClose { client.removeLocationUpdates(callback) }
 }
 

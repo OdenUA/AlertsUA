@@ -349,6 +349,13 @@ fun AlertMapScreen(
                 updateBannerAlertStatus?.invoke()
             }
             return resolvedLocation
+        } catch (e: Exception) {
+            // Нет сети / таймаут / ошибка сервера: баннер сохраняет прежнее
+            // состояние, повторный резолв будет на следующем флипе статуса
+            // или сдвиге GPS. Без catch IOException уходил в coroutineScope.launch
+            // (флип статуса, GPS-поток) и крашил приложение.
+            android.util.Log.e("AlertMapScreen", "Failed to resolve current hromada", e)
+            return null
         } finally {
             isResolvingLocation = false
             locationResolveInFlight = false
