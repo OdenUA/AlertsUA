@@ -293,18 +293,15 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
 }
 
 export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown', hasTarget: boolean) {
-  // Threat visibility windows: UAVs and tactical aviation are slow-moving and
-  // stay on the map longer; missiles/KABs are short-lived; ballistic is very fast.
-  if (threatKind === 'uav') {
-    return 35;
-  }
+  // Threat visibility windows: only slow-moving tactical aviation stays long;
+  // UAVs, ballistic, missiles and KABs are short-lived.
   if (threatKind === 'tactical_aviation') {
     return 45;
   }
-  if (threatKind === 'ballistic') {
-    return 20;
+  if (threatKind === 'kab') {
+    return 15;
   }
-  return 30; // kab, missile, unknown
+  return 20; // uav, missile, ballistic
 }
 
 export function isTimeoutLlmFailure(errorMessage: string | null | undefined) {
