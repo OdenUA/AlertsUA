@@ -11,6 +11,8 @@ WorkingDirectory=/srv/alerts-ua
 ExecStart=/srv/alerts-ua/infra/scripts/fetch-occupied-territories.sh
 StandardOutput=append:/var/log/alerts-ua/fetch-occupied-output.log
 StandardError=append:/var/log/alerts-ua/fetch-occupied-error.log
+# Зависший oneshot (сеть/GitHub) не должен блокировать таймер бесконечно
+TimeoutStartSec=300
 
 # Safety measures
 PrivateTmp=yes

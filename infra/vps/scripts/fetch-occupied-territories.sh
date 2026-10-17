@@ -10,6 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="/srv/alerts-ua/app/current"
 DATA_DIR="${APP_DIR}/data"
 LOG_FILE="/var/log/alerts-ua/fetch-occupied.log"
+# Код ответа HTTP и путь к tmp выставляются fetch_to_tmp в ТЕКУЩЕМ шелле —
+# см. предупреждение у fetch_to_tmp про потерю присвоений в сабшелле $( )
+HTTP_CODE=""
 TMP_FILE=""
 
 log() {
@@ -45,7 +48,11 @@ install_if_valid() {
 
     local features
     if ! features=$(validate_geojson "${TMP_FILE}"); then
-        log "ERROR: Invalid or empty GeoJSON (${source_desc}), keeping previous file"
+        # Диагностика: фиксируем первые байты файла, чтобы сразу видеть
+        # тело HTTP-ошибки/обрезанный ответ вместо гаданий по "invalid"
+        local head_bytes
+        head_bytes=$(head -c 120 "${TMP_FILE}" 2>/dev/null | tr '\n' ' ')
+        log "ERROR: Invalid or empty GeoJSON (${source_desc}), keeping previous file. First bytes: ${head_bytes}"
         return 1
     fi
 
@@ -60,10 +67,20 @@ install_if_valid() {
     return 0
 }
 
+# ВАЖНО: функция НЕ должна вызываться через HTTP_CODE=$(fetch_to_tmp ...) —
+# присвоение глобального TMP_FILE внутри $( ) потеряется в сабшелле, и валидация
+# будет запускаться на пустом пути (вечное "Invalid or empty GeoJSON").
+# Вызывать напрямую: fetch_to_tmp "..."; затем читать HTTP_CODE и TMP_FILE.
 fetch_to_tmp() {
     local file_name="$1"
     TMP_FILE="${DATA_DIR}/occupied-territories.geojson.tmp"
-    curl -s -o "${TMP_FILE}" -w "%{http_code}" "${GITHUB_URL}/${file_name}" 2>> "${LOG_FILE}"
+    # --fail: не писать тело HTTP-ошибки (например "404: Not Found") в TMP_FILE;
+    # --max-time: защита от зависшего соединения (oneshot без таймаута заблокирует таймер)
+    if ! HTTP_CODE=$(curl -sS -L --fail --max-time 90 -o "${TMP_FILE}" -w "%{http_code}" "${GITHUB_URL}/${file_name}" 2>> "${LOG_FILE}"); then
+        local curl_exit=$?
+        log "ERROR: curl failed for ${file_name} (exit ${curl_exit})"
+        HTTP_CODE="000"
+    fi
 }
 
 # Создаем директорию для данных если не существует
@@ -86,7 +103,7 @@ FILE_NAME="deepstatemap_data_${TODAY}.geojson"
 
 log "Fetching: ${GITHUB_URL}/${FILE_NAME}"
 
-HTTP_CODE=$(fetch_to_tmp "${FILE_NAME}")
+fetch_to_tmp "${FILE_NAME}"
 
 if [ "${HTTP_CODE}" = "200" ] && install_if_valid "today"; then
     :
@@ -102,7 +119,7 @@ else
 
     log "Fetching: ${GITHUB_URL}/${FILE_NAME_YESTERDAY}"
 
-    HTTP_CODE=$(fetch_to_tmp "${FILE_NAME_YESTERDAY}")
+    fetch_to_tmp "${FILE_NAME_YESTERDAY}"
 
     if [ "${HTTP_CODE}" = "200" ]; then
         install_if_valid "yesterday" || true
