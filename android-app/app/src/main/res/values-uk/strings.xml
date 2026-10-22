@@ -94,4 +94,9 @@
     <string name="rate_prompt_rate">Оцінити</string>
     <string name="rate_prompt_later">Пізніше</string>
     <string name="rate_prompt_never">Ні, дякую</string>
+    <!-- In-App Updates -->
+    <string name="app_update_ready_title">Оновлення завантажено</string>
+    <string name="app_update_ready_message">Перезапустіть застосунок, щоб застосувати оновлення.</string>
+    <string name="app_update_restart">Перезапустити</string>
+    <string name="app_update_later">Пізніше</string>
 </resources>

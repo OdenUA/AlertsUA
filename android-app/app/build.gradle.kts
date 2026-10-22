@@ -34,9 +34,9 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 50
+        versionCode = 51
 
-        versionName = "0.8.10"
+        versionName = "0.8.11"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -129,6 +129,9 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics-ktx:22.1.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-ads:25.4.0")
+    // In-App Updates: немедленное/гибкое обновление из Play; await() для Task API
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
     // Явно фиксируем свежий WorkManager: транзитивный 2.7.0 (из play-services-ads)
     // падает на устройствах со страницами 16 КБ (WorkDatabase), 2.10+ это исправляет
     implementation("androidx.work:work-runtime:2.11.2")

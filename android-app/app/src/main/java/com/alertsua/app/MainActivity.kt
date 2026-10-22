@@ -12,16 +12,27 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
 import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.map.MapReadyState
 import com.alertsua.app.rateprompt.RatePromptManager
 import com.alertsua.app.ui.AlertsUaApp
+import com.alertsua.app.updates.AppUpdateHelper
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +57,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var ratePromptManager: RatePromptManager
     var forceShowRatePrompt by mutableStateOf(false)
         private set
+
+    // Google Play In-App Updates
+    private lateinit var appUpdateHelper: AppUpdateHelper
 
     // Callback to request location permission from Composable
     var requestLocationPermissionCallback: (() -> Unit)? = null
@@ -75,6 +89,9 @@ class MainActivity : ComponentActivity() {
         ratePromptManager.recordAppOpen()
         forceShowRatePrompt = intent.getStringExtra(RatePromptManager.EXTRA_FORCE_SHOW) == "true"
 
+        // In-App Updates: проверка апдейта один раз за процесс
+        appUpdateHelper = AppUpdateHelper(applicationContext)
+
         // Check if we already have location permission
         locationPermissionGranted = ContextCompat.checkSelfPermission(
             this,
@@ -88,11 +105,46 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            AlertsUaApp(
-                locationPermissionGranted = locationPermissionGranted,
-                requestLocationPermission = requestLocationPermissionCallback,
-                forceShowRatePrompt = forceShowRatePrompt
-            )
+            val updateReady by appUpdateHelper.updateDownloaded.collectAsState()
+            // «Пізніше» прячет диалог; onResumed снова поднимет флаг при DOWNLOADED
+            var updateDialogDismissed by remember { mutableStateOf(false) }
+            val updateScope = rememberCoroutineScope()
+
+            LaunchedEffect(Unit) {
+                appUpdateHelper.checkForUpdate(this@MainActivity)
+            }
+
+            Box {
+                AlertsUaApp(
+                    locationPermissionGranted = locationPermissionGranted,
+                    requestLocationPermission = requestLocationPermissionCallback,
+                    forceShowRatePrompt = forceShowRatePrompt
+                )
+
+                if (updateReady && !updateDialogDismissed) {
+                    AlertDialog(
+                        onDismissRequest = { updateDialogDismissed = true },
+                        title = {
+                            Text(text = stringResource(R.string.app_update_ready_title))
+                        },
+                        text = {
+                            Text(text = stringResource(R.string.app_update_ready_message))
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                updateScope.launch { appUpdateHelper.completeUpdate() }
+                            }) {
+                                Text(text = stringResource(R.string.app_update_restart))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { updateDialogDismissed = true }) {
+                                Text(text = stringResource(R.string.app_update_later))
+                            }
+                        },
+                    )
+                }
+            }
         }
 
         ensureNotificationsPermission()
@@ -191,11 +243,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        lifecycleScope.launch { appUpdateHelper.onResumed(this@MainActivity) }
         // Подхватываем разрешение геолокации, выданное через системные настройки
         locationPermissionGranted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    override fun onDestroy() {
+        if (::appUpdateHelper.isInitialized) {
+            appUpdateHelper.release()
+        }
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
