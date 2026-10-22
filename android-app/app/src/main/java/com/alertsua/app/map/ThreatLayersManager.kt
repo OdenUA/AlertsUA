@@ -153,6 +153,15 @@ class ThreatLayersManager(
     private var style: Style? = null
     private var layersInstalled = false
 
+    /**
+     * Стиль, безопасный для чтения sources/layers. При смене темы map.setStyle()
+     * сбрасывает fullyLoaded у прежнего объекта Style, и любой getSource/getLayer
+     * на нём бросает IllegalStateException ("a newer style is loading/has loaded").
+     * Все обращения к стилю — на главном потоке, как и setStyle, поэтому проверки
+     * fullyLoaded перед синхронным доступом достаточно.
+     */
+    private fun usableStyle(): Style? = style?.takeIf { it.isFullyLoaded }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var fetchJob: Job? = null
     private var pollJob: Job? = null
@@ -304,7 +313,7 @@ class ThreatLayersManager(
     private val cameraIdleListener = MapLibreMap.OnCameraIdleListener { onCameraIdle() }
 
     private fun onCameraIdle() {
-        val style = this.style ?: return
+        val style = usableStyle() ?: return
         if (!layersInstalled) return
         if (style.getSource(SOURCE_DIRECTIONS) == null) return
 
@@ -341,7 +350,7 @@ class ThreatLayersManager(
     }
 
     private fun rebuildSources(now: Long) {
-        val style = this.style ?: return
+        val style = usableStyle() ?: return
         val data = buildDynamicFeatures(now)
         style.getSourceAs<GeoJsonSource>(SOURCE_DIRECTIONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(data.directionFeatures))
@@ -436,7 +445,7 @@ class ThreatLayersManager(
     fun hitTest(latLng: LatLng): List<ThreatInfo> {
         val map = this.map ?: return emptyList()
         if (activeChannels.isEmpty()) return emptyList()
-        val style = this.style ?: return emptyList()
+        val style = usableStyle() ?: return emptyList()
         if (!layersInstalled || style.getLayer(LAYER_ICONS) == null) return emptyList()
 
         val density = appContext.resources.displayMetrics.density
@@ -655,7 +664,7 @@ class ThreatLayersManager(
     }
 
     private fun installLayers() {
-        val style = this.style ?: return
+        val style = usableStyle() ?: return
         if (layersInstalled) return
 
         installImages(style)
@@ -696,7 +705,7 @@ class ThreatLayersManager(
     }
 
     private fun renderFromCache() {
-        val style = this.style ?: return
+        if (usableStyle() == null) return
         if (!layersInstalled) {
             installLayers()
             return

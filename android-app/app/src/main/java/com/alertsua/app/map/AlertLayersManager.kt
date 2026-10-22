@@ -146,6 +146,15 @@ class AlertLayersManager(
     private var map: MapLibreMap? = null
     private var style: Style? = null
 
+    /**
+     * Стиль, безопасный для чтения sources/layers. При смене темы map.setStyle()
+     * сбрасывает fullyLoaded у прежнего объекта Style, и любой getSource/getLayer
+     * на нём бросает IllegalStateException ("a newer style is loading/has loaded").
+     * Все обращения к стилю — на главном потоке, как и setStyle, поэтому проверки
+     * fullyLoaded перед синхронным доступом достаточно.
+     */
+    private fun usableStyle(): Style? = style?.takeIf { it.isFullyLoaded }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loadJob: Job? = null
     private var pollJob: Job? = null
@@ -684,7 +693,7 @@ class AlertLayersManager(
     // ── Layer installation (прогрессивная: oblast → raion → hromada) ────────
 
     private fun installLayersIfReady() {
-        val style = this.style ?: return
+        val style = usableStyle() ?: return
 
         // Фаза 1: изображения, маска вне Украины, oblast-границы/заливки,
         // occupied territories, подписи областей. Первый осмысленный кадр.
@@ -903,7 +912,7 @@ class AlertLayersManager(
     }
 
     private fun pushStatusesToSources() {
-        val style = this.style ?: return
+        val style = usableStyle() ?: return
         // Источники доустанавливаются фазами — обновляем только существующие
         style.getSourceAs<GeoJsonSource>(SOURCE_OBLAST)?.setGeoJson(oblastJson)
         style.getSourceAs<GeoJsonSource>(SOURCE_RAION)?.setGeoJson(raionJson)

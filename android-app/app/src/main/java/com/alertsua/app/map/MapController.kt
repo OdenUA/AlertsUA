@@ -39,6 +39,13 @@ class MapController {
     private var style: Style? = null
     private var density: Float = 1f
 
+    /**
+     * Стиль, безопасный для чтения sources/layers. При смене темы map.setStyle()
+     * сбрасывает fullyLoaded у прежнего объекта Style, и любой getSource/getLayer
+     * на нём бросает IllegalStateException ("a newer style is loading/has loaded").
+     */
+    private fun usableStyle(): Style? = style?.takeIf { it.isFullyLoaded }
+
     private val pins = LinkedHashMap<String, LatLng>()
     private var userLocation: LatLng? = null
 
@@ -170,7 +177,7 @@ class MapController {
         }
 
         // Тап по пину подписки — приоритет над выбором точки
-        if (style?.getLayer(LAYER_SUBSCRIPTION_PINS) != null) {
+        if (usableStyle()?.getLayer(LAYER_SUBSCRIPTION_PINS) != null) {
             val screen = map.projection.toScreenLocation(latLng)
             val r = PIN_TAP_TOLERANCE_DP * density
             val rect = RectF(screen.x - r, screen.y - r, screen.x + r, screen.y + r)
@@ -215,12 +222,12 @@ class MapController {
     }
 
     private fun pushPinSource() {
-        style?.getSourceAs<GeoJsonSource>(SOURCE_SUBSCRIPTION_PINS)
+        usableStyle()?.getSourceAs<GeoJsonSource>(SOURCE_SUBSCRIPTION_PINS)
             ?.setGeoJson(FeatureCollection.fromFeatures(pinFeatures()))
     }
 
     private fun pushLocationSource() {
-        style?.getSourceAs<GeoJsonSource>(SOURCE_USER_LOCATION)
+        usableStyle()?.getSourceAs<GeoJsonSource>(SOURCE_USER_LOCATION)
             ?.setGeoJson(FeatureCollection.fromFeatures(locationFeatures()))
     }
 
