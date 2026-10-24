@@ -106,7 +106,9 @@ function Resolve-Connection {
 
 function New-SshArgs {
     param([string]$Key)
-    return @('-i', $Key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30')
+    # ServerAlive*: если сеть/сессия умирают молча, ssh сам закроется через ~90 с
+    # вместо вечного зависания (без этого внешний kill — единственный выход).
+    return @('-i', $Key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3')
 }
 
 function Test-TargetReachable {
@@ -129,6 +131,16 @@ function Invoke-Backup {
     & $sshExe @(New-SshArgs $conn.Key) -n $conn.Target 'mkdir -p /root/full-backup'
     & $scpExe @(New-SshArgs $conn.Key) $backupScript "$($conn.Target):/root/full-backup/backup-full-vps.sh"
     if ($LASTEXITCODE -ne 0) { Fail "Failed to upload backup script." }
+
+    # Restore-скрипт кладём рядом: backup-full-vps.sh упакует его в архив
+    # (самодостаточный архив: внутри и restore-скрипт, и инструкция).
+    if (Test-Path $restoreScript) {
+        & $scpExe @(New-SshArgs $conn.Key) $restoreScript "$($conn.Target):/root/full-backup/restore-full-vps.sh"
+        if ($LASTEXITCODE -ne 0) { Write-Host "  - WARNING: restore script upload failed, archive will contain instructions only" -ForegroundColor Yellow }
+    }
+    else {
+        Write-Host "  - WARNING: $restoreScript not found locally, archive will contain instructions only" -ForegroundColor Yellow
+    }
 
     Write-Step "Running backup on VPS (this takes several minutes)..."
     $remoteOutput = & $sshExe @(New-SshArgs $conn.Key) $conn.Target 'bash /root/full-backup/backup-full-vps.sh'
@@ -166,17 +178,20 @@ function Invoke-Backup {
         Write-Success "SHA256 verified: $localSha"
     }
 
-    Write-Step "Removing previous local backups..."
+    # Локально держим последние 3 архива (на VPS остаётся одна копия —
+    # её чистит backup-full-vps.sh после упаковки).
+    Write-Step "Pruning old local backups (keep last 3)..."
     $removed = 0
     Get-ChildItem -Path $backupsDir -Filter 'vps-full-backup-*.tar.gz' |
-        Where-Object { $_.FullName -ne $localPath } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 3 |
         ForEach-Object {
             Write-Host "  - deleting $($_.Name)" -ForegroundColor DarkGray
             Remove-Item $_.FullName -Force
             $removed++
         }
-    if ($removed -gt 0) { Write-Success "Removed $removed previous archive(s)" }
-    else { Write-Host "  - no previous archives" -ForegroundColor DarkGray }
+    if ($removed -gt 0) { Write-Success "Removed $removed old archive(s)" }
+    else { Write-Host "  - nothing to prune (keep last 3)" -ForegroundColor DarkGray }
 
     $sizeMB = [math]::Round((Get-Item $localPath).Length / 1MB, 1)
     Write-Success "Backup downloaded: $localPath ($sizeMB MB)"

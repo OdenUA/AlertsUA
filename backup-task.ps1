@@ -17,11 +17,12 @@ Add-Content -Path $logFile -Value "===== $timestamp backup started =====" -Encod
 # Скрипт сохранён в UTF-8 c BOM: без BOM Windows PowerShell 5.1 читает файл
 # в ANSI (windows-1251) и ломает кириллицу в title/text попапа.
 
-# Вывод бэкапа перехватываем и дописываем явным UTF-8: перенаправление "*>>"
-# в PS 5.1 пишет UTF-16 и портит UTF-8 файл лога кракозябрами.
-$backupOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -Action Backup 2>&1 | Out-String
+# Вывод бэкапа стримим в лог построчно: при зависании видно, на каком шаге он встал.
+# Out-String буферизовал весь вывод до конца процесса — при убийстве задачи
+# планировщиком лог оставался пустым (тихие провалы 14.10 и 16.10.2026).
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -Action Backup 2>&1 |
+    ForEach-Object { Add-Content -Path $logFile -Value $_ -Encoding UTF8 }
 $exitCode = $LASTEXITCODE
-Add-Content -Path $logFile -Value ($backupOutput.TrimEnd()) -Encoding UTF8
 
 $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 if ($exitCode -eq 0) {
@@ -39,10 +40,11 @@ else {
 
 # Уведомление через WScript.Shell.Popup: надёжно работает из задач планировщика
 # (NotifyIcon.ShowBalloonTip из-под scheduled task зависает).
-# Таймаут 0 — окно не закрывается само, только по кнопке OK.
+# Таймаут 300 с: окно само закрывается, даже если никто не нажал OK —
+# иначе незакрытый попап держит инстанс задачи (с IgnoreNew это блокирует прогоны).
 try {
     $wshell = New-Object -ComObject WScript.Shell
-    $wshell.Popup($text, 0, $title, $popupType) | Out-Null
+    $wshell.Popup($text, 300, $title, $popupType) | Out-Null
 }
 catch {
     Add-Content -Path $logFile -Value "===== notification failed: $($_.Exception.Message) =====" -Encoding UTF8
