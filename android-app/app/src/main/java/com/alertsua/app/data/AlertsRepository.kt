@@ -345,8 +345,10 @@ class AlertsRepository(context: Context) {
             val body = JSONObject()
                 .put("platform", "android")
                 .put("locale", "uk-UA")
-                .put("app_version", "0.2.0")
-                .put("app_build", "7")
+                // Реальная версия сборки: хардкод «0.2.0/7» ломал серверную
+                // аналитику/миграции, завязанные на app_version
+                .put("app_version", BuildConfig.VERSION_NAME)
+                .put("app_build", BuildConfig.VERSION_CODE.toString())
                 .put("device_model", "${Build.MANUFACTURER} ${Build.MODEL}".take(128))
                 .put("fcm_token", fcmToken)
                 .put("notifications_enabled", true)

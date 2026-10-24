@@ -5,15 +5,18 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.google.gson.JsonObject
+import com.alertsua.app.net.Http
 import com.alertsua.app.notifications.AlertUpdateBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -35,9 +38,6 @@ import org.maplibre.geojson.Geometry
 import org.maplibre.geojson.MultiPolygon
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.math.roundToInt
 
 /**
@@ -158,6 +158,15 @@ class AlertLayersManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var loadJob: Job? = null
     private var pollJob: Job? = null
+    private var busJob: Job? = null
+
+    // Хост (карта) на экране? В свёрнутом приложении FCM-пуш не должен
+    // гонять fetch + инъекцию 1.6 МБ статусов и показывать системный тост
+    // поверх лаунчера (как это делает ThreatLayersManager).
+    @Volatile private var hostStarted = false
+
+    // Пуш пришёл, пока приложение было свёрнуто: догоняющий fetch в onHostStart
+    @Volatile private var pendingPushRefresh = false
 
     init {
         // Парсинг статической геометрии стартует сразу при создании менеджера,
@@ -165,8 +174,12 @@ class AlertLayersManager(
         MapPerf.log("AlertLayers", "manager created, starting geometry load")
         loadJob = scope.launch { loadGeometryAndStatuses() }
         // FCM-пуш → немедленное обновление статусов, не дожидаясь тика poll
-        scope.launch {
+        busJob = scope.launch {
             AlertUpdateBus.updates.collect {
+                if (!hostStarted) {
+                    pendingPushRefresh = true
+                    return@collect
+                }
                 if (!geometryLoaded) return@collect
                 runCatching { fetchAndApplyStatuses(notifyOnChange = true) }
                     .onFailure { Log.w("AlertLayers", "Push-triggered refresh failed: ${it.message}") }
@@ -240,12 +253,17 @@ class AlertLayersManager(
     fun detach() {
         pollJob?.cancel()
         loadJob?.cancel()
+        busJob?.cancel()
         onStatusesApplied = null
         map = null
         style = null
         baseLayersInstalled = false
         raionLayerInstalled = false
         hromadaLayersInstalled = false
+        // Отменяем весь scope: незакрытый коллектор AlertUpdateBus удерживал
+        // менеджер (и ~3.3 МБ geojson-строк) навсегда — по паре менеджеров
+        // утекало на каждое открытие Настроек/поворот экрана.
+        scope.cancel()
     }
 
     fun updateConfig(apiBaseUrl: String, darkMode: Boolean) {
@@ -263,11 +281,14 @@ class AlertLayersManager(
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     fun onHostStart() {
+        hostStarted = true
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
-            // Первичный fetch уже делает loadJob (init) — не дублируем запрос
+            // Первичный fetch уже делает loadJob (init) — не дублируем запрос;
+            // но пуш, пришедший в свёрнутом приложении, догоняем сразу
             val fetchedRecently = SystemClock.elapsedRealtime() - lastFetchAtMs < ON_START_REFETCH_THRESHOLD_MS
-            if (geometryLoaded && loadJob?.isActive != true && !fetchedRecently) {
+            if (geometryLoaded && loadJob?.isActive != true && (!fetchedRecently || pendingPushRefresh)) {
+                pendingPushRefresh = false
                 runCatching { fetchAndApplyStatuses(notifyOnChange = true) }
                     .onFailure { Log.w("AlertLayers", "Status poll tick failed: ${it.message}") }
             }
@@ -281,6 +302,7 @@ class AlertLayersManager(
     }
 
     fun onHostStop() {
+        hostStarted = false
         pollJob?.cancel()
         pollJob = null
     }
@@ -395,7 +417,7 @@ class AlertLayersManager(
         }
         occupiedCollectionJson = occupiedDeferred.await()
         oblastReady = true
-        installLayersIfReady()
+        installLayersIfReadyOnMain()
 
         // Фаза 2: raion
         raionRawJson = raionDeferred.await()
@@ -403,7 +425,7 @@ class AlertLayersManager(
             injectStatuses(raionRawJson, resolvedStatuses)
         }
         raionReady = true
-        installLayersIfReady()
+        installLayersIfReadyOnMain()
 
         // Фаза 3: hromada (1.2 MB — самый тяжёлый, чаще всего дочитывает последним)
         hromadaRawJson = hromadaDeferred.await()
@@ -411,7 +433,22 @@ class AlertLayersManager(
             injectStatuses(hromadaRawJson, resolvedStatuses)
         }
         hromadaReady = true
-        installLayersIfReady()
+        installLayersIfReadyOnMain()
+    }
+
+    /**
+     * installLayersIfReady создаёт GeoJsonSource — MapLibre требует UI-поток
+     * (CalledFromWorkerThreadException). loadStaticGeometry исполняется в
+     * Dispatchers.IO: если стиль загрузился раньше геометрии, вызов с IO-потока
+     * бросал исключение и убивал всю загрузку (hromada-слой оставался
+     * неустановленным на весь холодный старт). Мы сами на Main.immediate.
+     */
+    private suspend fun installLayersIfReadyOnMain() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            installLayersIfReady()
+        } else {
+            withContext(Dispatchers.Main.immediate) { installLayersIfReady() }
+        }
     }
 
     // Assets хранят {"layer":...,"features":[...]} без type — собираем
@@ -530,6 +567,16 @@ class AlertLayersManager(
 
     private suspend fun fetchAndApplyStatuses(notifyOnChange: Boolean) {
         if (apiBaseUrl.isEmpty()) return
+        // Дельта-гейт: в тихие периоды качаем не полный бандл (~10-20 КБ каждые
+        // 30 c), а ~200-байтовый запрос версии. Ошибка/не-2xx дельты = fallback
+        // на полный fetch — пропуск обновления невозможен, деградация только
+        // к прежнему трафику.
+        if (appliedStateVersion > 0) {
+            val upToDate = withContext(Dispatchers.IO) {
+                runCatching { fetchDeltaUpToDate() }.getOrNull()
+            }
+            if (upToDate == true) return
+        }
         val bundle = withContext(Dispatchers.IO) {
             runCatching { fetchBundle() }
                 .onFailure { Log.w("AlertLayers", "Status bundle fetch failed: ${it.message}") }
@@ -551,21 +598,31 @@ class AlertLayersManager(
         // ручное применение (force) допускает равную версию, но не меньшую.
         if (if (force) stateVersion < appliedStateVersion else stateVersion <= appliedStateVersion) return
 
-        val changed = resolveStatuses(lookup)
-        // Инъекция статусов в pristine GeoJSON-строки (быстрый строковый проход)
-        val injected = withContext(Dispatchers.Default) {
-            val statuses = resolvedStatuses
-            Triple(
-                injectStatuses(oblastRawJson, statuses),
-                injectStatuses(raionRawJson, statuses),
-                injectStatuses(hromadaRawJson, statuses),
-            )
+        val changedUids = resolveStatuses(lookup)
+
+        // Ручное обновление «вхолостую»: версия та же и ни один статус не
+        // изменился — ре-инъекция не нужна (кнопка просто получит «актуально»)
+        if (force && changedUids.isEmpty() && stateVersion == appliedStateVersion) return
+
+        // Избирательная инъекция: ре-инъекция и ре-сетап источника только тех
+        // слоёв, где хоть один uid изменился. Полная ре-инъекция всех трёх
+        // строк (~1.6 МБ + ре-парс/тесселяция в MapLibre) на каждое изменение
+        // state_version давала скачки CPU/GC во время массовых тревог.
+        val statuses = resolvedStatuses
+        val needOblast =
+            !initialStatusesApplied || changedUids.any { layerMeta["oblast"]?.containsKey(it) == true }
+        val needRaion =
+            !initialStatusesApplied || changedUids.any { layerMeta["raion"]?.containsKey(it) == true }
+        val needHromada =
+            !initialStatusesApplied || changedUids.any { layerMeta["hromada"]?.containsKey(it) == true }
+        withContext(Dispatchers.Default) {
+            if (needOblast) oblastJson = injectStatuses(oblastRawJson, statuses)
+            if (needRaion) raionJson = injectStatuses(raionRawJson, statuses)
+            if (needHromada) hromadaJson = injectStatuses(hromadaRawJson, statuses)
         }
-        oblastJson = injected.first
-        raionJson = injected.second
-        hromadaJson = injected.third
-        MapPerf.log("AlertLayers", "statuses injected into geojson")
-        pushStatusesToSources()
+        MapPerf.log("AlertLayers", "statuses injected into geojson (layers:" +
+            " oblast=$needOblast raion=$needRaion hromada=$needHromada, changed=${changedUids.size})")
+        pushStatusesToSources(oblast = needOblast, raion = needRaion, hromada = needHromada)
         MapPerf.log("AlertLayers", "statuses pushed to sources")
 
         // Версию помечаем применённой только после успешной инъекции/push,
@@ -580,50 +637,49 @@ class AlertLayersManager(
             MapPerf.log("AlertLayers", "statuses applied (state_version=$stateVersion, lookup=${lookup.size})")
         }
 
-        if (notifyOnChange && !wasInitial && changed > 0) {
+        if (notifyOnChange && !wasInitial && changedUids.isNotEmpty()) {
             mapController.onToast("Статуси тривог оновлено")
         }
     }
 
+    /** true — серверная state_version не новее применённой, полный fetch не нужен. */
+    private fun fetchDeltaUpToDate(): Boolean {
+        val url = apiBaseUrl.trimEnd('/') +
+            "/alerts/statuses/delta?since_version=$appliedStateVersion"
+        val json = JSONObject(Http.get(url))
+        val toVersion = json.optLong("to_version", Long.MIN_VALUE)
+        return toVersion != Long.MIN_VALUE && toVersion <= appliedStateVersion
+    }
+
     private fun fetchBundle(): Pair<Long, Map<String, AlertStatusInfo>> {
         val url = apiBaseUrl.trimEnd('/') + "/map/bundle"
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 15_000
-            connection.setRequestProperty("Accept", "application/json")
-            val code = connection.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code")
-            val text = connection.inputStream.bufferedReader().use { it.readText() }
+        val text = Http.get(url)
 
-            val json = JSONObject(text)
-            val stateVersion = json.optLong("state_version", 0)
-            val lookup = mutableMapOf<String, AlertStatusInfo>()
-            val lookupJson = json.optJSONObject("status_lookup")
-            if (lookupJson != null) {
-                val keys = lookupJson.keys()
-                while (keys.hasNext()) {
-                    val uid = keys.next()
-                    val info = lookupJson.optJSONObject(uid) ?: continue
-                    lookup[uid] = AlertStatusInfo(
-                        status = info.optString("status", " "),
-                        alertType = info.optString("alert_type", "air_raid"),
-                        alertLevel = info.optString("alert_level", "red"),
-                    )
-                }
+        val json = JSONObject(text)
+        val stateVersion = json.optLong("state_version", 0)
+        val lookup = mutableMapOf<String, AlertStatusInfo>()
+        val lookupJson = json.optJSONObject("status_lookup")
+        if (lookupJson != null) {
+            val keys = lookupJson.keys()
+            while (keys.hasNext()) {
+                val uid = keys.next()
+                val info = lookupJson.optJSONObject(uid) ?: continue
+                lookup[uid] = AlertStatusInfo(
+                    status = info.optString("status", " "),
+                    alertType = info.optString("alert_type", "air_raid"),
+                    alertLevel = info.optString("alert_level", "red"),
+                )
             }
-            return stateVersion to lookup
-        } finally {
-            connection.disconnect()
         }
+        return stateVersion to lookup
     }
 
     // Порт applyBundleStatuses + applyKyivCityInheritedOblastStatus из
     // static-geometry.js: эффективный статус по uid = статус из бандла
     // (или ' ' если региона нет в lookup); м. Київ наследует статус Киевской
     // области, если у города нет собственной активной тривоги.
-    // Возвращает количество фич, у которых реально изменился статус.
-    private fun resolveStatuses(lookup: Map<String, AlertStatusInfo>): Int {
+    // Возвращает uid'ы, у которых реально изменился статус/тип/уровень.
+    private fun resolveStatuses(lookup: Map<String, AlertStatusInfo>): Set<String> {
         val previous = resolvedStatuses
         val resolved = HashMap<String, AlertStatusInfo>()
         layerMeta.forEach { (_, entries) ->
@@ -645,9 +701,9 @@ class AlertLayersManager(
 
         resolvedStatuses = resolved
 
-        var changed = 0
+        val changed = HashSet<String>()
         resolved.forEach { (uid, info) ->
-            if ((previous[uid] ?: DEFAULT_STATUS) != info) changed++
+            if ((previous[uid] ?: DEFAULT_STATUS) != info) changed.add(uid)
         }
         return changed
     }
@@ -911,12 +967,17 @@ class AlertLayersManager(
         )
     }
 
-    private fun pushStatusesToSources() {
+    private fun pushStatusesToSources(
+        oblast: Boolean = true,
+        raion: Boolean = true,
+        hromada: Boolean = true,
+    ) {
         val style = usableStyle() ?: return
         // Источники доустанавливаются фазами — обновляем только существующие
-        style.getSourceAs<GeoJsonSource>(SOURCE_OBLAST)?.setGeoJson(oblastJson)
-        style.getSourceAs<GeoJsonSource>(SOURCE_RAION)?.setGeoJson(raionJson)
-        style.getSourceAs<GeoJsonSource>(SOURCE_HROMADA)?.setGeoJson(hromadaJson)
+        // (и только те слои, чьи данные реально изменились)
+        if (oblast) style.getSourceAs<GeoJsonSource>(SOURCE_OBLAST)?.setGeoJson(oblastJson)
+        if (raion) style.getSourceAs<GeoJsonSource>(SOURCE_RAION)?.setGeoJson(raionJson)
+        if (hromada) style.getSourceAs<GeoJsonSource>(SOURCE_HROMADA)?.setGeoJson(hromadaJson)
         style.getSourceAs<GeoJsonSource>(SOURCE_ALERT_ICONS)
             ?.setGeoJson(FeatureCollection.fromFeatures(buildIconFeatures()))
     }

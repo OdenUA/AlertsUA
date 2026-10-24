@@ -72,6 +72,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -535,28 +536,35 @@ fun AlertMapScreen(
     // Баннер громады: резолвим при любой выдаче разрешения (независимо от
     // подписок/промпта). Идёт после промпт-эффекта: in-flight guard и кеш
     // в resolveCurrentHromada предотвращают дублирующий сетевой запрос.
+    val bannerLifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(locationPermissionGranted) {
         CurrentAlertBannerState.locationPermissionGranted = locationPermissionGranted
         if (locationPermissionGranted) {
             resolveCurrentHromada()
             updateBannerAlertStatus?.invoke()
             // Живой трекинг: маркер на карте и перепроверка громады баннера
-            // при заметном сдвиге GPS (эмиссия от locationUpdates каждые 250 м/30 с)
-            locationUpdates(context).collect { location ->
-                mapController.setUserLocation(location.latitude, location.longitude)
-                val cached = resolvedLocationPoint
-                val moved = if (cached == null) {
-                    true
-                } else {
-                    val dist = FloatArray(1)
-                    android.location.Location.distanceBetween(
-                        cached.first, cached.second,
-                        location.latitude, location.longitude, dist,
-                    )
-                    dist[0] > HROMADA_RESOLVE_MOVE_METERS
-                }
-                if (moved) {
-                    resolveCurrentHromada(force = true, knownLocation = location)
+            // при заметном сдвиге GPS (эмиссия от locationUpdates каждые 250 м/30 с).
+            // repeatOnLifecycle: LaunchedEffect живёт, пока существует композиция, —
+            // без него в свёрнутом приложении callbackFlow держал
+            // requestLocationUpdates зарегистрированным и будил устройство
+            // каждые 30 с до смерти процесса.
+            bannerLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                locationUpdates(context).collect { location ->
+                    mapController.setUserLocation(location.latitude, location.longitude)
+                    val cached = resolvedLocationPoint
+                    val moved = if (cached == null) {
+                        true
+                    } else {
+                        val dist = FloatArray(1)
+                        android.location.Location.distanceBetween(
+                            cached.first, cached.second,
+                            location.latitude, location.longitude, dist,
+                        )
+                        dist[0] > HROMADA_RESOLVE_MOVE_METERS
+                    }
+                    if (moved) {
+                        resolveCurrentHromada(force = true, knownLocation = location)
+                    }
                 }
             }
         }

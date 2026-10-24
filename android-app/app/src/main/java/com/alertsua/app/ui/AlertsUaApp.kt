@@ -191,11 +191,10 @@ fun AlertsUaApp(
     MaterialTheme(
         colorScheme = colorScheme,
     ) {
-        if (showSettingsScreen) {
-            SettingsScreen(
-                onBack = { showSettingsScreen = false }
-            )
-        } else {
+        // Настройки — ОВЕРЛЕЙ над картой, а не свап экранов: раньше карта
+        // полностью уничтожалась (повторная загрузка стиля по сети, 1.6 МБ
+        // geojson-ассетов, перезагрузка AdMob-баннера) на каждый заход.
+        Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
@@ -527,12 +526,18 @@ fun AlertsUaApp(
                     }
                 }
             }
-        }
+
+            if (showSettingsScreen) {
+                SettingsScreen(
+                    onBack = { showSettingsScreen = false }
+                )
+            }
 
             // FAQ Dialog
             if (showFaqDialog) {
                 FaqBottomSheet(onDismiss = { showFaqDialog = false })
             }
+        }
     }
 }
 }

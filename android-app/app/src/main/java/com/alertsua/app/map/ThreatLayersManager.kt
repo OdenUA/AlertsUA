@@ -10,11 +10,13 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.util.Log
 import com.google.gson.JsonObject
+import com.alertsua.app.net.Http
 import com.alertsua.app.notifications.AlertUpdateBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -34,9 +36,6 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -165,6 +164,7 @@ class ThreatLayersManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var fetchJob: Job? = null
     private var pollJob: Job? = null
+    private var busJob: Job? = null
     private var lastFetchAtMs = 0L
     // Конкурентные fetch'и (ON_START + ON_RESUME + FCM стреляют одновременно)
     // не должны гонять сеть параллельно: более медленный ответ со старыми
@@ -179,8 +179,8 @@ class ThreatLayersManager(
         // Первичный fetch не зависит от карты/стиля — стартуем сразу
         MapPerf.log("ThreatLayers", "manager created, starting overlays fetch")
         launchFetch()
-        // FCM-пуш → немедленное обновление угроз, не дожидаясь тика poll
-        scope.launch {
+        // FCM-пуш → немедленное обновление угроз, не дождавшись тика poll
+        busJob = scope.launch {
             AlertUpdateBus.updates.collect {
                 if (!hostStarted) return@collect
                 runCatching { fetchAndRender() }
@@ -250,11 +250,15 @@ class ThreatLayersManager(
     fun detach() {
         pollJob?.cancel()
         fetchJob?.cancel()
+        busJob?.cancel()
         stopIconPulse()
         map?.removeOnCameraIdleListener(cameraIdleListener)
         map = null
         style = null
         layersInstalled = false
+        // Как и в AlertLayersManager: незакрытый коллектор AlertUpdateBus
+        // удерживал менеджер навсегда (утечка на каждый заход в Настройки)
+        scope.cancel()
     }
 
     fun updateConfig(apiBaseUrl: String, darkMode: Boolean) {
@@ -528,19 +532,7 @@ class ThreatLayersManager(
         // Как и JS: запрашиваем все каналы, фильтрация по каналу — клиентская
         val sources = CHANNEL_SENDERS.keys.joinToString(",") { URLEncoder.encode(it, "UTF-8") }
         val url = apiBaseUrl.trimEnd('/') + "/map/threat-overlays?sources=" + sources
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 15_000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.useCaches = false
-            val code = connection.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code")
-            val text = connection.inputStream.bufferedReader().use { it.readText() }
-            return parseOverlays(text)
-        } finally {
-            connection.disconnect()
-        }
+        return parseOverlays(Http.get(url))
     }
 
     private fun parseOverlays(text: String): List<ThreatOverlay> {
@@ -781,9 +773,11 @@ class ThreatLayersManager(
 
     /**
      * Лёгкая пульсация всех иконок угроз РАЗМЕРОМ: стопы icon-size x синус
-     * 0.90…1.10 (~1.8 с период). Каждый тик перепроверяет layersInstalled
-     * и молча глотает IllegalStateException от умирающего стиля (смена темы) —
-     * следующий тик попробует снова.
+     * 0.90…1.10 (период PULSE_PERIOD_SEC). Каждый тик перепроверяет
+     * layersInstalled и молча глотает IllegalStateException от умирающего
+     * стиля (смена темы) — следующий тик попробует снова. Когда угроз на
+     * экране нет, JNI-обновление и аллокации скипаются: в мирное время тик
+     * 15 раз/с делал Expression + setProperties вхолостую.
      */
     private fun startIconPulse() {
         if (pulseJob?.isActive == true) return
@@ -791,7 +785,7 @@ class ThreatLayersManager(
             val startMs = SystemClock.elapsedRealtime()
             while (isActive) {
                 val s = style
-                if (s != null && layersInstalled) {
+                if (s != null && layersInstalled && visibleOverlays.isNotEmpty()) {
                     val phaseSec = (SystemClock.elapsedRealtime() - startMs) / 1000.0
                     val k = 2.0 * Math.PI * phaseSec / PULSE_PERIOD_SEC
                     val scale = 1.0 + PULSE_SCALE_AMPLITUDE * sin(k)
