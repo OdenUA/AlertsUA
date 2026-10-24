@@ -58,9 +58,11 @@ const RETENTION_RULES: RetentionRule[] = [
   },
   {
     table: 'alert_poll_cycles',
-    description: 'аудит poll-циклов',
+    description: 'аудит poll-циклов (циклы, на которые ссылаются живые события, остаются)',
     tsColumn: 'requested_at',
-    where: 'TRUE',
+    // air_raid_events.source_cycle_id REFERENCES alert_poll_cycles без CASCADE:
+    // цикл переживает удаление, пока на него ссылается событие (горизонт 90 дн)
+    where: "NOT EXISTS (SELECT 1 FROM air_raid_events e WHERE e.source_cycle_id = alert_poll_cycles.cycle_id)",
     retentionDaysEnv: 'RETENTION_POLL_CYCLES_DAYS',
     defaultDays: 30,
   },
