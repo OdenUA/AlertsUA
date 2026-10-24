@@ -102,6 +102,15 @@ export class MapService {
       };
     }
 
+    // Статические данные (~1500 строк + JOIN) — кэш на сутки, ключ
+    // REGIONS_STATIC существовал, но не использовался.
+    const cached = await this.cacheService.get<Awaited<ReturnType<MapService['getRegions']>>>(
+      CACHE_KEYS.REGIONS_STATIC,
+    );
+    if (cached) {
+      return cached;
+    }
+
     const result = await this.databaseService.query<RegionIndexRow>(
       `
         SELECT rc.uid,
@@ -130,7 +139,7 @@ export class MapService {
       [['oblast', 'city', 'raion', 'hromada']],
     );
 
-    return {
+    const payload = {
       generated_at: TimeUtil.getNowInKyiv(),
       regions: result.rows.map((row) => ({
         uid: row.uid,
@@ -142,6 +151,8 @@ export class MapService {
         has_geometry: row.has_geometry,
       })),
     };
+    await this.cacheService.set(CACHE_KEYS.REGIONS_STATIC, payload, CACHE_TTL.STATIC);
+    return payload;
   }
 
   async getFeatureByUid(uid: number) {
@@ -558,17 +569,20 @@ export class MapService {
       channelRefs.length > 0 ? channelRefs : [THREAT_OVERLAY_DEFAULT_CHANNEL];
     const sourcesKey = [...effectiveChannels].sort().join(',');
 
-    // Try cache first for non-bbox requests (full map)
+    // Try cache first for non-bbox requests (full map). bbox-запросы никогда
+    // не кэшируются — GET по ним был мёртвым round-trip.
     const cacheKey = bbox
       ? `threats:${bbox}`
       : `${CACHE_KEYS.THREATS_BUCKET(Date.now())}:${sourcesKey}`;
-    const cached = await this.cacheService.get<any>(cacheKey);
-    if (cached && !bbox) {
-      this.logger.debug(`Cache hit for threats: bucket=${cached.bucket_ts}`);
-      return {
-        generated_at: cached.generated_at,
-        overlays: cached.overlays,
-      };
+    if (!bbox) {
+      const cached = await this.cacheService.get<any>(cacheKey);
+      if (cached) {
+        this.logger.debug(`Cache hit for threats: bucket=${cached.bucket_ts}`);
+        return {
+          generated_at: cached.generated_at,
+          overlays: cached.overlays,
+        };
+      }
     }
 
     const parsedBbox = this.parseBbox(bbox);
@@ -680,15 +694,17 @@ export class MapService {
       };
     });
 
-    // Cache non-bbox requests
-    if (!bbox && overlays.length > 0) {
+    // Cache non-bbox requests — включая ПУСТОЙ результат: в мирное время
+    // каждый poll каждого устройства иначе бьёт в полный SQL-join по 4
+    // таблицам, хотя ответ стабильно пуст.
+    if (!bbox) {
       const bucketTs = Math.floor(Date.now() / 60000) * 60000;
       const bundle = {
         bucket_ts: bucketTs,
         generated_at: TimeUtil.getNowInKyiv(),
         overlays: overlays,
       };
-      await this.cacheService.set(`${CACHE_KEYS.THREATS_BUCKET(Date.now())}:${sourcesKey}`, bundle, CACHE_TTL.THREATS);
+      await this.cacheService.set(`${CACHE_KEYS.THREATS_BUCKET(Date.now())}:${sourcesKey}`, bundle, overlays.length > 0 ? CACHE_TTL.THREATS : 60);
     }
 
     return {
@@ -791,6 +807,28 @@ export class MapService {
     return archivedCount;
   }
 
+  /**
+   * Single-flight для дорогих on-demand сборок: когда ключ протухает в
+   * тихий период (bundle TTL 120 c перезаписывается только при изменениях),
+   * N одновременных поллингов устройств Otherwise concurrently гоняли
+   * одну и ту же сборку по базе.
+   */
+  private readonly buildInFlight = new Map<string, Promise<unknown>>();
+
+  private async buildOnce<T>(key: string, builder: () => Promise<T>): Promise<T> {
+    const inFlight = this.buildInFlight.get(key);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+
+    const promise = (async () => builder())()
+      .finally(() => {
+        this.buildInFlight.delete(key);
+      });
+    this.buildInFlight.set(key, promise);
+    return promise;
+  }
+
   async getFullMapBundle(): Promise<MapBundleDto> {
     const cached = await this.cacheService.get<MapBundleDto>(CACHE_KEYS.MAP_BUNDLE);
     if (cached) {
@@ -798,9 +836,11 @@ export class MapService {
       return cached;
     }
 
-    // Fallback: bundle not yet built — build it now
+    // Fallback: bundle not yet built — build it now (один билд на всех ждущих)
     this.logger.warn('Map bundle not in cache, building on-demand');
-    const bundle = await this.mapBundleService.buildFullMapBundle();
+    const bundle = await this.buildOnce(CACHE_KEYS.MAP_BUNDLE, () =>
+      this.mapBundleService.buildFullMapBundle(),
+    );
     await this.cacheService.set(CACHE_KEYS.MAP_BUNDLE, bundle, CACHE_TTL.MAP_BUNDLE);
     return bundle;
   }
@@ -812,9 +852,11 @@ export class MapService {
       return cached;
     }
 
-    // Fallback: build threat bundle from DB
+    // Fallback: build threat bundle from DB (один билд на всех ждущих)
     this.logger.warn('Threat bundle not in cache, building on-demand');
-    const bundle = await this.mapBundleService.buildThreatBundle();
+    const bundle = await this.buildOnce(CACHE_KEYS.THREAT_BUNDLE, () =>
+      this.mapBundleService.buildThreatBundle(),
+    );
     await this.cacheService.set(CACHE_KEYS.THREAT_BUNDLE, bundle, CACHE_TTL.THREAT_BUNDLE);
     return bundle;
   }
@@ -847,6 +889,17 @@ export class MapService {
   async getStaticGeometry(layer: string, simplifyTolerance: number) {
     if (!this.databaseService.isConfigured()) {
       return { features: [], note_uk: 'База даних недоступна.' };
+    }
+
+    // Результат зависит только от (layer, tolerance), но считался по запросу:
+    // ST_Simplify по всем полноразрешённым мультиполигонам слоя (для
+    // hromada — ~1500 штук) — тяжёлый CPU-запрос, публичный эндпоинт без
+    // rate-limit делал его готовым DoS-вектором. Кэш на час снимает и то,
+    // и другое.
+    const cacheKey = `static-geometry:${layer}:${simplifyTolerance}`;
+    const cached = await this.cacheService.get<Awaited<ReturnType<MapService['getStaticGeometry']>>>(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     const regionTypes = layer === 'oblast' ? ['oblast', 'city'] : [layer];
@@ -886,11 +939,13 @@ export class MapService {
       },
     }));
 
-    return {
+    const payload = {
       layer,
       simplify_tolerance: simplifyTolerance,
       features,
       count: features.length,
     };
+    await this.cacheService.set(`static-geometry:${layer}:${simplifyTolerance}`, payload, CACHE_TTL.FEATURES);
+    return payload;
   }
 }

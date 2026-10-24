@@ -4,12 +4,15 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Request, Response } from 'express';
 
 @Catch()
 export class ApiErrorFilter implements ExceptionFilter {
+  private readonly logger = new Logger(ApiErrorFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -32,6 +35,15 @@ export class ApiErrorFilter implements ExceptionFilter {
       });
       return;
     }
+
+    // Не-HTTP исключения (БД, Redis, баги) раньше уходили клиенту как 500
+    // без единого следа в серверных логах.
+    this.logger.error(
+      `Unhandled exception on ${request.method} ${request.url} [request_id=${requestId}]: ` +
+        (exception instanceof Error
+          ? `${exception.message}\n${exception.stack ?? ''}`
+          : String(exception)),
+    );
 
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: {

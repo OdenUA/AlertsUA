@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune growing tables daily at 04:45 Kyiv time
+
+[Timer]
+OnCalendar=*-*-* 04:45:00 Europe/Kyiv
+Persistent=true
+Unit=alerts-ua-retention.service
+
+[Install]
+WantedBy=timers.target

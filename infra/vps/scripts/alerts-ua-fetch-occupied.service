@@ -19,4 +19,4 @@ PrivateTmp=yes
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/srv/alerts-ua/app/current/data /var/log/alerts-ua
+ReadWritePaths=/srv/alerts-ua/app/data /srv/alerts-ua/app/current/data /var/log/alerts-ua

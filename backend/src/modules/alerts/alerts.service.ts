@@ -267,28 +267,34 @@ export class AlertsService {
         previousMetadata.status_string_hash !== combinedHash;
 
       if (attributesChanged) {
-        const changedCycleId = await this.insertPollCycle({
-          requested_at: requestedAt,
-          finished_at: finishedAt,
-          http_status: httpStatus,
-          if_modified_since_sent: previousMetadata.last_modified,
-          last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
-          status_string_hash: combinedHash,
-          status_string: previousMetadata.status_string,
-          changed: true,
-          error_code: null,
-          error_message: null,
-        });
-
+        // Атомарность как в 200-пути: хеш пишется внутри apply-транзакции,
+        // откат не оставляет «отравленный» хеш для следующего цикла.
+        let changedCycleId = 0;
         try {
-          const appliedSnapshot = await this.databaseService.withTransaction((client) =>
-            this.applyStatusSnapshot(client, {
+          const appliedSnapshot = await this.databaseService.withTransaction(async (client) => {
+            changedCycleId = await this.insertPollCycle(
+              {
+                requested_at: requestedAt,
+                finished_at: finishedAt,
+                http_status: httpStatus,
+                if_modified_since_sent: previousMetadata.last_modified,
+                last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+                status_string_hash: combinedHash,
+                status_string: previousMetadata.status_string,
+                changed: true,
+                error_code: null,
+                error_message: null,
+              },
+              client,
+            );
+
+            return this.applyStatusSnapshot(client, {
               cycle_id: changedCycleId,
               occurred_at: finishedAt,
               status_string: previousMetadata.status_string as string,
               alert_attributes: alertAttributes,
-            }),
-          );
+            });
+          });
 
           if (
             appliedSnapshot.bootstrap_mode ||
@@ -314,16 +320,24 @@ export class AlertsService {
             queued_dispatches: appliedSnapshot.queued_dispatches,
           };
         } catch (error) {
-          await this.databaseService.query(
-            `
-              UPDATE alert_poll_cycles
-              SET changed = FALSE,
-                  error_code = $2,
-                  error_message = $3
-              WHERE cycle_id = $1
-            `,
-            [changedCycleId, 'PROCESSING_FAILED', this.stringifyError(error)],
-          );
+          try {
+            await this.insertPollCycle({
+              requested_at: requestedAt,
+              finished_at: new Date(),
+              http_status: httpStatus,
+              if_modified_since_sent: previousMetadata.last_modified,
+              last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+              status_string_hash: null,
+              status_string: null,
+              changed: false,
+              error_code: 'PROCESSING_FAILED',
+              error_message: this.stringifyError(error),
+            });
+          } catch (auditError) {
+            this.logger.error(
+              `Failed to record PROCESSING_FAILED cycle: ${this.stringifyError(auditError)}`,
+            );
+          }
           throw error;
         }
       }
@@ -384,22 +398,25 @@ export class AlertsService {
     const attributesHash = this.hashAlertAttributes(alertAttributes);
     const combinedHash = this.hashStatusWithAttributes(statusString, attributesHash) as string;
     const sourceChanged = previousMetadata.status_string_hash !== combinedHash;
-    const cycleId = await this.insertPollCycle({
-      requested_at: requestedAt,
-      finished_at: finishedAt,
-      http_status: httpStatus,
-      if_modified_since_sent: previousMetadata.last_modified,
-      last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
-      status_string_hash: combinedHash,
-      status_string: statusString,
-      changed: sourceChanged,
-      error_code: null,
-      error_message: null,
-    });
 
     if (!sourceChanged) {
       // No state change — caches keep serving the current version and expire
-      // into DB fallbacks on their own; nothing to refresh here.
+      // into DB fallbacks on their own; nothing to refresh here. The cycle row
+      // is safe to insert outside a transaction: its hash equals the previous
+      // successful one, so it cannot suppress anything.
+      const cycleId = await this.insertPollCycle({
+        requested_at: requestedAt,
+        finished_at: finishedAt,
+        http_status: httpStatus,
+        if_modified_since_sent: previousMetadata.last_modified,
+        last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+        status_string_hash: combinedHash,
+        status_string: statusString,
+        changed: false,
+        error_code: null,
+        error_message: null,
+      });
+
       return {
         cycle_id: cycleId,
         http_status: httpStatus,
@@ -410,15 +427,37 @@ export class AlertsService {
       };
     }
 
+    // Хеш нового состояния записывается ТОЛЬКО внутри apply-транзакции.
+    // Раньше строка цикла коммитилась до транзакции: откат (ошибка БД,
+    // SIGTERM по TimeoutStartSec) оставлял новый хеш записанным, следующий
+    // цикл считал его «нет изменений» и терял переход молча. Теперь откат
+    // откатывает и строку цикла — следующий цикл повторит apply.
+    let cycleId = 0;
     try {
-      const appliedSnapshot = await this.databaseService.withTransaction((client) =>
-        this.applyStatusSnapshot(client, {
+      const appliedSnapshot = await this.databaseService.withTransaction(async (client) => {
+        cycleId = await this.insertPollCycle(
+          {
+            requested_at: requestedAt,
+            finished_at: finishedAt,
+            http_status: httpStatus,
+            if_modified_since_sent: previousMetadata.last_modified,
+            last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+            status_string_hash: combinedHash,
+            status_string: statusString,
+            changed: true,
+            error_code: null,
+            error_message: null,
+          },
+          client,
+        );
+
+        return this.applyStatusSnapshot(client, {
           cycle_id: cycleId,
           occurred_at: finishedAt,
           status_string: statusString,
           alert_attributes: alertAttributes,
-        }),
-      );
+        });
+      });
 
       if (
         appliedSnapshot.bootstrap_mode ||
@@ -444,16 +483,27 @@ export class AlertsService {
         queued_dispatches: appliedSnapshot.queued_dispatches,
       };
     } catch (error) {
-      await this.databaseService.query(
-        `
-          UPDATE alert_poll_cycles
-          SET changed = FALSE,
-              error_code = $2,
-              error_message = $3
-          WHERE cycle_id = $1
-        `,
-        [cycleId, 'PROCESSING_FAILED', this.stringifyError(error)],
-      );
+      // Транзакция откатилась вместе со строкой цикла. Фиксируем провал
+      // отдельной error-строкой с NULL-хешем: она не участвует в
+      // дедупликации (getLatestPollMetadata читает только успешные циклы).
+      try {
+        await this.insertPollCycle({
+          requested_at: requestedAt,
+          finished_at: new Date(),
+          http_status: httpStatus,
+          if_modified_since_sent: previousMetadata.last_modified,
+          last_modified_received: lastModifiedReceived ?? previousMetadata.last_modified,
+          status_string_hash: null,
+          status_string: null,
+          changed: false,
+          error_code: 'PROCESSING_FAILED',
+          error_message: this.stringifyError(error),
+        });
+      } catch (auditError) {
+        this.logger.error(
+          `Failed to record PROCESSING_FAILED cycle: ${this.stringifyError(auditError)}`,
+        );
+      }
       throw error;
     }
   }
@@ -468,6 +518,9 @@ export class AlertsService {
           SELECT last_modified_received AS last_modified,
                  status_string_hash
           FROM alert_poll_cycles
+          WHERE error_code IS NULL
+            AND http_status IN (200, 304)
+            AND status_string_hash IS NOT NULL
           ORDER BY cycle_id DESC
           LIMIT 1
         `,
@@ -496,6 +549,12 @@ export class AlertsService {
     };
   }
 
+  /**
+   * Дедупликация poll-циклов строится на последней успешной строке
+   * (error_code IS NULL + валидный http-статус + непустой хеш): error-циклы и
+   * синтетические telegram-циклы (хеш NULL) не могут ни подавить реальное
+   * изменение, ни отравить If-Modified-Since.
+   */
   private async insertPollCycle(input: {
     requested_at: Date;
     finished_at: Date;
@@ -507,8 +566,14 @@ export class AlertsService {
     changed: boolean;
     error_code: string | null;
     error_message: string | null;
-  }) {
-    const result = await this.databaseService.query<{ cycle_id: number }>(
+  }, client?: PoolClient) {
+    const run = client
+      ? (text: string, values: unknown[]) =>
+          client.query<{ cycle_id: number }>(text, values)
+      : (text: string, values: unknown[]) =>
+          this.databaseService.query<{ cycle_id: number }>(text, values);
+
+    const result = await run(
       `
         INSERT INTO alert_poll_cycles (
           requested_at,
@@ -631,7 +696,7 @@ export class AlertsService {
         `
           -- Get subscription_leaf regions with alerts (hromadas, cities)
           SELECT rc.uid, rc.title_uk, rc.region_type, arc.alert_type, arc.alert_level,
-                 COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
+                 COALESCE(ST_AsGeoJSON(rgl.geom)::text, ST_AsGeoJSON(rg.geom)::text) AS geometry_json
           FROM air_raid_state_current arc
           JOIN region_catalog rc ON rc.uid = arc.uid AND rc.is_subscription_leaf = TRUE
           JOIN region_geometry rg ON rg.uid = rc.uid
@@ -644,7 +709,7 @@ export class AlertsService {
           SELECT DISTINCT rc.uid, rc.title_uk, rc.region_type,
                  COALESCE(par.alert_type, 'air_raid') AS alert_type,
                  COALESCE(par.alert_level, 'red') AS alert_level,
-                 COALESCE(ST_AsGeoJSON(rg.geom)::text, ST_AsGeoJSON(rgl.geom)::text) AS geometry_json
+                 COALESCE(ST_AsGeoJSON(rgl.geom)::text, ST_AsGeoJSON(rg.geom)::text) AS geometry_json
           FROM air_raid_state_current arc
           JOIN region_catalog child ON child.uid = arc.uid AND child.is_subscription_leaf = TRUE
           JOIN region_catalog rc ON rc.uid = child.parent_uid AND rc.region_type = 'raion'
@@ -920,19 +985,38 @@ export class AlertsService {
     }
 
     const nextStateVersion = previousStateVersion + 1;
-    for (const row of nextRows) {
+
+    // Затронутые строки: новые или с реальным изменением полей. Раньше цикл
+    // делал ~1500 последовательных UPSERT на каждое изменение состояния;
+    // теперь один многострочный INSERT через unnest. Нетронутые строки не
+    // переписываются вовсе: все читатели state_version используют MAX по
+    // таблице, поэтому построчная версия означает «версия последнего
+    // изменения строки» и её монотонность не требуется.
+    const touchedRows = nextRows.filter((row) => {
+      const prev = previousStates.get(row.uid);
+      return (
+        !prev ||
+        prev.status !== row.status ||
+        prev.active_from !== row.active_from ||
+        prev.alert_type !== row.alert_type ||
+        prev.alert_level !== row.alert_level
+      );
+    });
+
+    if (touchedRows.length > 0) {
       await client.query(
         `
           INSERT INTO air_raid_state_current (
-            uid,
-            status,
-            state_version,
-            active_from,
-            updated_at,
-            source_cycle_id,
-            alert_type,
-            alert_level
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            uid, status, state_version, active_from, updated_at, source_cycle_id, alert_type, alert_level
+          )
+          SELECT r.uid, r.status, $2::integer, r.active_from, $3::timestamptz, $4::integer, r.alert_type, r.alert_level
+          FROM unnest(
+            $1::int[],
+            $5::text[],
+            $6::timestamptz[],
+            $7::text[],
+            $8::text[]
+          ) AS r(uid, status, active_from, alert_type, alert_level)
           ON CONFLICT (uid) DO UPDATE SET
             status = EXCLUDED.status,
             state_version = EXCLUDED.state_version,
@@ -943,63 +1027,64 @@ export class AlertsService {
             alert_level = EXCLUDED.alert_level
         `,
         [
-          row.uid,
-          row.status,
+          touchedRows.map((row) => row.uid),
           nextStateVersion,
-          row.active_from,
           input.occurred_at.toISOString(),
           input.cycle_id,
-          row.alert_type,
-          row.alert_level,
+          touchedRows.map((row) => row.status),
+          touchedRows.map((row) => row.active_from),
+          touchedRows.map((row) => row.alert_type),
+          touchedRows.map((row) => row.alert_level),
         ],
       );
     }
 
-    let insertedEvents = 0;
-    if (!bootstrapMode) {
-      for (const row of changedRows) {
-        const eventId = randomUUID();
-        const eventKind = this.resolveEventKind(row.previous_status, row.new_status);
-        const eventResult = await client.query(
-          `
-            INSERT INTO air_raid_events (
-              event_id,
-              uid,
-              event_kind,
-              previous_status,
-              new_status,
-              alert_type,
-              state_version,
-              source_cycle_id,
-              occurred_at,
-              dedupe_key,
-              created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() AT TIME ZONE 'Europe/Kyiv')
-            ON CONFLICT (dedupe_key) DO NOTHING
-          `,
-          [
-            eventId,
-            row.uid,
-            eventKind,
-            row.previous_status,
-            row.new_status,
-            row.alert_type,
-            nextStateVersion,
-            input.cycle_id,
-            input.occurred_at.toISOString(),
-            `${row.uid}:${nextStateVersion}:${row.previous_status}:${row.new_status}`,
-          ],
-        );
+    const touchedUids = touchedRows.map((row) => row.uid);
 
-        if ((eventResult.rowCount ?? 0) > 0) {
-          insertedEvents += 1;
-        }
-      }
+    let insertedEvents = 0;
+    if (!bootstrapMode && changedRows.length > 0) {
+      const eventResult = await client.query(
+        `
+          INSERT INTO air_raid_events (
+            event_id, uid, event_kind, previous_status, new_status, alert_type,
+            state_version, source_cycle_id, occurred_at, dedupe_key, created_at
+          )
+          SELECT r.event_id, r.uid, r.event_kind, r.previous_status, r.new_status, r.alert_type,
+                 $2::integer, $3::integer, $4::timestamptz, r.dedupe_key,
+                 NOW() AT TIME ZONE 'Europe/Kyiv'
+          FROM unnest(
+            $1::uuid[],
+            $5::int[],
+            $6::text[],
+            $7::text[],
+            $8::text[],
+            $9::text[],
+            $10::text[]
+          ) AS r(event_id, uid, event_kind, previous_status, new_status, alert_type, dedupe_key)
+          ON CONFLICT (dedupe_key) DO NOTHING
+        `,
+        [
+          changedRows.map(() => randomUUID()),
+          nextStateVersion,
+          input.cycle_id,
+          input.occurred_at.toISOString(),
+          changedRows.map((row) => row.uid),
+          changedRows.map((row) => this.resolveEventKind(row.previous_status, row.new_status)),
+          changedRows.map((row) => row.previous_status),
+          changedRows.map((row) => row.new_status),
+          changedRows.map((row) => row.alert_type),
+          changedRows.map(
+            (row) => `${row.uid}:${nextStateVersion}:${row.previous_status}:${row.new_status}`,
+          ),
+        ],
+      );
+      insertedEvents = eventResult.rowCount ?? 0;
     }
 
     const runtimeResult = await this.subscriptionsService.synchronizeRuntimeState(client, {
       state_version: nextStateVersion,
       occurred_at: input.occurred_at,
+      changed_uids: touchedUids,
     });
 
     // Cache rebuild/invalidation happens in refreshCachesAfterStateChange,

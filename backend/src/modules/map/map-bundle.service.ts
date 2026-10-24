@@ -35,7 +35,15 @@ type AlertLayerUidRow = {
   alert_level: string;
 };
 
-const OCCUPIED_TERRITORIES_FILE = path.join(__dirname, '../../../data/occupied-territories.geojson');
+// Кандидаты пути к файлу оккупированных территорий: релиз-локальный
+// __dirname-относительный и общий каталог /srv/alerts-ua/app/data, куда
+// пишет fetch-скрипт (общий каталог переживает ротацию релизов; после
+// деплоя релиз-локальный файл отсутствует до следующего fetch).
+const OCCUPIED_TERRITORIES_CANDIDATES = [
+  path.join(__dirname, '../../../data/occupied-territories.geojson'),
+  path.join(process.cwd(), '..', 'data', 'occupied-territories.geojson'),
+  path.join(process.cwd(), 'data', 'occupied-territories.geojson'),
+];
 
 @Injectable()
 export class MapBundleService {
@@ -365,14 +373,34 @@ export class MapBundleService {
     };
   }
 
+  // Мемоизация по (путь, mtime): раньше каждая сборка map:bundle (т.е. каждое
+  // изменение состояния) синхронно читала и парсила ~256 КБ JSON только
+  // ради количества фич.
+  private occupiedCountCache: { filePath: string; mtimeMs: number; count: number } | null = null;
+
   private getOccupiedTerritoriesCount(): number {
     try {
-      if (!fs.existsSync(OCCUPIED_TERRITORIES_FILE)) {
+      const filePath = OCCUPIED_TERRITORIES_CANDIDATES.find((candidate) =>
+        fs.existsSync(candidate),
+      );
+      if (!filePath) {
         return 0;
       }
-      const rawContent = fs.readFileSync(OCCUPIED_TERRITORIES_FILE, 'utf8');
+
+      const mtimeMs = fs.statSync(filePath).mtimeMs;
+      if (
+        this.occupiedCountCache &&
+        this.occupiedCountCache.filePath === filePath &&
+        this.occupiedCountCache.mtimeMs === mtimeMs
+      ) {
+        return this.occupiedCountCache.count;
+      }
+
+      const rawContent = fs.readFileSync(filePath, 'utf8');
       const data = JSON.parse(rawContent) as { features?: unknown[] };
-      return data.features?.length ?? 0;
+      const count = data.features?.length ?? 0;
+      this.occupiedCountCache = { filePath, mtimeMs, count };
+      return count;
     } catch {
       return 0;
     }

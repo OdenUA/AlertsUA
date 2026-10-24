@@ -463,8 +463,18 @@ export class GeminiThreatParserService {
                tmr.message_date::text
         FROM llm_parse_jobs lpj
         JOIN telegram_messages_raw tmr ON tmr.raw_message_id = lpj.raw_message_id
-        WHERE lpj.status IN ('pending', 'failed')
-          AND lpj.attempt_count < $1
+        WHERE (
+            lpj.status IN ('pending', 'failed')
+            AND lpj.attempt_count < $1
+            -- Реапер: задача, зависшая в processing (воркер убит по таймауту
+            -- 5 мин / TimeoutStartSec во время LLM-вызова), иначе остаётся
+            -- в processing навсегда и угроза теряется молча.
+            OR (
+              lpj.status = 'processing'
+              AND lpj.attempt_count < $1
+              AND lpj.updated_at < NOW() - INTERVAL '10 minutes'
+            )
+          )
           AND tmr.message_date > NOW() AT TIME ZONE 'Europe/Kyiv' - INTERVAL '1 hour'
           -- чистые «дорозвідка»-отчёты (без признаков реальной угрозы) в LLM не отправляем;
           -- смешанные посты (дорозвідка + мгКР/ракеты/...) анализируются как обычно
@@ -1695,6 +1705,7 @@ export class GeminiThreatParserService {
     await this.subscriptionsService.synchronizeRuntimeState(client, {
       state_version: nextStateVersion,
       occurred_at: occurredAt,
+      changed_uids: [targetUid],
     });
 
     return eventId;
@@ -1765,7 +1776,15 @@ export class GeminiThreatParserService {
 
   private estimateExpiry(occurredAt: Date, threatKind: ParseCandidate['threat_kind'], hasTarget: boolean) {
     const ttlMinutes = getThreatTtlMinutes(threatKind, hasTarget);
-    return new Date(occurredAt.getTime() + ttlMinutes * 60_000);
+    // Лаг инжеста/парсинга не должен съедать короткое окно жизни угрозы:
+    // якорь — max(момент сообщения, момент парсинга минус грейс), чтобы
+    // KAB/UAV с TTL 15-20 мин не парсились уже истёкшими при очереди.
+    const parsedAt = new Date();
+    const effectiveAnchor =
+      parsedAt.getTime() - occurredAt.getTime() > 2 * 60_000
+        ? new Date(parsedAt.getTime() - 2 * 60_000)
+        : occurredAt;
+    return new Date(effectiveAnchor.getTime() + ttlMinutes * 60_000);
   }
 
   private hostileGeomCache: HostileGeometries | null = null;

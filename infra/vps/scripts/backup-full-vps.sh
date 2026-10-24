@@ -21,6 +21,18 @@ fail() { echo "[backup][ERROR] $*" >&2; exit 1; }
 mkdir -p "${BACKUP_ROOT}/staging" "${STAGE}/postgres" "${STAGE}/redis" \
          "${STAGE}/srv-alerts-ua" "${STAGE}/systemd" "${STAGE}/nginx" "${STAGE}/misc"
 
+# Одна копия бэкапа единовременно: гонка двух прогонов могла удалить чужой
+# архив в шаге prune, пока тот ещё не скачан.
+exec 9>"${BACKUP_ROOT}/.lock"
+if ! flock -n 9; then
+    log "another backup run is active, exiting"
+    exit 0
+fi
+
+# Упавший прогон (timeout, kill) оставлял мульти-ГБ staging до следующего
+# успешного запуска — теперь staging чистится при любом выходе.
+trap 'rm -rf "${STAGE}"' EXIT
+
 # Деревья копируем хардлинками (мгновенно, без двойного расхода диска);
 # если src и staging на разных ФС — fallback на обычное копирование.
 linktree() {
@@ -190,7 +202,9 @@ INSTR_EOF
 
 # --- 8. Упаковка ---
 log "packing archive (may take a few minutes)..."
-tar -C "${BACKUP_ROOT}/staging" -czf "${ARCHIVE}" "${STAGE_NAME}"
+# nice/ionice: tar по ~2 ГБ на 1-vCPU боксе, разделённом с poll-воркерами
+# каждые 15 с — упаковка не должна душить продакшен.
+nice -n 19 ionice -c3 tar -C "${BACKUP_ROOT}/staging" -czf "${ARCHIVE}" "${STAGE_NAME}"
 rm -rf "${BACKUP_ROOT}/staging"
 
 SHA=$(sha256sum "${ARCHIVE}" | awk '{print $1}')

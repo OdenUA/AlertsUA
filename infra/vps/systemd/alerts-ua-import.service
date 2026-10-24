@@ -9,3 +9,5 @@ Group=alerts-ua
 WorkingDirectory=/srv/alerts-ua/app/current
 EnvironmentFile=/srv/alerts-ua/env/.env.worker
 ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/workers/import.js
+# Зависший oneshot (XLSX по сети) не должен блокировать таймер бесконечно
+TimeoutStartSec=300

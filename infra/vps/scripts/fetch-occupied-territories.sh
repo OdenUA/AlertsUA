@@ -8,7 +8,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="/srv/alerts-ua/app/current"
-DATA_DIR="${APP_DIR}/data"
+# Общий (вне релизов) каталог данных: файл внутри релиза терялся при каждом
+# деплое (cp -a с проглатыванием ошибки), слой оккупированных территорий
+# молча исчезал до следующего fetch. Сервис-ридер умеет этот путь.
+DATA_DIR="/srv/alerts-ua/app/data"
 LOG_FILE="/var/log/alerts-ua/fetch-occupied.log"
 # Код ответа HTTP и путь к tmp выставляются fetch_to_tmp в ТЕКУЩЕМ шелле —
 # см. предупреждение у fetch_to_tmp про потерю присвоений в сабшелле $( )
@@ -61,9 +64,9 @@ install_if_valid() {
 
     log "SUCCESS: Loaded ${features} features (${source_desc})"
 
-    # Перезапускаем API для сброса кеша
-    systemctl reload-or-restart alerts-ua-api.service 2>> "${LOG_FILE}"
-    log "API service restarted"
+    # Рестарт API не нужен: OccupiedTerritoriesService валидирует файл по
+    # mtime и обновляет кэш при подмене; лишний рестарт дважды в сутки
+    # открывал окно 502.
     return 0
 }
 
@@ -76,9 +79,10 @@ fetch_to_tmp() {
     TMP_FILE="${DATA_DIR}/occupied-territories.geojson.tmp"
     # --fail: не писать тело HTTP-ошибки (например "404: Not Found") в TMP_FILE;
     # --max-time: защита от зависшего соединения (oneshot без таймаута заблокирует таймер)
-    if ! HTTP_CODE=$(curl -sS -L --fail --max-time 90 -o "${TMP_FILE}" -w "%{http_code}" "${GITHUB_URL}/${file_name}" 2>> "${LOG_FILE}"); then
-        local curl_exit=$?
-        log "ERROR: curl failed for ${file_name} (exit ${curl_exit})"
+    local rc=0
+    HTTP_CODE=$(curl -sS -L --fail --max-time 90 -o "${TMP_FILE}" -w "%{http_code}" "${GITHUB_URL}/${file_name}" 2>> "${LOG_FILE}") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log "ERROR: curl failed for ${file_name} (exit ${rc})"
         HTTP_CODE="000"
     fi
 }
@@ -130,7 +134,12 @@ fi
 
 log "Update completed"
 
-# Храним логи только последние 30 дней
-find /var/log/alerts-ua -name "fetch-occupied.log*" -mtime +30 -delete 2>/dev/null || true
+# Храним логи только последние 30 дней (включая append-логи systemd-юниты,
+# которые раньше не попадали под ротацию и росли бесконечно)
+find /var/log/alerts-ua \
+    \( -name "fetch-occupied.log*" \
+    -o -name "fetch-occupied-output.log*" \
+    -o -name "fetch-occupied-error.log*" \) \
+    -mtime +30 -delete 2>/dev/null || true
 
 exit 0

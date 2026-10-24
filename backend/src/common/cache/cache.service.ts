@@ -35,10 +35,10 @@ export class CacheService implements OnModuleDestroy {
         db,
         password: password || undefined,
         keyPrefix: 'alerts-ua:map:',
-        retryStrategy: (times) => {
-          if (times > 3) return null;
-          return Math.min(times * 100, 2000);
-        },
+        // Никогда не возвращаем null: null отключает переподключение навсегда,
+        // и любой рестарт Redis (>3 попыток по 100-300 мс) оставлял бы API
+        // без кэша до следующего процесса.
+        retryStrategy: (times) => Math.min(times * 200, 5000),
         maxRetriesPerRequest: 3,
       });
 
@@ -86,13 +86,12 @@ export class CacheService implements OnModuleDestroy {
 
     try {
       const json = JSON.stringify(value);
-      this.logger.log(`Cache set: key=${key}, ttl=${ttl}, json_length=${json.length}, redis_status=${this.redis.status}`);
+      this.logger.debug(`Cache set: key=${key}, ttl=${ttl}, json_length=${json.length}`);
       if (ttl) {
         await this.redis.setex(key, ttl, json);
       } else {
         await this.redis.set(key, json);
       }
-      this.logger.log(`Cache set completed for key: ${key}`);
     } catch (error) {
       this.logger.error(`Cache set failed for key ${key}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -113,20 +112,36 @@ export class CacheService implements OnModuleDestroy {
 
   /**
    * Deletes all keys matching a pattern (e.g. 'resolve-point:*').
-   * ioredis returns full key names including keyPrefix, while `del`
+   * Uses cursor-based SCAN instead of KEYS: KEYS is O(keyspace) and blocks
+   * the single-threaded Redis server, stalling every concurrent cache read.
+   * ioredis returns full key names including keyPrefix, while `unlink`
    * prepends the prefix again — so the prefix is stripped before deletion.
    */
   async deleteByPattern(pattern: string): Promise<number> {
     if (!this.enabled || !this.redis) return 0;
 
     try {
-      const keys = await this.redis.keys(pattern);
-      if (keys.length === 0) return 0;
-
       const prefix = 'alerts-ua:map:';
-      const stripped = keys.map((key) => (key.startsWith(prefix) ? key.slice(prefix.length) : key));
-      await this.redis.del(...stripped);
-      return stripped.length;
+      let cursor = '0';
+      let deleted = 0;
+      let batch: string[] = [];
+
+      do {
+        const result = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+        cursor = result[0];
+        for (const key of result[1]) {
+          batch.push(key.startsWith(prefix) ? key.slice(prefix.length) : key);
+        }
+        if (batch.length >= 500) {
+          deleted += await this.redis.unlink(...batch);
+          batch = [];
+        }
+      } while (cursor !== '0');
+
+      if (batch.length > 0) {
+        deleted += await this.redis.unlink(...batch);
+      }
+      return deleted;
     } catch (error) {
       this.logger.warn(`Cache deleteByPattern failed for ${pattern}: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
@@ -137,7 +152,14 @@ export class CacheService implements OnModuleDestroy {
     if (!this.enabled || !this.redis) return [];
 
     try {
-      return await this.redis.keys(pattern);
+      const found: string[] = [];
+      let cursor = '0';
+      do {
+        const result = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+        cursor = result[0];
+        found.push(...result[1]);
+      } while (cursor !== '0');
+      return found;
     } catch (error) {
       this.logger.warn(`Cache keys failed for pattern ${pattern}: ${error instanceof Error ? error.message : String(error)}`);
       return [];

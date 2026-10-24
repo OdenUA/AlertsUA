@@ -1,0 +1,13 @@
+[Unit]
+Description=Alerts UA retention worker (prune dispatches, events, audit logs)
+After=network.target
+
+[Service]
+Type=oneshot
+User=alerts-ua
+Group=alerts-ua
+WorkingDirectory=/srv/alerts-ua/app/current
+EnvironmentFile=/srv/alerts-ua/env/.env.worker
+ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/workers/retention.js
+# Первый запуск может удалять миллионы накопленных строк
+TimeoutStartSec=900

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { existsSync, readFileSync } from 'fs';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
@@ -25,8 +25,31 @@ type DispatchRow = {
   subscription_active: boolean;
 };
 
+const MAX_ATTEMPTS = 4;
+
+// Бюджет на один запуск воркера: systemd TimeoutStartSec=120, оставляем
+// запас на shutdown и запись статусов.
+const RUN_BUDGET_MS = 90_000;
+
+// Коды FCM, при которых сообщение имеет смысл повторить позже.
+const RETRIABLE_PROVIDER_CODES = new Set([
+  'messaging/server-unavailable',
+  'messaging/internal-error',
+  'messaging/message-rate-exceeded',
+  'messaging/topic-rate-exceeded',
+  'messaging/network-error',
+  'messaging/unavailable',
+  'firebase_send_failed',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'fetch failed',
+]);
+
 @Injectable()
 export class PushService {
+  private readonly logger = new Logger(PushService.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
@@ -37,11 +60,7 @@ export class PushService {
       throw new Error('DATABASE_URL is not configured.');
     }
 
-    const pendingResult = await this.databaseService.query<{ count: string }>(
-      "SELECT COUNT(*) AS count FROM notification_dispatches WHERE status = 'queued'",
-    );
-    const queuedPending = Number(pendingResult.rows[0]?.count ?? 0);
-
+    const queuedPending = await this.countQueued();
     if (queuedPending === 0) {
       return {
         worker: 'push',
@@ -49,7 +68,9 @@ export class PushService {
         processed: 0,
         sent: 0,
         failed: 0,
+        retried: 0,
         skipped: 0,
+        batches: 0,
         queued_pending: 0,
       };
     }
@@ -68,53 +89,128 @@ export class PushService {
     }
 
     const messaging = this.getMessagingClient(firebaseServiceAccountPath);
-    const dispatchesResult = await this.databaseService.query<DispatchRow>(
-      `
-        SELECT nd.dispatch_id,
-               nd.subscription_id,
-               nd.installation_id,
-               nd.token_id,
-               nd.event_id,
-               nd.dispatch_kind,
-               nd.alert_level,
-               nd.title_uk,
-               nd.body_uk,
-               nd.attempt_no,
-               nd.queued_at::text,
-               dpt.fcm_token,
-               dpt.is_active AS token_active,
-               di.notifications_enabled AS installation_notifications_enabled,
-               di.status AS installation_status,
-               s.is_active AS subscription_active
-        FROM notification_dispatches nd
-        JOIN device_push_tokens dpt ON dpt.token_id = nd.token_id
-        JOIN device_installations di ON di.installation_id = nd.installation_id
-        JOIN subscriptions s ON s.subscription_id = nd.subscription_id
-        WHERE nd.status = 'queued'
-        ORDER BY nd.queued_at ASC
-        LIMIT $1
-      `,
-      [limit],
-    );
 
+    // Дренаж-цикл: раньше один запуск сливал максимум 500 dispatch
+    // (2000/мин при таймере 15 c) — общенациональная тревога на тысячах
+    // подписок копила очередь быстрее, чем она уходила, и «отбой»
+    // доставлялся с опозданием в минуты. Теперь воркер в рамках своего
+    // таймаута повторяет батчи, пока очередь не опустеет.
+    const startedAt = Date.now();
+    let processed = 0;
     let sent = 0;
     let failed = 0;
+    let retried = 0;
     let skipped = 0;
+    let batches = 0;
+    let lastBatchSize: number;
+
+    do {
+      const dispatchesResult = await this.databaseService.query<DispatchRow>(
+        `
+          SELECT nd.dispatch_id,
+                 nd.subscription_id,
+                 nd.installation_id,
+                 nd.token_id,
+                 nd.event_id,
+                 nd.dispatch_kind,
+                 nd.alert_level,
+                 nd.title_uk,
+                 nd.body_uk,
+                 nd.attempt_no,
+                 nd.queued_at::text,
+                 dpt.fcm_token,
+                 dpt.is_active AS token_active,
+                 di.notifications_enabled AS installation_notifications_enabled,
+                 di.status AS installation_status,
+                 s.is_active AS subscription_active
+          FROM notification_dispatches nd
+          JOIN device_push_tokens dpt ON dpt.token_id = nd.token_id
+          JOIN device_installations di ON di.installation_id = nd.installation_id
+          JOIN subscriptions s ON s.subscription_id = nd.subscription_id
+          WHERE nd.status = 'queued'
+            AND nd.attempt_no < ${MAX_ATTEMPTS}
+          ORDER BY nd.queued_at ASC
+          LIMIT $1
+        `,
+        [limit],
+      );
+      lastBatchSize = dispatchesResult.rows.length;
+
+      if (lastBatchSize === 0) break;
+
+      const outcome = await this.sendBatch(messaging, dispatchesResult.rows);
+      processed += lastBatchSize;
+      sent += outcome.sent;
+      failed += outcome.failed;
+      retried += outcome.retried;
+      skipped += outcome.skipped;
+      batches += 1;
+    } while (lastBatchSize === limit && Date.now() - startedAt < RUN_BUDGET_MS);
+
+    if (batches > 1) {
+      this.logger.log(
+        `Drained ${batches} batches: processed=${processed}, sent=${sent}, failed=${failed}, retried=${retried}, skipped=${skipped}`,
+      );
+    }
+
+    return {
+      worker: 'push',
+      status: 'processed',
+      processed,
+      sent,
+      failed,
+      retried,
+      skipped,
+      batches,
+      queued_pending: await this.countQueued(),
+    };
+  }
+
+  private async countQueued(): Promise<number> {
+    const pendingResult = await this.databaseService.query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM notification_dispatches WHERE status = 'queued'",
+    );
+    return Number(pendingResult.rows[0]?.count ?? 0);
+  }
+
+  private async sendBatch(
+    messaging: Messaging,
+    rows: DispatchRow[],
+  ): Promise<{ sent: number; failed: number; retried: number; skipped: number }> {
+    const sentIds: string[] = [];
+    const sentMessageIds: string[] = [];
+    const sentTokenIds: string[] = [];
+    const skippedIds: string[] = [];
     const sendable: DispatchRow[] = [];
 
-    for (const dispatch of dispatchesResult.rows) {
+    for (const dispatch of rows) {
       if (
         !dispatch.token_active ||
         !dispatch.subscription_active ||
         !dispatch.installation_notifications_enabled ||
         dispatch.installation_status !== 'active'
       ) {
-        skipped += 1;
-        await this.markSkipped(dispatch);
+        skippedIds.push(dispatch.dispatch_id);
         continue;
       }
       sendable.push(dispatch);
     }
+
+    let sent = 0;
+    let failed = 0;
+    let retried = 0;
+    const failedRows: Array<{ dispatch: DispatchRow; code: string }> = [];
+    const retriedRows: Array<{ dispatch: DispatchRow; code: string }> = [];
+
+    const classify = (dispatch: DispatchRow, code: string) => {
+      const retriable =
+        this.shouldDeactivateToken(code) === false && this.isRetriableProviderError(code);
+      if (retriable && dispatch.attempt_no < MAX_ATTEMPTS) {
+        retriedRows.push({ dispatch, code });
+      } else {
+        failedRows.push({ dispatch, code });
+      }
+    };
 
     if (sendable.length > 0) {
       const sentAt = TimeUtil.getNowInKyiv();
@@ -147,99 +243,123 @@ export class PushService {
           const response = batchResponse.responses[index];
           if (response?.success) {
             sent += 1;
-            await this.markSent(dispatch, response.messageId ?? '', sentAt);
+            sentIds.push(dispatch.dispatch_id);
+            sentMessageIds.push(response.messageId ?? '');
+            sentTokenIds.push(dispatch.token_id);
           } else {
-            failed += 1;
-            await this.markFailed(dispatch, this.extractProviderErrorCode(response?.error), sentAt);
+            classify(dispatch, this.extractProviderErrorCode(response?.error));
           }
         }
       } catch (error) {
         // RPC-level failure — every message in the batch is undelivered.
+        // Транзиентная (сеть/5xx): возвращаем в очередь, а не в failed —
+        // раньше один сбой посреди массовой тревоги навсегда ронял весь
+        // батч (пользователь получал «отбой», не получив «тревогу»).
         const providerErrorCode = this.extractProviderErrorCode(error);
         for (const dispatch of sendable) {
-          failed += 1;
-          await this.markFailed(dispatch, providerErrorCode, sentAt);
+          classify(dispatch, providerErrorCode);
         }
       }
     }
 
-    return {
-      worker: 'push',
-      status: 'processed',
-      processed: dispatchesResult.rows.length,
-      sent,
-      failed,
-      skipped,
-      queued_pending: Math.max(queuedPending - sent - failed - skipped, 0),
-    };
+    failed = failedRows.length;
+    retried = retriedRows.length;
+
+    // Батч-финализация: раньше каждый dispatch обновлялся отдельной
+    // транзакцией (~2 round-trip × 500 на батч).
+    await Promise.all([
+      skippedIds.length > 0 ? this.markSkippedBatch(skippedIds) : Promise.resolve(),
+      sentIds.length > 0
+        ? this.markSentBatch(sentIds, sentMessageIds, sentTokenIds)
+        : Promise.resolve(),
+      failedRows.length > 0 ? this.markFailedBatch(failedRows) : Promise.resolve(),
+      retriedRows.length > 0 ? this.markRetriedBatch(retriedRows) : Promise.resolve(),
+    ]);
+
+    return { sent, failed, retried, skipped: skippedIds.length };
   }
 
-  private async markSkipped(dispatch: DispatchRow) {
+  private async markSkippedBatch(dispatchIds: string[]) {
     await this.databaseService.query(
       `
         UPDATE notification_dispatches
         SET status = 'skipped',
-            provider_error_code = $2
-        WHERE dispatch_id = $1
+            provider_error_code = 'RECIPIENT_DISABLED'
+        WHERE dispatch_id = ANY($1::uuid[])
       `,
-      [dispatch.dispatch_id, 'RECIPIENT_DISABLED'],
+      [dispatchIds],
     );
   }
 
-  private async markSent(dispatch: DispatchRow, messageId: string, sentAt: string) {
-    await this.databaseService.withTransaction(async (client) => {
-      await client.query(
-        `
-          UPDATE notification_dispatches
-          SET status = 'sent',
-              provider_message_id = $2,
-              provider_error_code = NULL,
-              sent_at = $3
-          WHERE dispatch_id = $1
-        `,
-        [dispatch.dispatch_id, messageId, sentAt],
-      );
-      await client.query(
-        `
-          UPDATE device_push_tokens
-          SET last_success_at = $2,
-              last_error_at = NULL,
-              last_error_code = NULL
-          WHERE token_id = $1
-        `,
-        [dispatch.token_id, sentAt],
-      );
-    });
+  private async markSentBatch(dispatchIds: string[], messageIds: string[], tokenIds: string[]) {
+    const sentAt = TimeUtil.getNowInKyiv();
+    await this.databaseService.query(
+      `
+        UPDATE notification_dispatches nd
+        SET status = 'sent',
+            provider_message_id = r.message_id,
+            provider_error_code = NULL,
+            sent_at = $2
+        FROM unnest($1::uuid[], $3::text[]) AS r(dispatch_id, message_id)
+        WHERE nd.dispatch_id = r.dispatch_id
+      `,
+      [dispatchIds, sentAt, messageIds],
+    );
+    await this.databaseService.query(
+      `
+        UPDATE device_push_tokens
+        SET last_success_at = $2,
+            last_error_at = NULL,
+            last_error_code = NULL
+        WHERE token_id = ANY($1::uuid[])
+      `,
+      [[...new Set(tokenIds)], sentAt],
+    );
   }
 
-  private async markFailed(dispatch: DispatchRow, providerErrorCode: string, failedAt: string) {
-    await this.databaseService.withTransaction(async (client) => {
-      await client.query(
-        `
-          UPDATE notification_dispatches
-          SET status = 'failed',
-              attempt_no = attempt_no + 1,
-              provider_error_code = $2
-          WHERE dispatch_id = $1
-        `,
-        [dispatch.dispatch_id, providerErrorCode],
-      );
-      await client.query(
-        `
-          UPDATE device_push_tokens
-          SET last_error_at = $3,
-              last_error_code = $2,
-              is_active = CASE WHEN $4 THEN FALSE ELSE is_active END
-          WHERE token_id = $1
-        `,
-        [
-          dispatch.token_id,
-          providerErrorCode,
-          failedAt,
-          this.shouldDeactivateToken(providerErrorCode),
-        ],
-      );
-    });
+  private async markFailedBatch(rows: Array<{ dispatch: DispatchRow; code: string }>) {
+    const failedAt = TimeUtil.getNowInKyiv();
+    await this.databaseService.query(
+      `
+        UPDATE notification_dispatches nd
+        SET status = 'failed',
+            attempt_no = attempt_no + 1,
+            provider_error_code = r.code
+        FROM unnest($1::uuid[], $2::text[]) AS r(dispatch_id, code)
+        WHERE nd.dispatch_id = r.dispatch_id
+      `,
+      [rows.map((row) => row.dispatch.dispatch_id), rows.map((row) => row.code)],
+    );
+    await this.databaseService.query(
+      `
+        UPDATE device_push_tokens dpt
+        SET last_error_at = $2,
+            last_error_code = r.code,
+            is_active = CASE WHEN r.deactivate THEN FALSE ELSE dpt.is_active END
+        FROM unnest($1::uuid[], $3::text[], $4::boolean[]) AS r(token_id, code, deactivate)
+        WHERE dpt.token_id = r.token_id
+      `,
+      [
+        rows.map((row) => row.dispatch.token_id),
+        failedAt,
+        rows.map((row) => row.code),
+        rows.map((row) => this.shouldDeactivateToken(row.code)),
+      ],
+    );
+  }
+
+  private async markRetriedBatch(rows: Array<{ dispatch: DispatchRow; code: string }>) {
+    await this.databaseService.query(
+      `
+        UPDATE notification_dispatches nd
+        SET attempt_no = attempt_no + 1,
+            provider_error_code = r.code,
+            status = CASE WHEN attempt_no + 1 >= ${MAX_ATTEMPTS} THEN 'failed' ELSE 'queued' END
+        FROM unnest($1::uuid[], $2::text[]) AS r(dispatch_id, code)
+        WHERE nd.dispatch_id = r.dispatch_id
+      `,
+      [rows.map((row) => row.dispatch.dispatch_id), rows.map((row) => row.code)],
+    );
   }
 
   private getMessagingClient(firebaseServiceAccountPath: string): Messaging {
@@ -276,5 +396,12 @@ export class PushService {
       'messaging/registration-token-not-registered',
       'messaging/invalid-registration-token',
     ].includes(providerErrorCode);
+  }
+
+  private isRetriableProviderError(providerErrorCode: string) {
+    if (RETRIABLE_PROVIDER_CODES.has(providerErrorCode)) {
+      return true;
+    }
+    return /timeout|unavailable|rate-exceeded|network/i.test(providerErrorCode);
   }
 }

@@ -11,7 +11,9 @@ APP_USER="${APP_USER:-alerts-ua}"
 APP_GROUP="${APP_GROUP:-alerts-ua}"
 CURRENT_LINK="${CURRENT_LINK:-/srv/alerts-ua/app/current}"
 RELEASES_DIR="${RELEASES_DIR:-/srv/alerts-ua/app/releases}"
-RUNTIME_NPM="${RUNTIME_NPM:-/usr/bin/npm}"
+# Выделенный рантайм проекта (правило безопасности №4: системный Node не трогаем;
+# деплой не должен зависеть от его апгрейтов)
+RUNTIME_NPM="${RUNTIME_NPM:-/srv/alerts-ua/runtime/node/bin/npm}"
 API_SERVICE="${API_SERVICE:-alerts-ua-api.service}"
 DTEK_SERVICE="${DTEK_SERVICE:-dtek-api.service}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3100/api/v1/system/health}"
@@ -26,7 +28,7 @@ Environment overrides:
   APP_GROUP          default: alerts-ua
   CURRENT_LINK       default: /srv/alerts-ua/app/current
   RELEASES_DIR       default: /srv/alerts-ua/app/releases
-  RUNTIME_NPM        default: /usr/bin/npm
+  RUNTIME_NPM        default: /srv/alerts-ua/runtime/node/bin/npm
   API_SERVICE        default: alerts-ua-api.service
   DTEK_SERVICE       default: dtek-api.service
   HEALTH_URL         default: http://127.0.0.1:3100/api/v1/system/health
@@ -104,11 +106,24 @@ cleanup() {
   rm -f "$ARCHIVE_PATH"
 }
 
+SYMLINK_FLIPPED=0
+
 rollback() {
   if [[ -n "$PREVIOUS_RELEASE" ]]; then
     ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
     systemctl restart "$API_SERVICE"
   fi
+}
+
+# Обрыв ssh-сессии после переключения симлинка раньше оставлял непроверенный
+# релиз активным без отката (sshd шлёт SIGHUP скрипту). Теперь сигнал
+# откатывает деплой, если симлинк уже переключён.
+on_signal() {
+  echo "Deploy interrupted by signal, rolling back"
+  if [[ "$SYMLINK_FLIPPED" == "1" ]]; then
+    rollback
+  fi
+  exit 1
 }
 
 check_health() {
@@ -127,6 +142,7 @@ check_health() {
 }
 
 trap cleanup EXIT
+trap on_signal TERM INT HUP
 
 install -d -o "$APP_USER" -g "$APP_GROUP" "$NEW_RELEASE"
 
@@ -181,7 +197,11 @@ if [[ "$NEEDS_NPM_INSTALL" == "1" ]]; then
   fi
 fi
 
-ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
+# Атомарная замена симлинка: ln -sfn — это unlink+symlink, между которыми
+# current на микросекунду не существует.
+ln -s "$NEW_RELEASE" "${CURRENT_LINK}.tmp"
+mv -T "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
+SYMLINK_FLIPPED=1
 systemctl restart "$API_SERVICE"
 
 if ! systemctl is-active --quiet "$API_SERVICE"; then

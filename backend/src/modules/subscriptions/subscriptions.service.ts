@@ -477,78 +477,58 @@ export class SubscriptionsService {
     };
   }
 
+  /**
+   * Синхронизирует runtime-состояние только подписок, которых касается
+   * изменение (changed_uids). Эффективное состояние подписки — функция строк
+   * её трёх опорных регионов (leaf/raion/oblast) в air_raid_state_current,
+   * поэтому подписки вне changed_uids пропускаются безопасно. Раньше каждый
+   * poll-цикл перечитывал и переписывал ВСЕ подписки с FOR UPDATE по всей
+   * таблице — при массовой тревоге это десятки тысяч round-trip в одной
+   * транзакции и риск упереться в TimeoutStartSec poll-воркера.
+   */
   async synchronizeRuntimeState(
     client: PoolClient,
     input: {
       state_version: number;
       occurred_at: Date;
+      changed_uids: number[];
     },
   ) {
-    const [subscriptionsResult, runtimeResult, statesResult, eventsResult, pushTokensResult] =
-      await Promise.all([
-        client.query<SubscriptionRuntimeSourceRow>(
-          `
-            SELECT s.subscription_id,
-                   s.installation_id,
-                   s.label_user,
-                   s.address_uk,
-                   s.leaf_uid,
-                   s.raion_uid,
-                   s.oblast_uid,
-                   rc_leaf.title_uk  AS leaf_title_uk,
-                   rc_raion.title_uk AS raion_title_uk,
-                   rc_oblast.title_uk AS oblast_title_uk,
-                   s.notify_on_start,
-                   s.notify_on_end,
-                   s.is_active,
-                   di.notifications_enabled,
-                   di.status AS installation_status
-            FROM subscriptions s
-            JOIN device_installations di ON di.installation_id = s.installation_id
-            LEFT JOIN region_catalog rc_leaf   ON rc_leaf.uid   = s.leaf_uid
-            LEFT JOIN region_catalog rc_raion  ON rc_raion.uid  = s.raion_uid
-            LEFT JOIN region_catalog rc_oblast ON rc_oblast.uid = s.oblast_uid
-          `,
-        ),
-        client.query<RuntimeRow>(
-          `
-            SELECT subscription_id,
-                   effective_status,
-                   effective_uid,
-                   effective_started_at::text,
-                   COALESCE(effective_alert_level, 'red') AS effective_alert_level,
-                   last_transition_at::text,
-                   last_evaluated_state_version,
-                   last_start_event_id,
-                   last_end_event_id
-            FROM subscription_runtime_state
-            FOR UPDATE
-          `,
-        ),
-        client.query<StateRow>(
-          `
-            SELECT uid, status, active_from::text, state_version,
-                   COALESCE(alert_type, 'air_raid') AS alert_type,
-                   COALESCE(alert_level, 'red') AS alert_level
-            FROM air_raid_state_current
-          `,
-        ),
-        client.query<EventRow>(
-          `
-            SELECT event_id, uid, event_kind
-            FROM air_raid_events
-            WHERE state_version = $1
-          `,
-          [input.state_version],
-        ),
-        client.query<PushTokenRow>(
-          `
-            SELECT token_id, installation_id
-            FROM device_push_tokens
-            WHERE is_active = TRUE
-          `,
-        ),
-      ]);
+    if (input.changed_uids.length === 0) {
+      return {
+        updated_subscriptions: 0,
+        queued_dispatches: 0,
+      };
+    }
+
+    const subscriptionsResult = await client.query<SubscriptionRuntimeSourceRow>(
+      `
+        SELECT s.subscription_id,
+               s.installation_id,
+               s.label_user,
+               s.address_uk,
+               s.leaf_uid,
+               s.raion_uid,
+               s.oblast_uid,
+               rc_leaf.title_uk  AS leaf_title_uk,
+               rc_raion.title_uk AS raion_title_uk,
+               rc_oblast.title_uk AS oblast_title_uk,
+               s.notify_on_start,
+               s.notify_on_end,
+               s.is_active,
+               di.notifications_enabled,
+               di.status AS installation_status
+        FROM subscriptions s
+        JOIN device_installations di ON di.installation_id = s.installation_id
+        LEFT JOIN region_catalog rc_leaf   ON rc_leaf.uid   = s.leaf_uid
+        LEFT JOIN region_catalog rc_raion  ON rc_raion.uid  = s.raion_uid
+        LEFT JOIN region_catalog rc_oblast ON rc_oblast.uid = s.oblast_uid
+        WHERE s.leaf_uid = ANY($1::int[])
+           OR s.raion_uid = ANY($1::int[])
+           OR s.oblast_uid = ANY($1::int[])
+      `,
+      [input.changed_uids],
+    );
 
     if (subscriptionsResult.rowCount === 0) {
       return {
@@ -556,6 +536,56 @@ export class SubscriptionsService {
         queued_dispatches: 0,
       };
     }
+
+    const subscriptionIds = subscriptionsResult.rows.map((row) => row.subscription_id);
+    const installationIds = [...new Set(subscriptionsResult.rows.map((row) => row.installation_id))];
+
+    // Лочим только затронутые runtime-строки: сериализация poll vs
+    // telegram-parse сохраняется (оба сначала берут локи air_raid_state_current),
+    // но непересекающиеся множества подписок больше не блокируют друг друга.
+    const [runtimeResult, statesResult, eventsResult, pushTokensResult] = await Promise.all([
+      client.query<RuntimeRow>(
+        `
+          SELECT subscription_id,
+                 effective_status,
+                 effective_uid,
+                 effective_started_at::text,
+                 COALESCE(effective_alert_level, 'red') AS effective_alert_level,
+                 last_transition_at::text,
+                 last_evaluated_state_version,
+                 last_start_event_id,
+                 last_end_event_id
+          FROM subscription_runtime_state
+          WHERE subscription_id = ANY($1::uuid[])
+          FOR UPDATE
+        `,
+        [subscriptionIds],
+      ),
+      client.query<StateRow>(
+        `
+          SELECT uid, status, active_from::text, state_version,
+                 COALESCE(alert_type, 'air_raid') AS alert_type,
+                 COALESCE(alert_level, 'red') AS alert_level
+          FROM air_raid_state_current
+        `,
+      ),
+      client.query<EventRow>(
+        `
+          SELECT event_id, uid, event_kind
+          FROM air_raid_events
+          WHERE state_version = $1
+        `,
+        [input.state_version],
+      ),
+      client.query<PushTokenRow>(
+        `
+          SELECT token_id, installation_id
+          FROM device_push_tokens
+          WHERE is_active = TRUE AND installation_id = ANY($1::uuid[])
+        `,
+        [installationIds],
+      ),
+    ]);
 
     const runtimeBySubscription = new Map(
       runtimeResult.rows.map((row) => [row.subscription_id, row]),
@@ -572,9 +602,28 @@ export class SubscriptionsService {
       tokensByInstallation.set(row.installation_id, current);
     }
 
-    let updatedSubscriptions = 0;
-    let queuedDispatches = 0;
     const transitionAt = input.occurred_at.toISOString();
+    const runtimeUpsert: Array<{
+      subscription_id: string;
+      effective_status: AlertStatus;
+      effective_uid: number | null;
+      effective_started_at: string | null;
+      effective_alert_level: string;
+      last_transition_at: string;
+      last_start_event_id: string | null;
+      last_end_event_id: string | null;
+    }> = [];
+    const dispatchInserts: Array<{
+      dispatch_id: string;
+      subscription_id: string;
+      installation_id: string;
+      token_id: string;
+      event_id: string | null;
+      dispatch_kind: 'start' | 'end' | 'level_changed';
+      alert_level: string;
+      title_uk: string;
+      body_uk: string;
+    }> = [];
 
     for (const subscription of subscriptionsResult.rows) {
       const previousRuntimeRaw = runtimeBySubscription.get(subscription.subscription_id) ?? {
@@ -607,14 +656,16 @@ export class SubscriptionsService {
       if (!previousWasActive && nextIsActive && nextRuntime.effective_uid !== null) {
         lastStartEventId =
           eventsByKey.get(`${nextRuntime.effective_uid}:started`) ?? previousRuntimeRaw.last_start_event_id;
-        queuedDispatches += await this.queueDispatchesForTransition(client, {
-          subscription,
-          dispatch_kind: 'start',
-          event_id: lastStartEventId,
-          alert_level: nextRuntime.effective_alert_level,
-          occurred_at: transitionAt,
-          tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-        });
+        dispatchInserts.push(
+          ...(await this.collectDispatchRows(client, {
+            subscription,
+            dispatch_kind: 'start',
+            event_id: lastStartEventId,
+            alert_level: nextRuntime.effective_alert_level,
+            occurred_at: transitionAt,
+            tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
+          })),
+        );
       }
 
       if (previousWasActive && !nextIsActive && previousRuntime.effective_uid !== null) {
@@ -624,14 +675,16 @@ export class SubscriptionsService {
         const previousAlertLevel = previousRuntime.effective_uid
           ? (statesByUid.get(previousRuntime.effective_uid)?.alert_level ?? 'red')
           : 'red';
-        queuedDispatches += await this.queueDispatchesForTransition(client, {
-          subscription,
-          dispatch_kind: 'end',
-          event_id: lastEndEventId,
-          alert_level: previousAlertLevel,
-          occurred_at: transitionAt,
-          tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-        });
+        dispatchInserts.push(
+          ...(await this.collectDispatchRows(client, {
+            subscription,
+            dispatch_kind: 'end',
+            event_id: lastEndEventId,
+            alert_level: previousAlertLevel,
+            occurred_at: transitionAt,
+            tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
+          })),
+        );
       }
 
       // Level-only change while alert stays active (e.g., red → yellow)
@@ -641,18 +694,91 @@ export class SubscriptionsService {
           : 'red';
         const nextLevel = nextRuntime.effective_alert_level;
         if (previousLevel !== nextLevel) {
-          queuedDispatches += await this.queueDispatchesForTransition(client, {
-            subscription,
-            dispatch_kind: 'level_changed',
-            event_id: null,
-            alert_level: nextLevel,
-            previous_alert_level: previousLevel,
-            occurred_at: transitionAt,
-            tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-          });
+          dispatchInserts.push(
+            ...(await this.collectDispatchRows(client, {
+              subscription,
+              dispatch_kind: 'level_changed',
+              event_id: null,
+              alert_level: nextLevel,
+              previous_alert_level: previousLevel,
+              occurred_at: transitionAt,
+              tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
+            })),
+          );
         }
       }
 
+      runtimeUpsert.push({
+        subscription_id: subscription.subscription_id,
+        effective_status: nextRuntime.effective_status,
+        effective_uid: nextRuntime.effective_uid,
+        effective_started_at: nextRuntime.effective_started_at,
+        effective_alert_level: nextRuntime.effective_alert_level,
+        last_transition_at: stateChanged ? transitionAt : previousRuntimeRaw.last_transition_at,
+        last_start_event_id: lastStartEventId,
+        last_end_event_id: lastEndEventId,
+      });
+    }
+
+    // Одна многострочная вставка вместо N последовательных: уникальный
+    // индекс (subscription_id, event_id, dispatch_kind, alert_level) WHERE
+    // event_id IS NOT NULL дедуплицирует повторы — ровно как раньше, но
+    // одним round-trip на всю пачку.
+    let queuedDispatches = 0;
+    if (dispatchInserts.length > 0) {
+      const dispatchResult = await client.query(
+        `
+          INSERT INTO notification_dispatches (
+            dispatch_id,
+            subscription_id,
+            installation_id,
+            token_id,
+            event_id,
+            dispatch_kind,
+            alert_level,
+            title_uk,
+            body_uk,
+            status,
+            attempt_no,
+            provider_message_id,
+            provider_error_code,
+            queued_at,
+            sent_at
+          )
+          SELECT r.dispatch_id, r.subscription_id, r.installation_id, r.token_id, r.event_id,
+                 r.dispatch_kind, r.alert_level, r.title_uk, r.body_uk,
+                 'queued', 1, NULL, NULL, $10::timestamptz, NULL
+          FROM unnest(
+            $1::uuid[],
+            $2::uuid[],
+            $3::uuid[],
+            $4::uuid[],
+            $5::uuid[],
+            $6::text[],
+            $7::text[],
+            $8::text[],
+            $9::text[]
+          ) AS r(dispatch_id, subscription_id, installation_id, token_id, event_id,
+                 dispatch_kind, alert_level, title_uk, body_uk)
+          ON CONFLICT DO NOTHING
+        `,
+        [
+          dispatchInserts.map((row) => row.dispatch_id),
+          dispatchInserts.map((row) => row.subscription_id),
+          dispatchInserts.map((row) => row.installation_id),
+          dispatchInserts.map((row) => row.token_id),
+          dispatchInserts.map((row) => row.event_id),
+          dispatchInserts.map((row) => row.dispatch_kind),
+          dispatchInserts.map((row) => row.alert_level),
+          dispatchInserts.map((row) => row.title_uk),
+          dispatchInserts.map((row) => row.body_uk),
+          transitionAt,
+        ],
+      );
+      queuedDispatches = dispatchResult.rowCount ?? 0;
+    }
+
+    if (runtimeUpsert.length > 0) {
       await client.query(
         `
           INSERT INTO subscription_runtime_state (
@@ -665,7 +791,21 @@ export class SubscriptionsService {
             last_evaluated_state_version,
             last_start_event_id,
             last_end_event_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          )
+          SELECT r.subscription_id, r.effective_status, r.effective_uid, r.effective_started_at,
+                 r.effective_alert_level, r.last_transition_at, $7::integer,
+                 r.last_start_event_id, r.last_end_event_id
+          FROM unnest(
+            $1::uuid[],
+            $2::text[],
+            $3::int[],
+            $4::timestamptz[],
+            $5::text[],
+            $6::timestamptz[],
+            $8::uuid[],
+            $9::uuid[]
+          ) AS r(subscription_id, effective_status, effective_uid, effective_started_at,
+                 effective_alert_level, last_transition_at, last_start_event_id, last_end_event_id)
           ON CONFLICT (subscription_id) DO UPDATE SET
             effective_status = EXCLUDED.effective_status,
             effective_uid = EXCLUDED.effective_uid,
@@ -677,27 +817,30 @@ export class SubscriptionsService {
             last_end_event_id = EXCLUDED.last_end_event_id
         `,
         [
-          subscription.subscription_id,
-          nextRuntime.effective_status,
-          nextRuntime.effective_uid,
-          nextRuntime.effective_started_at,
-          nextRuntime.effective_alert_level,
-          stateChanged ? transitionAt : previousRuntimeRaw.last_transition_at,
+          runtimeUpsert.map((row) => row.subscription_id),
+          runtimeUpsert.map((row) => row.effective_status),
+          runtimeUpsert.map((row) => row.effective_uid),
+          runtimeUpsert.map((row) => row.effective_started_at),
+          runtimeUpsert.map((row) => row.effective_alert_level),
+          runtimeUpsert.map((row) => row.last_transition_at),
           input.state_version,
-          lastStartEventId,
-          lastEndEventId,
+          runtimeUpsert.map((row) => row.last_start_event_id),
+          runtimeUpsert.map((row) => row.last_end_event_id),
         ],
       );
-      updatedSubscriptions += 1;
     }
 
     return {
-      updated_subscriptions: updatedSubscriptions,
+      updated_subscriptions: runtimeUpsert.length,
       queued_dispatches: queuedDispatches,
     };
   }
 
-  private async queueDispatchesForTransition(
+  /**
+   * Готовит строки dispatch-уведомлений для вставки (без записи в БД —
+   * вставка выполняется батчем из synchronizeRuntimeState).
+   */
+  private async collectDispatchRows(
     client: PoolClient,
     input: {
       subscription: SubscriptionRuntimeSourceRow;
@@ -708,25 +851,35 @@ export class SubscriptionsService {
       occurred_at: string;
       tokens: PushTokenRow[];
     },
-  ) {
+  ): Promise<Array<{
+    dispatch_id: string;
+    subscription_id: string;
+    installation_id: string;
+    token_id: string;
+    event_id: string | null;
+    dispatch_kind: 'start' | 'end' | 'level_changed';
+    alert_level: string;
+    title_uk: string;
+    body_uk: string;
+  }>> {
     if (input.dispatch_kind !== 'level_changed' && !input.event_id) {
-      return 0;
+      return [];
     }
 
     if (!input.subscription.is_active || input.subscription.installation_status !== 'active') {
-      return 0;
+      return [];
     }
 
     if (!input.subscription.notifications_enabled) {
-      return 0;
+      return [];
     }
 
     if (input.dispatch_kind === 'start' && !input.subscription.notify_on_start) {
-      return 0;
+      return [];
     }
 
     if (input.dispatch_kind === 'end' && !input.subscription.notify_on_end) {
-      return 0;
+      return [];
     }
 
     const { title_uk, body_uk } = this.buildDispatchText(
@@ -754,57 +907,21 @@ export class SubscriptionsService {
         [input.subscription.subscription_id, input.alert_level, input.occurred_at],
       );
       if ((existing.rowCount ?? 0) > 0) {
-        return 0;
+        return [];
       }
     }
 
-    let inserted = 0;
-    for (const token of input.tokens) {
-      const dispatchId = randomUUID();
-      const result = await client.query(
-        `
-          INSERT INTO notification_dispatches (
-            dispatch_id,
-            subscription_id,
-            installation_id,
-            token_id,
-            event_id,
-            dispatch_kind,
-            alert_level,
-            title_uk,
-            body_uk,
-            status,
-            attempt_no,
-            provider_message_id,
-            provider_error_code,
-            queued_at,
-            sent_at
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9,
-            'queued', 1, NULL, NULL, $10, NULL
-          )
-          ON CONFLICT DO NOTHING
-        `,
-        [
-          dispatchId,
-          input.subscription.subscription_id,
-          input.subscription.installation_id,
-          token.token_id,
-          input.event_id,
-          input.dispatch_kind,
-          input.alert_level,
-          title_uk,
-          body_uk,
-          input.occurred_at,
-        ],
-      );
-
-      if ((result.rowCount ?? 0) > 0) {
-        inserted += 1;
-      }
-    }
-
-    return inserted;
+    return input.tokens.map((token) => ({
+      dispatch_id: randomUUID(),
+      subscription_id: input.subscription.subscription_id,
+      installation_id: input.subscription.installation_id,
+      token_id: token.token_id,
+      event_id: input.event_id,
+      dispatch_kind: input.dispatch_kind,
+      alert_level: input.alert_level,
+      title_uk,
+      body_uk,
+    }));
   }
 
   private async loadOblastHistory(oblastUid: number) {

@@ -160,9 +160,12 @@ $npmCmd = Get-RequiredTool -Name 'npm'
 #         $ErrorActionPreference='Stop' a merged stderr line becomes a
 #         terminating ErrorRecord and kills the script mid-deploy. stderr is
 #         left flowing to the console; only stdout is captured for parsing.
-$sshCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR')
+# NOTE 3: ServerAlive* keepalive-ы — без них обрыв долгого ssh-сеанса деплоя
+#         (NAT/фейрвол рвёт неактивное соединение) убивал удалённый скрипт
+#         по SIGHUP посреди деплоя. Аналогичное уже сделано в vps-backup.ps1.
+$sshCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=4')
 $sshExecArgs = $sshCommonArgs + @('-n')
-$scpCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR')
+$scpCommonArgs = @('-i', $sshKey, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=30', '-o', 'LogLevel=ERROR', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=4')
 
 # Release configuration
 if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
