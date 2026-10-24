@@ -49,7 +49,10 @@ const RETENTION_RULES: RetentionRule[] = [
     table: 'air_raid_events',
     description: 'история событий тревог (баннеру нужно окно 4 дня — запас кратный)',
     tsColumn: 'occurred_at',
-    where: 'TRUE',
+    // threat_vectors.resolved_air_raid_event_id ссылается на события без
+    // ON DELETE — такие события пропускаем (их немного: vectors архивируются
+    // ежедневно, ссылки остаются только на старые «разрешённые» события)
+    where: "NOT EXISTS (SELECT 1 FROM threat_vectors tv WHERE tv.resolved_air_raid_event_id = air_raid_events.event_id)",
     retentionDaysEnv: 'RETENTION_EVENTS_DAYS',
     defaultDays: 90,
   },

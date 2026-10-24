@@ -35,14 +35,17 @@ type AlertLayerUidRow = {
   alert_level: string;
 };
 
-// Кандидаты пути к файлу оккупированных территорий: релиз-локальный
-// __dirname-относительный и общий каталог /srv/alerts-ua/app/data, куда
-// пишет fetch-скрипт (общий каталог переживает ротацию релизов; после
-// деплоя релиз-локальный файл отсутствует до следующего fetch).
+// Кандидаты пути к файлу оккупированных территорий. ВАЖНО: systemd
+// WorkingDirectory=/srv/alerts-ua/app/current, но ядро резолвит симлинк —
+// process.cwd() возвращает РЕАЛЬНЫЙ путь releases/<name>, поэтому
+// cwd()/../data указывает на releases/data (не существует), а рабочий
+// вариант — cwd()/../../data = /srv/alerts-ua/app/data (общий каталог,
+// куда пишет fetch-скрипт). Релиз-локальный — последним: там исторически
+// бывали пустышки, обнулявшие счётчик.
 const OCCUPIED_TERRITORIES_CANDIDATES = [
-  path.join(__dirname, '../../../data/occupied-territories.geojson'),
+  path.join(process.cwd(), '..', '..', 'data', 'occupied-territories.geojson'),
   path.join(process.cwd(), '..', 'data', 'occupied-territories.geojson'),
-  path.join(process.cwd(), 'data', 'occupied-territories.geojson'),
+  path.join(__dirname, '../../../data/occupied-territories.geojson'),
 ];
 
 @Injectable()
@@ -379,28 +382,45 @@ export class MapBundleService {
   private occupiedCountCache: { filePath: string; mtimeMs: number; count: number } | null = null;
 
   private getOccupiedTerritoriesCount(): number {
+    // Берём первого кандидата с НЕПУСТЫМ валидным GeoJSON: существующий, но
+    // пустой/битый файл не должен обнулять счётчик, если рядом лежат данные.
     try {
-      const filePath = OCCUPIED_TERRITORIES_CANDIDATES.find((candidate) =>
-        fs.existsSync(candidate),
-      );
-      if (!filePath) {
-        return 0;
+      let fallback: { filePath: string; mtimeMs: number; count: number } | null = null;
+
+      for (const filePath of OCCUPIED_TERRITORIES_CANDIDATES) {
+        if (!fs.existsSync(filePath)) {
+          continue;
+        }
+
+        const mtimeMs = fs.statSync(filePath).mtimeMs;
+        if (
+          this.occupiedCountCache &&
+          this.occupiedCountCache.filePath === filePath &&
+          this.occupiedCountCache.mtimeMs === mtimeMs
+        ) {
+          return this.occupiedCountCache.count;
+        }
+
+        try {
+          const rawContent = fs.readFileSync(filePath, 'utf8');
+          const data = JSON.parse(rawContent) as { features?: unknown[] };
+          const count = data.features?.length ?? 0;
+          if (count === 0 && fallback === null) {
+            fallback = { filePath, mtimeMs, count };
+            continue;
+          }
+          this.occupiedCountCache = { filePath, mtimeMs, count };
+          return count;
+        } catch {
+          continue;
+        }
       }
 
-      const mtimeMs = fs.statSync(filePath).mtimeMs;
-      if (
-        this.occupiedCountCache &&
-        this.occupiedCountCache.filePath === filePath &&
-        this.occupiedCountCache.mtimeMs === mtimeMs
-      ) {
-        return this.occupiedCountCache.count;
+      if (fallback) {
+        this.occupiedCountCache = fallback;
+        return fallback.count;
       }
-
-      const rawContent = fs.readFileSync(filePath, 'utf8');
-      const data = JSON.parse(rawContent) as { features?: unknown[] };
-      const count = data.features?.length ?? 0;
-      this.occupiedCountCache = { filePath, mtimeMs, count };
-      return count;
+      return 0;
     } catch {
       return 0;
     }
