@@ -25,3 +25,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_air_raid_events_uid_kind_occurred
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_device_push_tokens_installation_active
   ON device_push_tokens(installation_id)
   WHERE is_active = TRUE;
+
+-- Каскадная чистка: удаление air_raid_events каскадом удаляет их
+-- notification_dispatches; без этого индекса каждый DELETE события даёт
+-- seq scan таблицы dispatch (~2-4 млн строк) — ретенция замирает.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_notification_dispatches_event_id
+  ON notification_dispatches(event_id);
+
+-- NOT EXISTS-защита ретенции событий от FK threat_vectors
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_threat_vectors_resolved_event
+  ON threat_vectors(resolved_air_raid_event_id);
+
+-- Отсечка ретенции событий по возрасту
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_air_raid_events_occurred
+  ON air_raid_events(occurred_at);
