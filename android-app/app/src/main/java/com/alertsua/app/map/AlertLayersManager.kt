@@ -27,6 +27,7 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.FillLayer
+import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -201,6 +202,11 @@ class AlertLayersManager(
     private var raionLayerInstalled = false
     private var hromadaLayersInstalled = false
 
+    // Якорь z-order: id нижнего SymbolLayer подложки с name-подписями.
+    // Заливки тревог встают ПОД него — иначе полупрозрачная заливка
+    // (жёлтый/красный уровень) рисуется поверх подписей и приглушает текст.
+    private var baseLabelAnchorId: String? = null
+
     // «Сырые» FeatureCollection-строки: pristine (из assets) и со встроенными
     // status/alert_type/alert_level (результат инъекции, отдаётся в источники)
     private var oblastRawJson = ""
@@ -247,6 +253,7 @@ class AlertLayersManager(
         baseLayersInstalled = false
         raionLayerInstalled = false
         hromadaLayersInstalled = false
+        resolveBaseLabelAnchor(style)
         installLayersIfReady()
     }
 
@@ -815,28 +822,31 @@ class AlertLayersManager(
 
         if (oblastJson.isNotEmpty()) style.addSource(GeoJsonSource(SOURCE_OBLAST, oblastJson))
 
-        style.addLayer(LineLayer(LAYER_OBLAST_BORDERS, SOURCE_OBLAST).withProperties(
+        // Границы/заливки/occupied встают ПОД подписи населённых пунктов базового
+        // стиля (якорь baseLabelAnchorId) — текст остаётся ярким поверх заливок.
+        // Маска вне Украины, наоборот, остаётся наверху: гасит подписи за пределами.
+        addBelowBaseLabels(style, LineLayer(LAYER_OBLAST_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(COLOR_OBLAST_BORDER),
             PropertyFactory.lineWidth(1.0f),
         ))
 
         addAlertFillLayer(style, LAYER_FILL_OBLAST, SOURCE_OBLAST, statusActiveFilter())
 
-        style.addLayer(LineLayer(LAYER_OBLAST_STATUS_BORDERS, SOURCE_OBLAST).withProperties(
+        addBelowBaseLabels(style, LineLayer(LAYER_OBLAST_STATUS_BORDERS, SOURCE_OBLAST).withProperties(
             PropertyFactory.lineColor(oblastStatusBorderColor()),
             PropertyFactory.lineWidth(1.0f),
         ).apply { setFilter(Expression.eq(Expression.get("region_type"), Expression.literal("oblast"))) })
 
         occupiedCollectionJson?.let { json ->
             style.addSource(GeoJsonSource(SOURCE_OCCUPIED, json))
-            style.addLayer(FillLayer(LAYER_OCCUPIED_FILL, SOURCE_OCCUPIED).withProperties(
+            addBelowBaseLabels(style, FillLayer(LAYER_OCCUPIED_FILL, SOURCE_OCCUPIED).withProperties(
                 PropertyFactory.fillColor(COLOR_OCCUPIED),
                 PropertyFactory.fillOpacity(if (darkMode) 0.08f else 0.05f),
             ))
-            style.addLayer(FillLayer(LAYER_OCCUPIED_HATCH, SOURCE_OCCUPIED).withProperties(
+            addBelowBaseLabels(style, FillLayer(LAYER_OCCUPIED_HATCH, SOURCE_OCCUPIED).withProperties(
                 PropertyFactory.fillPattern(IMAGE_OCCUPIED_HATCH),
             ))
-            style.addLayer(LineLayer(LAYER_OCCUPIED_LINE, SOURCE_OCCUPIED).withProperties(
+            addBelowBaseLabels(style, LineLayer(LAYER_OCCUPIED_LINE, SOURCE_OCCUPIED).withProperties(
                 PropertyFactory.lineColor(COLOR_OCCUPIED),
                 PropertyFactory.lineWidth(2.5f),
                 PropertyFactory.lineOpacity(0.9f),
@@ -888,8 +898,46 @@ class AlertLayersManager(
         }
     }
 
+    // Якорь — нижний SymbolLayer подложки с подписями населённых пунктов.
+    // Заливки тревог встают ПОД него — подписи рисуются ПОВЕРХ заливок,
+    // иначе полупрозрачная заливка приглушает текст (особенно заметно
+    // в тёмной теме на жёлтом/красном уровне).
+    // Только place_* (dark) / label_* (liberty): вода и дороги исключены —
+    // water_name в dark стоит на 8-м месте стека, под него якорь нельзя
+    // (заливки ушли бы под водохранилища).
+    private fun resolveBaseLabelAnchor(style: Style) {
+        baseLabelAnchorId = style.layers.firstOrNull { layer ->
+            layer is SymbolLayer && isSettlementLabelLayer(layer)
+        }?.id
+    }
+
+    private fun isSettlementLabelLayer(layer: SymbolLayer): Boolean {
+        val id = layer.id
+        if (!id.startsWith("place_") && !id.startsWith("label_")) return false
+        return layerReadsNameField(layer)
+    }
+
+    private fun layerReadsNameField(layer: SymbolLayer): Boolean {
+        val textField = layer.textField ?: return false
+        return if (textField.isExpression && textField.expression != null) {
+            expressionReadsNameField(textField.expression)
+        } else {
+            textField.value?.toString()?.let { NAME_FIELD_TEMPLATE.containsMatchIn(it) } == true
+        }
+    }
+
+    // Добавить слой под якорь base-лейблов; якоря нет — наверх (старое поведение).
+    private fun addBelowBaseLabels(style: Style, layer: Layer) {
+        val anchor = baseLabelAnchorId
+        if (anchor != null && style.getLayer(anchor) != null) {
+            style.addLayerBelow(layer, anchor)
+        } else {
+            style.addLayer(layer)
+        }
+    }
+
     private fun addAlertFillLayer(style: Style, layerId: String, sourceId: String, filter: Expression) {
-        style.addLayer(FillLayer(layerId, sourceId).withProperties(
+        addBelowBaseLabels(style, FillLayer(layerId, sourceId).withProperties(
             PropertyFactory.fillColor(alertFillColor()),
             PropertyFactory.fillOpacity(alertFillOpacity()),
         ).apply { setFilter(filter) })

@@ -155,6 +155,7 @@ fun NativeMapView(
                         MapReadyState.isMapReady = true
                         state.appliedDarkMode = darkMode
                         localizeLabelsToUkrainian(style)
+                        boostSettlementLabelContrast(style, darkMode)
                         hideHeavyBaseLayers(style)
                         layersManager.onStyleLoaded(style)
                         threatLayersManager.onStyleLoaded(style)
@@ -176,6 +177,7 @@ fun NativeMapView(
                 map.setStyle(Style.Builder().fromUri(styleUri(darkMode))) { style ->
                     MapPerf.log("NativeMap", "style reloaded: ${styleUri(darkMode)}")
                     localizeLabelsToUkrainian(style)
+                    boostSettlementLabelContrast(style, darkMode)
                     hideHeavyBaseLayers(style)
                     layersManager.onStyleLoaded(style)
                     threatLayersManager.onStyleLoaded(style)
@@ -215,14 +217,14 @@ private val UKRAINIAN_TEXT_FIELD: Expression =
     Expression.raw("[\"coalesce\",[\"get\",\"name:uk\"],[\"get\",\"name\"]]")
 
 // Литеральный шаблон ("{name}", "{name:latin}") — для не-expression text-field
-private val NAME_FIELD_TEMPLATE = Regex("\\{name([:_][A-Za-z0-9_-]+)?\\}")
+internal val NAME_FIELD_TEMPLATE = Regex("\\{name([:_][A-Za-z0-9_-]+)?\\}")
 
 private fun isNameField(value: Any?): Boolean =
     value is String && (value == "name" || value.startsWith("name:") || value.startsWith("name_"))
 
 // Ищем ["get", <name-поле>] в дереве expression (аргументы — Object[],
 // вложенные выражения — Expression)
-private fun expressionReadsNameField(node: Any?): Boolean = when (node) {
+internal fun expressionReadsNameField(node: Any?): Boolean = when (node) {
     is Expression -> expressionReadsNameField(node.toArray())
     is Array<*> -> {
         if (node.size >= 2 && node[0] == "get" && isNameField(node[1])) return true
@@ -276,6 +278,30 @@ private fun localizeLabelsToUkrainian(style: Style) {
         localized++
     }
     MapPerf.log("NativeMap", "labels localized to uk: $localized symbol layers")
+}
+
+/**
+ * Контраст подписей населённых пунктов поверх заливок тревог. В dark-стиле
+ * OpenFreeMap place_* — серые (rgb 101) с почти чёрным гало: на жёлтой/красной
+ * заливке их не прочитать. Поднимаем текст к светлому, гало — к тёмному с
+ * запасом по ширине (держит читаемость на жёлтом). Светлый liberty label_* уже
+ * чёрные с белым гало — там стиль не трогаем.
+ */
+private fun boostSettlementLabelContrast(style: Style, darkMode: Boolean) {
+    if (!darkMode) return
+    var boosted = 0
+    style.layers.forEach { layer ->
+        if (layer !is SymbolLayer) return@forEach
+        val id = layer.id
+        if (!id.startsWith("place_") && !id.startsWith("label_")) return@forEach
+        layer.setProperties(
+            PropertyFactory.textColor("#E8E8E8"),
+            PropertyFactory.textHaloColor("rgba(0, 0, 0, 0.85)"),
+            PropertyFactory.textHaloWidth(1.3f),
+        )
+        boosted++
+    }
+    MapPerf.log("NativeMap", "settlement labels contrast boosted: $boosted")
 }
 
 private fun configureUiSettings(map: MapLibreMap, context: Context, topInsetDp: Int) {
