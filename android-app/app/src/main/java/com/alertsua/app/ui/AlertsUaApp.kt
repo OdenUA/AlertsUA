@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Help
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Refresh
@@ -68,6 +69,7 @@ import com.alertsua.app.data.AlertsRepository
 import com.alertsua.app.admob.AdMobBanner as AdMobComposableBanner
 import com.alertsua.app.map.AlertMapScreen
 import com.alertsua.app.rateprompt.RatePromptManager
+import com.alertsua.app.ui.faq.DonateDialog
 import com.alertsua.app.ui.faq.FaqBottomSheet
 import com.alertsua.app.ui.rateprompt.RatePromptCard
 import com.alertsua.app.ui.settings.SettingsScreen
@@ -128,6 +130,7 @@ fun AlertsUaApp(
     }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var showFaqDialog by remember { mutableStateOf(false) }
+    var showDonateDialog by rememberSaveable { mutableStateOf(false) }
     var showSettingsScreen by rememberSaveable { mutableStateOf(false) }
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -303,6 +306,14 @@ fun AlertsUaApp(
                                 )
                             }
 
+                            IconButton(onClick = { showDonateDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FavoriteBorder,
+                                    contentDescription = "Подякувати розробнику",
+                                    tint = Color(0xFFE91E63),
+                                )
+                            }
+
                             IconButton(onClick = { showSettingsScreen = true }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Settings,
@@ -464,6 +475,14 @@ fun AlertsUaApp(
                                 )
                             }
 
+                            IconButton(onClick = { showDonateDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FavoriteBorder,
+                                    contentDescription = "Подякувати розробнику",
+                                    tint = Color(0xFFE91E63),
+                                )
+                            }
+
                             IconButton(onClick = { showSettingsScreen = true }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Settings,
@@ -539,6 +558,11 @@ fun AlertsUaApp(
             // FAQ Dialog
             if (showFaqDialog) {
                 FaqBottomSheet(onDismiss = { showFaqDialog = false })
+            }
+
+            // Диалог «Подякувати розробнику» (тот же контент, что в пункті FAQ)
+            if (showDonateDialog) {
+                DonateDialog(onDismiss = { showDonateDialog = false })
             }
         }
     }

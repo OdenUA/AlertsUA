@@ -34,6 +34,11 @@ import kotlinx.coroutines.delay
 
 private const val DONATE_URL = "https://send.monobank.ua/jar/L8aAoUYy2"
 
+private const val DONATE_DESCRIPTION =
+    "Додаток розробляється та підтримується незалежним розробником на власному ентузіазмі.\n" +
+            "Якщо хочете подякувати та підтримати проєкт, можете задонатити будь-яку суму в «банку» Monobank — це сервіс українського банку monobank для збору коштів.\n" +
+            "Зібрані кошти підуть на оплату серверів та розвиток додатку."
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FaqBottomSheet(
@@ -87,9 +92,7 @@ fun FaqBottomSheet(
         ),
         FAQItem(
             question = "Подякувати розробнику",
-            answer = "Додаток розробляється та підтримується незалежним розробником на власному ентузіазмі.\n" +
-                    "Якщо хочете подякувати та підтримати проєкт, можете задонатити будь-яку суму в «банку» Monobank — це сервіс українського банку monobank для збору коштів.\n" +
-                    "Зібрані кошти підуть на оплату серверів та розвиток додатку."
+            answer = DONATE_DESCRIPTION
         ),
         FAQItem(
             question = "Написати нам",
@@ -219,8 +222,6 @@ private fun FAQItemView(
     onToggle: () -> Unit,
     onEmailClick: () -> Unit
 ) {
-    val context = LocalContext.current
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -473,30 +474,7 @@ private fun FAQItemView(
                 // Donation section: jar link button + QR code
                 if (item.question == "Подякувати розробнику") {
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { openDonateUrl(context) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Text("Відкрити банку monobank")
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Image(
-                        painter = painterResource(R.drawable.qr_mono_jar),
-                        contentDescription = "QR-код для поповнення банки monobank",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { openDonateUrl(context) }
-                    )
+                    DonateContent()
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -562,3 +540,83 @@ data class FAQItem(
     val question: String,
     val answer: String
 )
+
+/** Диалог «Подякувати розробнику» — тот же контент, что в пункті FAQ (банка monobank + QR) */
+@Composable
+fun DonateDialog(onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "Подякувати розробнику",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = DONATE_DESCRIPTION,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                DonateContent()
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text("Закрити")
+                }
+            }
+        }
+    }
+}
+
+/** Кнопка банки monobank + QR-код — переиспользуется в пункті FAQ и в диалоге */
+@Composable
+private fun DonateContent() {
+    val context = LocalContext.current
+
+    Button(
+        onClick = { openDonateUrl(context) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary
+        )
+    ) {
+        Text("Відкрити банку monobank")
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Image(
+        painter = painterResource(R.drawable.qr_mono_jar),
+        contentDescription = "QR-код для поповнення банки monobank",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { openDonateUrl(context) }
+    )
+}
