@@ -3,6 +3,7 @@ package com.alertsua.app.data
 import android.content.Context
 import android.os.Build
 import com.alertsua.app.BuildConfig
+import com.alertsua.app.map.ThreatLayersManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -125,6 +126,15 @@ class AlertsRepository(context: Context) {
         } else {
             null
         }
+
+    /** Сохранённый набор каналов-источников угроз (CSV); при первом запуске — только канал по умолчанию.
+     *  Пустая строка — пользователь отключил все каналы, это тоже сохраняется. */
+    fun loadThreatChannelsCsv(): String =
+        preferences.getString(KEY_THREAT_CHANNELS, null) ?: ThreatLayersManager.CHANNEL_DEFAULT
+
+    fun saveThreatChannelsCsv(csv: String) {
+        preferences.edit().putString(KEY_THREAT_CHANNELS, csv).apply()
+    }
 
     fun normalizeApiBaseUrl(rawValue: String): String {
         val trimmed = rawValue.trim().removeSuffix("/")
@@ -616,6 +626,7 @@ class AlertsRepository(context: Context) {
         const val PREFERENCES_NAME       = "alerts_ua_preferences"
         const val KEY_API_BASE_URL       = "api_base_url"
         const val KEY_DARK_MODE_ENABLED    = "dark_mode_enabled"
+        const val KEY_THREAT_CHANNELS      = "threat_channels"
         const val KEY_FCM_TOKEN          = "fcm_token"
         const val KEY_INSTALLATION_TOKEN = "installation_token"
         const val KEY_SUBSCRIPTION_PINS  = "subscription_pins"

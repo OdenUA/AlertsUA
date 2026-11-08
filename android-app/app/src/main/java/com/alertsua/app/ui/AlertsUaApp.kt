@@ -111,17 +111,20 @@ fun AlertsUaApp(
         }
     }
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    var activeThreatChannelsCsv by rememberSaveable { mutableStateOf(THREAT_CHANNEL_KPSZSU) }
+    // Выбранные каналы-источники угроз: восстанавливаем из SharedPreferences, при переключении — сохраняем
+    var activeThreatChannelsCsv by rememberSaveable { mutableStateOf(repository.loadThreatChannelsCsv()) }
     val activeThreatChannels = remember(activeThreatChannelsCsv) {
         activeThreatChannelsCsv.split(',').filter { it.isNotBlank() }.toSet()
     }
     val toggleThreatChannel: (String) -> Unit = { channel ->
         val current = activeThreatChannelsCsv.split(',').filter { it.isNotBlank() }.toSet()
-        activeThreatChannelsCsv = if (channel in current) {
+        val nextCsv = if (channel in current) {
             (current - channel).joinToString(",")
         } else {
             (current + channel).joinToString(",")
         }
+        activeThreatChannelsCsv = nextCsv
+        repository.saveThreatChannelsCsv(nextCsv)
     }
     var isFullscreen by rememberSaveable { mutableStateOf(false) }
     var showFaqDialog by remember { mutableStateOf(false) }

@@ -147,7 +147,7 @@ fun AlertMapScreen(
     modifier: Modifier = Modifier,
     darkMode: Boolean = false,
     refreshTrigger: Int = 0,
-    activeThreatChannels: Set<String> = setOf("@kpszsu"),
+    activeThreatChannels: Set<String> = setOf(ThreatLayersManager.CHANNEL_DEFAULT),
     locationPermissionGranted: Boolean = false,
     requestLocationPermission: (() -> Unit)? = null,
     mapTopInsetDp: Int = 0,
