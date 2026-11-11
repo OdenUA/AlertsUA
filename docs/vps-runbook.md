@@ -38,6 +38,48 @@
 - Shell-скрипти і systemd unit файли потрібно зберігати з LF line endings.
 - У репозиторії це зафіксовано в `.gitattributes`, інакше на VPS можна отримати `\r: command not found`.
 
+## Push-доставка після міграції 0016
+
+`alerts-ua-push` працює як постійний `simple` service, а не як oneshot за таймером. Черга лишається в PostgreSQL: записи атомарно переходять `queued → sending`, мають `claim_id`, heartbeat і lease recovery. Повтори виконуються лише після `next_attempt_at`; прострочені повідомлення переходять у `expired`. Один виклик `sendEach` містить щонайбільше 500 повідомлень.
+
+Міграцію `backend/sql/0016_push_queue_scaling.sql` застосовувати через `psql` без `psql -1`: індекси створюються через `CONCURRENTLY`. Спочатку застосувати міграцію, потім розгорнути backend.
+
+Разовий перехід із timer на постійний service:
+
+```bash
+systemctl disable --now alerts-ua-push.timer
+cp /srv/alerts-ua/systemd/alerts-ua-push.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now alerts-ua-push.service
+```
+
+Перед цим канонічний unit потрібно оновити з `infra/vps/systemd/alerts-ua-push.service`. Під час rollout і rollback перевіряти `alerts-ua-api`, `alerts-ua-push` і `dtek-api`.
+
+Конфігурація `.env.worker`:
+
+```env
+PUSH_WORKER_CONCURRENCY=2
+PUSH_BATCH_SIZE=500
+PUSH_IDLE_POLL_MS=1000
+PUSH_CLAIM_LEASE_MS=120000
+PUSH_FCM_MAX_RPS=1000
+PUSH_FCM_RAMP_MS=60000
+PUSH_START_TTL_SECONDS=600
+PUSH_END_TTL_SECONDS=300
+PUSH_LEVEL_CHANGED_TTL_SECONDS=180
+PUSH_TOKEN_SUCCESS_UPDATE_INTERVAL_SECONDS=3600
+```
+
+Перевірка черги та журналів:
+
+```bash
+systemctl status alerts-ua-push.service
+journalctl -u alerts-ua-push.service -n 100 --no-pager
+curl -s http://127.0.0.1:3100/api/v1/system/push-stats
+```
+
+`sent_at` і percentile-метрики означають прийняття повідомлення FCM, а не фактичну доставку чи показ на пристрої. За відсутності Firebase credentials service не робить claim і періодично очікує появу файла.
+
 ## Правила безпечного спiвiснування
 
 1. Не змiнювати `/etc/systemd/system/dtek-api.service`.

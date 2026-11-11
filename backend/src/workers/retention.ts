@@ -41,7 +41,7 @@ const RETENTION_RULES: RetentionRule[] = [
     table: 'notification_dispatches',
     description: 'отправленные/проваленные/пропущенные dispatch-уведомления',
     tsColumn: 'queued_at',
-    where: "status <> 'queued'",
+    where: "status IN ('sent', 'failed', 'deduplicated', 'skipped', 'expired')",
     retentionDaysEnv: 'RETENTION_DISPATCHES_DAYS',
     defaultDays: 30,
   },
@@ -84,29 +84,6 @@ const RETENTION_RULES: RetentionRule[] = [
   },
 ];
 
-async function expireStuckQueued(
-  databaseService: DatabaseService,
-  logger: Logger,
-): Promise<number> {
-  const expireDays = Number(process.env.RETENTION_DISPATCH_STUCK_DAYS ?? 7);
-  const result = await databaseService.query(
-    `
-      UPDATE notification_dispatches
-      SET status = 'failed',
-          provider_error_code = 'EXPIRED_STUCK'
-      WHERE status = 'queued'
-        AND queued_at < NOW() - ($1 || ' days')::interval
-        AND attempt_no >= 4
-    `,
-    [String(expireDays)],
-  );
-  const count = result.rowCount ?? 0;
-  if (count > 0) {
-    logger.log(`Expired ${count} stuck queued dispatches (queued > ${expireDays}d, attempts exhausted)`);
-  }
-  return count;
-}
-
 async function run() {
   const logger = new Logger('RetentionWorker');
 
@@ -120,8 +97,6 @@ async function run() {
     if (!databaseService.isConfigured()) {
       throw new Error('DATABASE_URL is not configured.');
     }
-
-    await expireStuckQueued(databaseService, logger);
 
     const summary: Record<string, number> = {};
 

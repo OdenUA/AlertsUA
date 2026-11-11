@@ -383,6 +383,7 @@ try {
     # Parse deployment output
     $releasePath = ""
     $apiStatus = ""
+    $pushStatus = ""
     $dtekStatus = ""
     $healthStatus = ""
 
@@ -392,6 +393,9 @@ try {
         }
         elseif ($line -match '^api=(.+)$') {
             $apiStatus = $matches[1]
+        }
+        elseif ($line -match '^push=(.+)$') {
+            $pushStatus = $matches[1]
         }
         elseif ($line -match '^dtek=(.+)$') {
             $dtekStatus = $matches[1]
@@ -406,6 +410,7 @@ try {
     Write-Host "Deployment Summary:" -ForegroundColor Cyan
     Write-Host "  Release path: $releasePath"
     Write-Host "  API service:  $apiStatus"
+    Write-Host "  Push service: $pushStatus"
     Write-Host "  DTEK service: $dtekStatus"
     Write-Host "  Health check: $healthStatus"
     Write-Host ""

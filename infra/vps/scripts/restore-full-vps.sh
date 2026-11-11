@@ -97,7 +97,7 @@ systemctl daemon-reload
 for t in "${SRC}"/systemd/*.timer; do
     [ -e "$t" ] && systemctl enable --now "$(basename "$t")" >/dev/null 2>&1 || true
 done
-for s in alerts-ua-api dtek-api poe2notif; do
+for s in alerts-ua-api alerts-ua-push dtek-api poe2notif; do
     systemctl enable --now "$s"
 done
 

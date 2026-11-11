@@ -827,8 +827,8 @@ export class AlertsService {
       alert_type: AlertType;
     }> = [];
     // Regions whose alert level (red/yellow) changed while the status stayed
-    // the same — they do not produce events/pushes, but must bump state_version
-    // so map clients re-render the fill color.
+    // the same — no air_raid_events row, but state_version must advance for map
+    // clients and level_changed dispatches.
     const levelChangedUids: number[] = [];
 
     const nextRows = (regionRowsResult.rows as Array<{

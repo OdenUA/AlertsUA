@@ -3,10 +3,16 @@ Description=Alerts UA push dispatcher
 After=network.target
 
 [Service]
-Type=oneshot
+Type=simple
+Restart=always
+RestartSec=2s
 TimeoutStartSec=120
+TimeoutStopSec=60s
 User=alerts-ua
 Group=alerts-ua
 WorkingDirectory=/srv/alerts-ua/app/current
 EnvironmentFile=/srv/alerts-ua/env/.env.worker
 ExecStart=/srv/alerts-ua/runtime/node/bin/node dist/workers/push.js
+
+[Install]
+WantedBy=multi-user.target

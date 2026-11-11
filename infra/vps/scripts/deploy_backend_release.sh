@@ -15,6 +15,7 @@ RELEASES_DIR="${RELEASES_DIR:-/srv/alerts-ua/app/releases}"
 # деплой не должен зависеть от его апгрейтов)
 RUNTIME_NPM="${RUNTIME_NPM:-/srv/alerts-ua/runtime/node/bin/npm}"
 API_SERVICE="${API_SERVICE:-alerts-ua-api.service}"
+PUSH_SERVICE="${PUSH_SERVICE:-alerts-ua-push.service}"
 DTEK_SERVICE="${DTEK_SERVICE:-dtek-api.service}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3100/api/v1/system/health}"
 FORCE_NPM_INSTALL="${FORCE_NPM_INSTALL:-0}"
@@ -30,6 +31,7 @@ Environment overrides:
   RELEASES_DIR       default: /srv/alerts-ua/app/releases
   RUNTIME_NPM        default: /srv/alerts-ua/runtime/node/bin/npm
   API_SERVICE        default: alerts-ua-api.service
+  PUSH_SERVICE       default: alerts-ua-push.service
   DTEK_SERVICE       default: dtek-api.service
   HEALTH_URL         default: http://127.0.0.1:3100/api/v1/system/health
   FORCE_NPM_INSTALL  default: 0
@@ -81,6 +83,11 @@ if ! systemctl is-active --quiet "$DTEK_SERVICE"; then
   exit 1
 fi
 
+PUSH_WAS_ACTIVE=0
+if systemctl is-active --quiet "$PUSH_SERVICE"; then
+  PUSH_WAS_ACTIVE=1
+fi
+
 mkdir -p "$RELEASES_DIR"
 
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
@@ -112,6 +119,9 @@ rollback() {
   if [[ -n "$PREVIOUS_RELEASE" ]]; then
     ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
     systemctl restart "$API_SERVICE"
+    if [[ "$PUSH_WAS_ACTIVE" == "1" ]]; then
+      systemctl restart "$PUSH_SERVICE"
+    fi
   fi
 }
 
@@ -210,6 +220,20 @@ if ! systemctl is-active --quiet "$API_SERVICE"; then
   exit 1
 fi
 
+if [[ "$PUSH_WAS_ACTIVE" == "1" ]]; then
+  if ! systemctl restart "$PUSH_SERVICE"; then
+    echo "Push service failed to restart after deploy, rolling back"
+    rollback
+    exit 1
+  fi
+
+  if ! systemctl is-active --quiet "$PUSH_SERVICE"; then
+    echo "Push service failed to start after deploy, rolling back"
+    rollback
+    exit 1
+  fi
+fi
+
 sleep 5
 
 HEALTH_OK="0"
@@ -235,6 +259,7 @@ fi
 
 echo "release=$NEW_RELEASE"
 echo "api=$(systemctl is-active "$API_SERVICE")"
+echo "push=$(systemctl is-active "$PUSH_SERVICE")"
 echo "dtek=$(systemctl is-active "$DTEK_SERVICE")"
 echo "health=ok"
 echo "TEST_DEPLOY_SCRIPT_EXECUTED=$(date +%s)"

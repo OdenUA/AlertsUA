@@ -34,9 +34,9 @@ android {
         applicationId = "com.alertsua.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 53
+        versionCode = 54
 
-        versionName = "0.8.13"
+        versionName = "0.8.14"
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://173.242.53.129/api/v1\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

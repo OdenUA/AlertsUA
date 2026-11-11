@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { DatabaseService } from '../../common/database/database.service';
@@ -153,6 +154,7 @@ export class SubscriptionsService {
     private readonly installationsService: InstallationsService,
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
+    private readonly configService: ConfigService,
   ) {}
 
   async resolvePoint(latitude: number, longitude: number) {
@@ -619,10 +621,13 @@ export class SubscriptionsService {
       installation_id: string;
       token_id: string;
       event_id: string | null;
+      state_version: number;
       dispatch_kind: 'start' | 'end' | 'level_changed';
       alert_level: string;
       title_uk: string;
       body_uk: string;
+      expires_at: string;
+      priority: number;
     }> = [];
 
     for (const subscription of subscriptionsResult.rows) {
@@ -657,14 +662,15 @@ export class SubscriptionsService {
         lastStartEventId =
           eventsByKey.get(`${nextRuntime.effective_uid}:started`) ?? previousRuntimeRaw.last_start_event_id;
         dispatchInserts.push(
-          ...(await this.collectDispatchRows(client, {
+          ...this.collectDispatchRows({
             subscription,
             dispatch_kind: 'start',
             event_id: lastStartEventId,
+            state_version: input.state_version,
             alert_level: nextRuntime.effective_alert_level,
             occurred_at: transitionAt,
             tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-          })),
+          }),
         );
       }
 
@@ -676,14 +682,15 @@ export class SubscriptionsService {
           ? (statesByUid.get(previousRuntime.effective_uid)?.alert_level ?? 'red')
           : 'red';
         dispatchInserts.push(
-          ...(await this.collectDispatchRows(client, {
+          ...this.collectDispatchRows({
             subscription,
             dispatch_kind: 'end',
             event_id: lastEndEventId,
+            state_version: input.state_version,
             alert_level: previousAlertLevel,
             occurred_at: transitionAt,
             tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-          })),
+          }),
         );
       }
 
@@ -695,15 +702,16 @@ export class SubscriptionsService {
         const nextLevel = nextRuntime.effective_alert_level;
         if (previousLevel !== nextLevel) {
           dispatchInserts.push(
-            ...(await this.collectDispatchRows(client, {
+            ...this.collectDispatchRows({
               subscription,
               dispatch_kind: 'level_changed',
               event_id: null,
+              state_version: input.state_version,
               alert_level: nextLevel,
               previous_alert_level: previousLevel,
               occurred_at: transitionAt,
               tokens: tokensByInstallation.get(subscription.installation_id) ?? [],
-            })),
+            }),
           );
         }
       }
@@ -720,10 +728,6 @@ export class SubscriptionsService {
       });
     }
 
-    // Одна многострочная вставка вместо N последовательных: уникальный
-    // индекс (subscription_id, event_id, dispatch_kind, alert_level) WHERE
-    // event_id IS NOT NULL дедуплицирует повторы — ровно как раньше, но
-    // одним round-trip на всю пачку.
     let queuedDispatches = 0;
     if (dispatchInserts.length > 0) {
       const dispatchResult = await client.query(
@@ -734,6 +738,7 @@ export class SubscriptionsService {
             installation_id,
             token_id,
             event_id,
+            state_version,
             dispatch_kind,
             alert_level,
             title_uk,
@@ -743,23 +748,30 @@ export class SubscriptionsService {
             provider_message_id,
             provider_error_code,
             queued_at,
+            next_attempt_at,
+            expires_at,
+            priority,
             sent_at
           )
           SELECT r.dispatch_id, r.subscription_id, r.installation_id, r.token_id, r.event_id,
-                 r.dispatch_kind, r.alert_level, r.title_uk, r.body_uk,
-                 'queued', 1, NULL, NULL, $10::timestamptz, NULL
+                 r.state_version, r.dispatch_kind, r.alert_level, r.title_uk, r.body_uk,
+                 'queued', 1, NULL, NULL, $13::timestamptz, $13::timestamptz,
+                 r.expires_at, r.priority, NULL
           FROM unnest(
             $1::uuid[],
             $2::uuid[],
             $3::uuid[],
             $4::uuid[],
             $5::uuid[],
-            $6::text[],
+            $6::bigint[],
             $7::text[],
             $8::text[],
-            $9::text[]
+            $9::text[],
+            $10::text[],
+            $11::timestamptz[],
+            $12::smallint[]
           ) AS r(dispatch_id, subscription_id, installation_id, token_id, event_id,
-                 dispatch_kind, alert_level, title_uk, body_uk)
+                 state_version, dispatch_kind, alert_level, title_uk, body_uk, expires_at, priority)
           ON CONFLICT DO NOTHING
         `,
         [
@@ -768,14 +780,43 @@ export class SubscriptionsService {
           dispatchInserts.map((row) => row.installation_id),
           dispatchInserts.map((row) => row.token_id),
           dispatchInserts.map((row) => row.event_id),
+          dispatchInserts.map((row) => row.state_version),
           dispatchInserts.map((row) => row.dispatch_kind),
           dispatchInserts.map((row) => row.alert_level),
           dispatchInserts.map((row) => row.title_uk),
           dispatchInserts.map((row) => row.body_uk),
+          dispatchInserts.map((row) => row.expires_at),
+          dispatchInserts.map((row) => row.priority),
           transitionAt,
         ],
       );
       queuedDispatches = dispatchResult.rowCount ?? 0;
+
+      await client.query(
+        `
+          UPDATE notification_dispatches nd
+          SET status = 'deduplicated',
+              provider_error_code = 'SUPERSEDED_BY_NEWER_STATE'
+          FROM (
+            SELECT DISTINCT subscription_id, dispatch_kind
+            FROM unnest($1::uuid[], $3::text[]) AS input_rows(subscription_id, dispatch_kind)
+          ) AS newer
+          WHERE nd.subscription_id = newer.subscription_id
+            AND nd.status = 'queued'
+            AND nd.state_version IS NOT NULL
+            AND nd.state_version < $2
+            AND (
+              (newer.dispatch_kind = 'end' AND nd.dispatch_kind IN ('start', 'level_changed'))
+              OR (newer.dispatch_kind = 'start' AND nd.dispatch_kind IN ('end', 'level_changed'))
+              OR (newer.dispatch_kind = 'level_changed' AND nd.dispatch_kind = 'level_changed')
+            )
+        `,
+        [
+          dispatchInserts.map((row) => row.subscription_id),
+          input.state_version,
+          dispatchInserts.map((row) => row.dispatch_kind),
+        ],
+      );
     }
 
     if (runtimeUpsert.length > 0) {
@@ -840,28 +881,31 @@ export class SubscriptionsService {
    * Готовит строки dispatch-уведомлений для вставки (без записи в БД —
    * вставка выполняется батчем из synchronizeRuntimeState).
    */
-  private async collectDispatchRows(
-    client: PoolClient,
+  private collectDispatchRows(
     input: {
       subscription: SubscriptionRuntimeSourceRow;
       dispatch_kind: 'start' | 'end' | 'level_changed';
       event_id: string | null;
+      state_version: number;
       alert_level: string;
       previous_alert_level?: string;
       occurred_at: string;
       tokens: PushTokenRow[];
     },
-  ): Promise<Array<{
+  ): Array<{
     dispatch_id: string;
     subscription_id: string;
     installation_id: string;
     token_id: string;
     event_id: string | null;
+    state_version: number;
     dispatch_kind: 'start' | 'end' | 'level_changed';
     alert_level: string;
     title_uk: string;
     body_uk: string;
-  }>> {
+    expires_at: string;
+    priority: number;
+  }> {
     if (input.dispatch_kind !== 'level_changed' && !input.event_id) {
       return [];
     }
@@ -892,24 +936,22 @@ export class SubscriptionsService {
       input.subscription.oblast_title_uk,
     );
 
-    // Dedup level_changed: skip if a queued/sent dispatch for same subscription+level exists today
-    if (input.dispatch_kind === 'level_changed') {
-      const existing = await client.query(
-        `
-          SELECT 1 FROM notification_dispatches
-          WHERE subscription_id = $1
-            AND dispatch_kind = 'level_changed'
-            AND alert_level = $2
-            AND status IN ('queued', 'sent')
-            AND queued_at::date = $3::date
-          LIMIT 1
-        `,
-        [input.subscription.subscription_id, input.alert_level, input.occurred_at],
-      );
-      if ((existing.rowCount ?? 0) > 0) {
-        return [];
-      }
-    }
+    const defaultTtlSeconds = input.dispatch_kind === 'start'
+      ? 600
+      : input.dispatch_kind === 'end'
+        ? 300
+        : 180;
+    const ttlEnvName = input.dispatch_kind === 'start'
+      ? 'PUSH_START_TTL_SECONDS'
+      : input.dispatch_kind === 'end'
+        ? 'PUSH_END_TTL_SECONDS'
+        : 'PUSH_LEVEL_CHANGED_TTL_SECONDS';
+    const configuredTtlSeconds = Number(this.configService.get<string>(ttlEnvName) ?? defaultTtlSeconds);
+    const ttlSeconds = Number.isFinite(configuredTtlSeconds) && configuredTtlSeconds > 0
+      ? configuredTtlSeconds
+      : defaultTtlSeconds;
+    const expiresAt = new Date(Date.parse(input.occurred_at) + ttlSeconds * 1000).toISOString();
+    const priority = input.dispatch_kind === 'end' ? 0 : input.dispatch_kind === 'start' ? 10 : 50;
 
     return input.tokens.map((token) => ({
       dispatch_id: randomUUID(),
@@ -917,10 +959,13 @@ export class SubscriptionsService {
       installation_id: input.subscription.installation_id,
       token_id: token.token_id,
       event_id: input.event_id,
+      state_version: input.state_version,
       dispatch_kind: input.dispatch_kind,
       alert_level: input.alert_level,
       title_uk,
       body_uk,
+      expires_at: expiresAt,
+      priority,
     }));
   }
 

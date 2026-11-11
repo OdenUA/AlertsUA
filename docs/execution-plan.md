@@ -56,7 +56,7 @@
 - [x] Результати доставки зберігаються в `notification_dispatches` та `device_push_tokens`.
 - [x] Дедуплікацію push закладено на комбінацію `(subscription_id, event_id, dispatch_kind)` через `UNIQUE` + `ON CONFLICT DO NOTHING`.
 - [x] Завантажено реальні геометрії в `region_geometry`, і `resolve-point` уже визначає фактичний leaf region по координаті.
-- [ ] Додати на VPS `firebase-service-account.json` і після цього увімкнути `alerts-ua-push.timer`.
+- [ ] Додати на VPS `firebase-service-account.json` і після цього увімкнути `alerts-ua-push.service`.
 
 ## 5. Android-клієнт
 
@@ -91,7 +91,7 @@
 
 ## 8. Найближчі практичні кроки
 
-1. Додати `firebase-service-account.json` на VPS і увімкнути `alerts-ua-push.timer`.
+1. Додати `firebase-service-account.json` на VPS і увімкнути `alerts-ua-push.service`.
 2. Провести повний прогін Android MVP на емуляторі/пристрої з реальним Firebase push.
 3. Зменшити unmatched-залишок між OCHA geometry та `region_catalog`.
 4. Довести публічний production reverse proxy та backup/ops сценарії.
