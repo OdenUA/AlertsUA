@@ -78,7 +78,7 @@
 | `subscriptions` | Пины подписок | id, `installation_id`, lat/lon, resolved `uid`/`oblast_uid`/`raion_uid`, тайтлы |
 | `subscription_runtime_state` | Runtime-состояние для дедупликации пушей | `subscription_id`, текущий статус/версия, timestamp |
 | `notification_dispatches` | Очередь/лог пушей | id, `subscription_id`, payload, `status` (queued/sent/failed), timestamps |
-| `threat_visual_overlays` | Метаданные угрозовых оверлеев | id, канал-источник, тип (uav/kab/missile/artillery), время, status |
+| `threat_visual_overlays` | Метаданные угрозовых оверлеев | id, канал-источник, тип (uav/banderol/kab/missile/ballistic/tactical_aviation/unknown), время, status |
 | `threat_vectors` | Геометрия угроз | overlay id, `origin`, `target`, `corridor`, `danger_area` (PostGIS) |
 | `telegram_messages_raw` | Сырые Telegram-сообщения | id, канал, текст, `processed` flag |
 
@@ -230,7 +230,7 @@ class-validator/class-transformer.
 - Ingest-воркер пишет сырые сообщения в `telegram_messages_raw` (`processed =
   false`), дедупликация по id сообщения.
 - Parse-воркер выбирает неразобранные сообщения и отправляет LLM с
-  промптом, требующим строгий JSON: тип угрозы (uav/kab/missile/artillery),
+  промптом, требующим строгий JSON: тип угрозы (uav/banderol/kab/missile/ballistic/tactical_aviation/unknown),
   точка/направление происхождения, цель/коридор, время актуальности.
   "Thinking"-режим LLM выключен по умолчанию (экономия ~95% completion-токенов),
   включается env-флагом.

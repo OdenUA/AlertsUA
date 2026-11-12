@@ -477,7 +477,7 @@ class ThreatLayersManager(
             expiresAtMs - occurredAtMs
         } else {
             when (threatKind) {
-                "uav", "tactical_aviation" -> UAV_VISIBLE_MS
+                "uav", "banderol", "tactical_aviation" -> UAV_VISIBLE_MS
                 "ballistic" -> BALLISTIC_VISIBLE_MS
                 else -> DEFAULT_VISIBLE_MS
             }
@@ -616,7 +616,7 @@ class ThreatLayersManager(
         if (o.occurredAtMs <= 0) return false
         if (o.expiresAtMs > 0 && now < o.expiresAtMs) return true
         val maxVisibleMs = when (o.threatKind) {
-            "uav", "tactical_aviation" -> UAV_VISIBLE_MS
+            "uav", "banderol", "tactical_aviation" -> UAV_VISIBLE_MS
             "ballistic" -> BALLISTIC_VISIBLE_MS
             else -> DEFAULT_VISIBLE_MS
         }
@@ -809,7 +809,7 @@ class ThreatLayersManager(
     // ── Render data ──────────────────────────────────────────────────────────
 
     private fun iconVariantKey(kind: String): String = when (kind) {
-        "uav", "kab", "missile" -> kind
+        "uav", "banderol", "kab", "missile" -> kind
         "ballistic" -> "missile"
         // неопознанные угрозы (unknown, tactical_aviation и пр.) — иконкой БпЛА
         else -> "uav"
@@ -987,7 +987,7 @@ class ThreatLayersManager(
         }
         // Порт THREAT_TYPE_ICONS: вариант light/dark по теме. При смене темы
         // стиль пересоздаётся целиком, поэтому подмена происходит на новом стиле.
-        listOf("uav", "kab", "missile").forEach { kind ->
+        listOf("uav", "banderol", "kab", "missile").forEach { kind ->
             val name = IMAGE_THREAT_PREFIX + kind
             if (style.getImage(name) != null) return@forEach
             val bitmap = MapIconBitmapCache.get(appContext, threatIconAssetPath(kind, darkMode), THREAT_ICON_SIZE_DP)
@@ -998,6 +998,7 @@ class ThreatLayersManager(
 
     private fun threatIconAssetPath(kind: String, dark: Boolean): String = when (kind) {
         "uav" -> if (dark) "map/icons/shahed-dark.png" else "map/icons/shahed-light.png"
+        "banderol" -> if (dark) "map/icons/banderol-dark.png" else "map/icons/banderol.png"
         "kab" -> if (dark) "map/icons/kab-grey.png" else "map/icons/kab-black.png"
         "missile" -> if (dark) "map/icons/missile-grey.png" else "map/icons/missile-black.png"
         else -> if (dark) "map/icons/shahed-dark.png" else "map/icons/shahed-light.png"

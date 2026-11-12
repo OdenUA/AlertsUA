@@ -205,7 +205,7 @@ default true, android_id ≤64):
   "generated_at": "<kyiv timestamp>",
   "overlays": [
     { "overlay_id": "uuid", "vector_id": "uuid",
-      "threat_kind": "uav|tactical_aviation|ballistic|kab|missile|unknown|…",
+      "threat_kind": "uav|banderol|tactical_aviation|ballistic|kab|missile|unknown",
       "confidence": 0.85,
       "movement_bearing_deg": 235,
       "icon_type": "…", "color_hex": "#RRGGBB",
@@ -390,8 +390,8 @@ t:title_uk, r:region_type}`) читается в объектный граф и 
   из кэша (null = скрыть всё).
 - Polling каждые 60 000 мс. При неудачном fetch рендер всё равно выполняется
   (протухшие по времени исчезают).
-- **Видимость по времени**: uav/tactical_aviation — 45 мин, ballistic —
-  20 мин, остальные — 30 мин (или до `expires_at`, если задан).
+- **Видимость по времени**: uav/banderol/tactical_aviation — 35 мин,
+  ballistic — 20 мин, остальные — 30 мин (или до `expires_at`, если задан).
 - **Дуга направления**: квадратичная Безье из центра маркера в конец
   коридора, 18 сегментов, отступ серединой по Web-Mercator-пикселям при
   текущем зуме (`worldSize = 256·2^zoom`), масштабируется с zoom. Дуга не
@@ -400,8 +400,8 @@ t:title_uk, r:region_type}`) читается в объектный граф и 
 - Слои: `threat-direction-line` (дуга) → `threat-direction-arrow`
   (SymbolLayer-треугольник в точке цели, `iconRotate` по bearing, размер
   клэмпится по zoom) → `threat-icons` (28dp, `iconRotate` по bearing,
-  масштаб иконок по zoom, иконки uav/shahed, kab, missile, ballistic,
-  tactical_aviation; light/dark-варианты по теме).
+  масштаб иконок по zoom, иконки uav/shahed, banderol, kab, missile;
+  ballistic использует missile, остальные типы — uav; light/dark по теме).
 - **Bearing**: приоритет у `movement_bearing_deg`, кроме кейса
   explicit==0 с расхождением с коридором >1° (тогда bearing по коридору);
   для `kab` с непустым коридором добавляется +135°.
@@ -543,8 +543,9 @@ t:title_uk, r:region_type}`) читается в объектный граф и 
   `layer-meta.json` (~56 КБ). GeoJSON-компактный, без пробелов (критично для
   строковой инъекции).
 - `app/src/main/assets/map/icons/*.png`: air-raid, artillery-shelling,
-  urban-fights, exclamation, kab-black/grey, missile-black/grey,
-  shahed-light/dark, war-monitor.
+  urban-fights, exclamation, banderol (светлая тема), banderol-dark
+  (тёмная тема), kab-black/grey, missile-black/grey, shahed-light/dark,
+  war-monitor.
 - `scripts/generate-layer-meta.js` (node): из трёх geojson → layer-meta.json
   `{layer: {uid: {c:[lon,lat] (bbox-центр, округление 1e-6), t:title_uk,
   r:region_type}}}`; запускать после любого обновления геометрий.

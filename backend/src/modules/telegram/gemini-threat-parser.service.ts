@@ -16,7 +16,7 @@ type AlertType = 'air_raid' | 'artillery_shelling' | 'urban_fights' | 'chemical'
 
 type ParseCandidate = {
   action: 'new' | 'update' | 'clear';
-  threat_kind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown';
+  threat_kind: 'uav' | 'banderol' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown';
   confidence: number;
   region_hint: string | null;
   origin_hint: string | null;
@@ -74,6 +74,8 @@ const REGION_HINT_STOP_WORDS = new Set(['область', 'район', 'region'
 // back to the verbatim header line.
 const THREAT_HEADER_TITLE_MAP: Array<[RegExp, string]> = [
   [/^реактивн(ий|і|их|им)?\s+бпла$/iu, 'Реактивний БпЛА:'],
+  [/^бандерол(ь|і)$/iu, 'Бандероль:'],
+  [/^герань[- ]5$/iu, 'Герань-5:'],
   [/^бпла(?:[ «"-]*шахед(и|ів)?)?$/iu, 'БпЛА:'],
   [/^шахед(и|ів)$/iu, 'БпЛА:'],
   [/^каб(и|ів|ах)?$/iu, 'КАБ:'],
@@ -173,7 +175,8 @@ Example 6: "Київ: 🛵 Реактивний БпЛА в напрямку м�
 - CRITICAL: launch origins define the DIRECTION of the arc, not its START — an approach report means the drone is minutes from the target, the arc must be short and start inside the section-header oblast.
 
 TERMINOLOGY (monitoring channel slang → threat_kind):
-- uav: "Бандеролі" / "Бандероль", "реактив" / "реактиви" / "реактивний" = jet-powered UAV (even without the word "БпЛА"; "реактиви" are NOT missiles)
+- banderol: "Бандероль" / "Бандеролі" / "Герань-5" / "Герань 5" — the specific name takes priority over generic "БпЛА" / "реактивний" wording in the same threat
+- uav: "реактив" / "реактиви" / "реактивний" = jet-powered UAV (even without the word "БпЛА"; "реактиви" are NOT missiles); all other jet UAVs without the specific banderol names above remain uav
 - missile: "мгКР" / "КР" / "крилаті ракети", "Увага по крилатим ракетам", "Швидкісна ціль" (high-speed target)
 - ballistic: "балістична ракета" / "балістика" / "загроза балістичного удару" / "пуски балістики"; "Іскандер" / "Кинджал" / "Циркон" / "KN-23"
 - tactical_aviation: "тактична авіація"; takeoffs "МіГ-31(К)", "Ту-22М3", "Ту-95", "Ту-160", "Су-34/25/35"; "ракетна небезпека" / "ракетна загроза" / "ракета-носій" / "авіаційна ракета" with aircraft context
@@ -264,7 +267,7 @@ SOURCE EXCERPT (per-threat quote):
 - Do not translate, rephrase or summarize — quote the original text
 
 Return strict JSON only with this schema:
-{"threats":[{"action":"new|update|clear","threat_kind":"uav|kab|missile|ballistic|tactical_aviation|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_inferred":false,"origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
+{"threats":[{"action":"new|update|clear","threat_kind":"uav|banderol|kab|missile|ballistic|tactical_aviation|unknown","confidence":0.0,"region_hint":"string|null","origin_hint":"string|null","target_hint":"string|null","direction_text":"string|null","origin_inferred":false,"origin_lat":null,"origin_lng":null,"target_lat":null,"target_lng":null,"movement_bearing_deg":null,"source_excerpt":"string|null"}]}
 No markdown, no comments, no extra keys.`;
 
   return `${promptText}\n\nText: ${messageText}`;
@@ -292,7 +295,7 @@ export function buildThreatVectorDedupeKey(params: ThreatVectorDedupeKeyInput) {
     .digest('hex');
 }
 
-export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown', hasTarget: boolean) {
+export function getThreatTtlMinutes(threatKind: 'uav' | 'banderol' | 'kab' | 'missile' | 'ballistic' | 'tactical_aviation' | 'unknown', hasTarget: boolean) {
   // Threat visibility windows: only slow-moving tactical aviation stays long;
   // UAVs, ballistic, missiles and KABs are short-lived.
   if (threatKind === 'tactical_aviation') {
@@ -301,7 +304,7 @@ export function getThreatTtlMinutes(threatKind: 'uav' | 'kab' | 'missile' | 'bal
   if (threatKind === 'kab') {
     return 15;
   }
-  return 20; // uav, missile, ballistic
+  return 20; // uav, banderol, missile, ballistic
 }
 
 export function isTimeoutLlmFailure(errorMessage: string | null | undefined) {
@@ -1561,6 +1564,11 @@ export class GeminiThreatParserService {
         (normalized.includes('тактичн') && normalized.includes('авіац'))) {
       return 'tactical_aviation';
     }
+    if (normalized.includes('banderol') || normalized.includes('бандерол') ||
+        normalized.includes('герань-5') || normalized.includes('герань 5') ||
+        normalized.includes('geran-5') || normalized.includes('geran_5')) {
+      return 'banderol';
+    }
     if (normalized.includes('uav') || normalized.includes('drone') || normalized.includes('бпла')) {
       return 'uav';
     }
@@ -1719,6 +1727,7 @@ export class GeminiThreatParserService {
       case 'ballistic':
       case 'tactical_aviation':
       case 'uav':
+      case 'banderol':
       case 'unknown':
       default:
         return 'air_raid';
@@ -1729,6 +1738,8 @@ export class GeminiThreatParserService {
     switch (threatKind) {
       case 'uav':
         return 'drone';
+      case 'banderol':
+        return 'banderol';
       case 'kab':
         return 'bomb';
       case 'missile':
@@ -1744,6 +1755,7 @@ export class GeminiThreatParserService {
   private toColor(threatKind: ParseCandidate['threat_kind']) {
     switch (threatKind) {
       case 'uav':
+      case 'banderol':
         return '#f59e0b';
       case 'kab':
         return '#ef4444';
@@ -1768,6 +1780,7 @@ export class GeminiThreatParserService {
       case 'kab':
         return 20;
       case 'uav':
+      case 'banderol':
         return 30;
       default:
         return 90;
